@@ -117,6 +117,44 @@ describe.skipIf(!canRunServerSpawnTests)('empty-cluster surfacing across a resta
     expect(marker?.restoredFrom).toBeUndefined();
   }, 90_000);
 
+  it('HS-9585 — stays blocked across a RESTART that opens the same empty cluster', async () => {
+    // The bug this pins: `noteClusterCreatedEmpty` fires only when the open path
+    // finds no cluster, so the SECOND process opens the (existing, empty) one and
+    // used to sail straight past the guard — overwriting the snapshot and
+    // rotating the good tarballs out on the next reboot. A restart is the whole
+    // point, so it is exercised with real processes rather than a reset hook.
+    const first = spawnTracked();
+    await first.ready;
+    const secret = readSecret(first.dataDir);
+    const base = `http://localhost:${String(first.port)}`;
+    for (const title of ['alpha', 'beta']) {
+      expect((await postJson(`${base}/api/tickets`, { title }, secret)).ok).toBe(true);
+    }
+    await backupWithRetry(base, secret);
+
+    first.proc.kill('SIGKILL');
+    await waitForExit(first.proc, 10_000);
+    rmSync(join(first.dataDir, 'db'), { recursive: true, force: true });
+
+    // Process B — creates the empty cluster, arms the guard.
+    const second = spawnTracked({ dataDir: first.dataDir, homeDir: first.homeDir, port: first.port });
+    await second.ready;
+    expect((await postJson(`http://localhost:${String(second.port)}/api/backups/now`, {}, secret)).status).toBe(409);
+    expect(existsSync(join(first.dataDir, '.db-created-empty.json'))).toBe(true);
+
+    second.proc.kill('SIGKILL');
+    await waitForExit(second.proc, 10_000);
+
+    // Process C — OPENS the empty cluster. `db/` exists now, so nothing re-arms
+    // the in-memory flag; only the persisted fact can keep the guard up.
+    const third = spawnTracked({ dataDir: first.dataDir, homeDir: first.homeDir, port: first.port });
+    await third.ready;
+    const blocked = await postJson(`http://localhost:${String(third.port)}/api/backups/now`, {}, secret);
+    expect(blocked.status).toBe(409);
+    expect((await blocked.json() as { error: string }).error).toMatch(/database is empty/);
+    expect(await recoveryStatus(third.port, secret)).toMatchObject({ kind: 'empty-cluster', priorTicketCount: 2 });
+  }, 120_000);
+
   it('stays quiet for a brand-new project, which is empty for the innocent reason', async () => {
     const child = spawnTracked();
     await child.ready;

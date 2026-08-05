@@ -1,5 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
@@ -43,9 +43,11 @@ import { clearEmptyClusterMarker, writeRecoveryMarker } from './recoveryMarker.j
  * routine and only together do they mean "we are about to overwrite real data
  * with nothing":
  *
- * 1. **The cluster was created fresh this process** — not opened from existing
- *    files. A user who deletes every ticket by hand trips (2) and (3) but not
- *    this one, and their empty state is a legitimate thing to back up.
+ * 1. **The cluster was created from nothing** — not opened from a populated one.
+ *    A user who deletes every ticket by hand trips (2) and (3) but not this one,
+ *    and their empty state is a legitimate thing to back up. HS-9585 made this
+ *    fact PERSISTENT (`.db-created-empty.json`); it used to be process-scoped,
+ *    which silently disarmed the whole guard on the next restart.
  * 2. **It currently holds zero tickets.**
  * 3. **This project is known to have held tickets before**, per the content
  *    marker below.
@@ -68,9 +70,71 @@ const ContentMarkerSchema = z.object({
 
 export type ContentMarker = z.infer<typeof ContentMarkerSchema>;
 
-/** dataDirs whose cluster this process created from nothing. Process-scoped by
- *  design — it describes what happened at THIS open, and a restart that finds a
- *  populated cluster is no longer in the dangerous state. */
+/**
+ * `.hotsheet/.db-created-empty.json` — HS-9585. The created-empty fact, on disk.
+ *
+ * It used to live only in the in-memory set below, which meant the guard
+ * protected a project for exactly ONE process. `noteClusterCreatedEmpty` fires
+ * only when the open path finds no `PG_VERSION`, so after the first restart the
+ * empty cluster *exists* and is opened rather than created — the flag was never
+ * set, and the durability writers were free again. The 2026-08-04 shape
+ * therefore survived a restart with the protection gone:
+ *
+ *   1. Recovery crashes mid-flight, `db/` is missing (HS-9572).
+ *   2. Process A creates an empty cluster, arms the guard, refuses writes. Good.
+ *   3. Anything restarts the server — the user, a reboot, the §45 watchdog.
+ *   4. Process B OPENS the same empty cluster, the guard is silent, and the
+ *      snapshot is overwritten while retention rotates the good tarballs out.
+ *
+ * The module's original reasoning — "a restart that finds a populated cluster is
+ * no longer in the dangerous state" — is true, and is simply not the case that
+ * fails. A restart that finds an EMPTY cluster is still in danger, and is the
+ * one that actually happens.
+ *
+ * Local to `dataDir` for the same reason as the content marker: it is consulted
+ * on the artifact-write path, and `backupDir` may be a cloud File Provider where
+ * a read blocks unboundedly (docs/7 §7.10 / HS-9527).
+ */
+const CREATED_EMPTY_MARKER = '.db-created-empty.json';
+
+const CreatedEmptyMarkerSchema = z.object({
+  at: z.string(),
+  /** HS-9585 — set once the user has been told (docs/135). Persisted so a
+   *  dismissal survives the restart that the rest of this marker exists to
+   *  survive; without it, process B would re-raise a banner the user closed. */
+  surfacedAt: z.string().optional(),
+});
+
+type CreatedEmptyMarker = z.infer<typeof CreatedEmptyMarkerSchema>;
+
+function createdEmptyPath(dataDir: string): string {
+  return join(dataDir, CREATED_EMPTY_MARKER);
+}
+
+/** Missing / unparseable reads as "not created empty" — the guard fails OPEN, so
+ *  a marker problem can never stop a healthy project from being backed up. */
+function readCreatedEmptyMarker(dataDir: string): CreatedEmptyMarker | null {
+  const path = createdEmptyPath(dataDir);
+  if (!existsSync(path)) return null;
+  try {
+    return parseJsonOrNull(CreatedEmptyMarkerSchema, readFileSync(path, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort — failing to persist must not fail the open that triggered it. */
+function writeCreatedEmptyMarker(dataDir: string, marker: CreatedEmptyMarker): void {
+  try {
+    writeFileSync(createdEmptyPath(dataDir), JSON.stringify(marker, null, 2));
+  } catch {
+    /* best effort — the in-memory flag still protects this process */
+  }
+}
+
+/** dataDirs whose cluster this process created from nothing. Kept alongside the
+ *  marker so the common case costs no filesystem call, and so the guard still
+ *  works for this process when the marker cannot be written. */
 const createdEmpty = new Set<string>();
 
 /** Record that `dataDir`'s cluster was initialized rather than opened. Called
@@ -78,16 +142,25 @@ const createdEmpty = new Set<string>();
  *  for `PG_VERSION` before PGLite writes it. */
 export function noteClusterCreatedEmpty(dataDir: string): void {
   createdEmpty.add(dataDir);
+  // Don't clobber an existing marker: it may carry `surfacedAt`, and re-creating
+  // an empty cluster is not a reason to re-raise a dismissed banner.
+  if (readCreatedEmptyMarker(dataDir) === null) {
+    writeCreatedEmptyMarker(dataDir, { at: new Date().toISOString() });
+  }
 }
 
-/** Clear the flag — the cluster has real content again (a restore landed, or the
- *  user started working in a genuinely new project). */
+/** Clear the fact — the cluster has real content again (a restore landed, or the
+ *  user started working in a genuinely new project). Clears BOTH the in-memory
+ *  flag and the on-disk marker, so the next process starts unarmed too. */
 export function clearClusterCreatedEmpty(dataDir: string): void {
   createdEmpty.delete(dataDir);
+  try { rmSync(createdEmptyPath(dataDir), { force: true }); } catch { /* ignore */ }
 }
 
+/** Memory OR disk. The disk half is what survives a restart; the memory half is
+ *  what still works when the marker could not be written. */
 export function wasClusterCreatedEmpty(dataDir: string): boolean {
-  return createdEmpty.has(dataDir);
+  return createdEmpty.has(dataDir) || readCreatedEmptyMarker(dataDir) !== null;
 }
 
 /** Read the content marker. Missing / unparseable reads as "no prior data known"
@@ -205,7 +278,13 @@ const surfacedEmpty = new Set<string>();
  */
 function surfaceEmptyCluster(dataDir: string, priorTicketCount: number): void {
   if (surfacedEmpty.has(dataDir)) return;
+  // HS-9585 — the gate is persisted as well as process-scoped, so a dismissal
+  // survives the restart the created-empty marker now survives. Without this,
+  // making the PROTECTION durable would have made the NAGGING durable too.
+  const marker = readCreatedEmptyMarker(dataDir);
+  if (marker?.surfacedAt !== undefined) { surfacedEmpty.add(dataDir); return; }
   surfacedEmpty.add(dataDir);
+  writeCreatedEmptyMarker(dataDir, { at: marker?.at ?? new Date().toISOString(), surfacedAt: new Date().toISOString() });
   writeRecoveryMarker(dataDir, {
     kind: 'empty-cluster',
     // No rename happened in THIS process — a preserved directory, if one

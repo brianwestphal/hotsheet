@@ -1,6 +1,6 @@
 # 135. Empty-Cluster Surfacing
 
-**Status:** Shipped (HS-9576)
+**Status:** Shipped (HS-9576; restart-durable guard HS-9585)
 
 Tells the user when their project's database has come up empty over data it used
 to hold — the state [45-pglite-robustness.md](45-pglite-robustness.md)'s guard
@@ -30,7 +30,8 @@ snapshot was overwritten and the backup tiers rotated the good tarballs out. The
 incident was invisible for a day.
 
 HS-9573 shipped the server-side guard that stops the second half of that — a
-cluster **created empty this process**, holding **zero tickets**, over a project
+cluster **created empty** (not opened from a populated one), holding **zero
+tickets**, over a project
 whose content marker says it **used to hold some**, is refused as a source for
 snapshots and backups. That preserves the artifacts. It does not preserve the
 user's understanding: the guard logs and does nothing else, and an empty project
@@ -96,8 +97,11 @@ The banner MUST say three things the corrupt-open wording does not:
 - **Dismissible**, via the existing `POST /api/db/dismiss-recovery`.
 - **Self-retracting.** The moment the cluster has rows again — a restore landed,
   or the user simply started working — the guard clears its own created-empty
-  flag, and it MUST clear this marker and the session gate at the same point. The
+  fact, and it MUST clear this marker and the session gate at the same point. The
   user should not have to dismiss a warning about a solved problem.
+- **A dismissal survives a restart** (HS-9585, §135.6). The session gate alone
+  would re-raise the banner in the next process, which is not a session gate so
+  much as a screen-saver.
 - **Clearing is kind-scoped.** A `corrupt-open` marker MUST survive rows coming
   back: it records that a cluster was renamed aside, which stays true (and still
   worth telling the user) however many tickets exist now.
@@ -158,11 +162,42 @@ A marker on disk written before HS-9576 has no `kind`. The reader defaults it to
 `corrupt-open` rather than rejecting the file, so an in-flight recovery banner
 survives the upgrade.
 
-## 135.6 Known gap
+## 135.6 The guard survives a restart (HS-9585 — was §135.6's known gap)
 
-**The guard disarms on the next restart.** `noteClusterCreatedEmpty` fires only
-when the open path finds no `PG_VERSION`, so it describes what happened at *this*
-open. After a restart the empty cluster exists on disk and is *opened*, not
-created — the guard is no longer armed, and the durability writers resume over
-the good artifacts. The banner persists (the marker is on disk), but the
-protection does not. Tracked as HS-9585.
+Originally the created-empty fact lived only in memory, so the protection lasted
+exactly one process. `noteClusterCreatedEmpty` fires only when the open path
+finds no `PG_VERSION`; after a restart the empty cluster exists and is *opened*,
+so nothing re-armed the guard and the durability writers resumed over the good
+artifacts. The banner persisted, but a banner is a prompt, not a protection.
+
+**`.hotsheet/.db-created-empty.json`** now records the fact (option A of the two
+the ticket weighed — it keeps the three-fact rule and preserves the
+deliberate-deletion escape hatch that option B would have removed):
+
+| | |
+|---|---|
+| written by | `noteClusterCreatedEmpty`, when a cluster is created from nothing |
+| cleared by | `clearClusterCreatedEmpty`, on the same event as the in-memory flag — any nonzero ticket count |
+| read by | `wasClusterCreatedEmpty`, as **memory OR disk** |
+| `surfacedAt` | set once the user has been told — see below |
+
+Memory-or-disk both ways round is deliberate: the marker is what survives a
+restart, and the in-memory flag is what still protects the running process when
+the marker cannot be written. A corrupt or absent marker reads as "not created
+empty" — the guard fails OPEN, as everywhere else here, because a marker problem
+must never stop a healthy project from being backed up.
+
+**The dismissal is persisted too (`surfacedAt`).** Making the protection durable
+would otherwise have made the *nagging* durable: the surfaced gate was
+process-scoped, so the next process would re-raise a banner the user had closed.
+The fact and the "already told them" flag now live and die together.
+
+**A brand-new project also gets a marker** — it, too, is created from nothing.
+That is harmless: the third fact (prior content) fails, so writes proceed
+normally, and the first successful artifact clears the marker for good.
+
+Pinned as sequences, since no single-operation test can see this: the
+transition-matrix block in `emptyClusterGuard.test.ts` (`_resetEmptyClusterGuardForTests()`
+is the process boundary) plus a **three-process** e2e in
+`emptyClusterSurfacing.e2e.test.ts` — create-empty, restart, then a process that
+merely *opens* the empty cluster and must still refuse.
