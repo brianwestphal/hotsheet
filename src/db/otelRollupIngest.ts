@@ -1,6 +1,7 @@
 import { type PGlite } from '@electric-sql/pglite';
 
 import { latencyBucketIndex } from './otelHistogram.js';
+import { isTokenRollupMetric, tokenColumnForDatapoint } from './otelTokenRouting.js';
 import type { MetricAggregation } from './otelWriters.js';
 
 /**
@@ -52,13 +53,22 @@ import type { MetricAggregation } from './otelWriters.js';
  * regardless).
  */
 
-/** The two metrics the dashboards SUM and that the daily rollup tracks. */
+/** The cost metric the dashboards SUM. Still a literal because Claude is the
+ *  only tool that reports cost at all (HS-9605); when a second one does, this
+ *  moves onto the plugin beside `telemetryTokenMetrics`. */
 const COST_METRIC = 'claude_code.cost.usage';
-const TOKEN_METRIC = 'claude_code.token.usage';
 
-/** True for the cost/token metrics that the daily time-series rollup tracks. */
+/**
+ * True for the cost/token metrics the daily time-series rollup tracks.
+ *
+ * HS-9604 — the token half is no longer a literal: any registered tool's
+ * declared counters qualify, so codex aggregates without this file knowing it
+ * exists. Counters a tool routes to `'ignore'` are excluded, which is what
+ * keeps codex's NESTED parents (`input_tokens` contains `cached_input_tokens`)
+ * from being counted alongside their children.
+ */
 export function isRollupMetric(metricName: string): boolean {
-  return metricName === COST_METRIC || metricName === TOKEN_METRIC;
+  return metricName === COST_METRIC || isTokenRollupMetric(metricName);
 }
 
 /**
@@ -214,20 +224,6 @@ export function dataPointValue(point: Record<string, unknown>): number {
   return 0;
 }
 
-type TokenColumn = 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_creation_tokens' | null;
-
-/** Map `claude_code.token.usage`'s `type` attribute to its rollup column. An
- *  unknown / missing type contributes to `datapoint_count` only (matches the
- *  reads, which bucket tokens by `type`). */
-function tokenColumnFor(attrs: Record<string, unknown>): TokenColumn {
-  const t = attrs['type'];
-  if (t === 'input') return 'input_tokens';
-  if (t === 'output') return 'output_tokens';
-  if (t === 'cacheRead' || t === 'cache_read') return 'cache_read_tokens';
-  if (t === 'cacheCreation' || t === 'cache_creation') return 'cache_creation_tokens';
-  return null;
-}
-
 /**
  * Strip the redundant nested `attributes` array off a serialized OTLP data point
  * (`value_json`) or log record (`body_json`) before it's stored. The flattened
@@ -282,7 +278,7 @@ export async function updateDailyRollup(
   if (metricName === COST_METRIC) {
     cost = value;
   } else {
-    switch (tokenColumnFor(attrs)) {
+    switch (tokenColumnForDatapoint(metricName, attrs)) {
       case 'input_tokens': inputT = value; break;
       case 'output_tokens': outputT = value; break;
       case 'cache_read_tokens': cacheReadT = value; break;

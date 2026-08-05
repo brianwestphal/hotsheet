@@ -221,6 +221,42 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       expect(r.rows[0].day).toBe('2026-06-30');
     });
 
+    it('recomputes codex the same way live ingest does — nested parents excluded (HS-9604)', async () => {
+      // The backfill DELETEs and rebuilds, so if it disagreed with live ingest a
+      // rebuild would rewrite history rather than reproduce it. Same turn as
+      // `otelRollupIngest.test.ts`'s codex case, asserted through the other path.
+      const ts = new Date(2026, 5, 30, 10, 0, 0);
+      const cx = 'codex.turn.token_usage.';
+      const turn: [string, number][] = [
+        [`${cx}input_tokens`, 47468],           // inclusive of cached
+        [`${cx}cached_input_tokens`, 18176],
+        [`${cx}non_cached_input_tokens`, 29292],
+        [`${cx}output_tokens`, 340],
+        [`${cx}reasoning_output_tokens`, 60],   // inside output
+        [`${cx}total_tokens`, 47808],
+      ];
+      for (const [name, value] of turn) {
+        await clusterDb.query(
+          `INSERT INTO otel_metrics (ts, project_secret, session_id, metric_name, attributes_json, value_json, aggregation_temporality, is_monotonic)
+           VALUES ($1, $2, 's', $3, $4::jsonb, $5::jsonb, 'delta', true)`,
+          [ts, SECRET, name, JSON.stringify({ model: 'gpt-5-codex', 'query.source': 'main_agent' }), JSON.stringify({ asInt: value })],
+        );
+      }
+
+      await backfillDailyForDir(clusterDb, mainDb, TZ);
+      const r = await mainDb.query<{ input_tokens: string; output_tokens: string; cache_read_tokens: string; cache_creation_tokens: string }>(
+        `SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM otel_rollup_daily WHERE project_secret = '${SECRET}'`,
+      );
+      expect(r.rows).toHaveLength(1);
+      const row = r.rows[0];
+      expect(Number(row.input_tokens)).toBe(29292);
+      expect(Number(row.cache_read_tokens)).toBe(18176);
+      expect(Number(row.output_tokens)).toBe(340);
+      const summed = Number(row.input_tokens) + Number(row.output_tokens)
+        + Number(row.cache_read_tokens) + Number(row.cache_creation_tokens);
+      expect(summed).toBe(47808);
+    });
+
     it('excludes cumulative-monotonic counters (no re-inflation)', async () => {
       const ts = new Date(2026, 5, 30, 10, 0, 0);
       await clusterDb.query(

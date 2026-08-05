@@ -690,3 +690,85 @@ Not yet covered, and tracked separately: the sidebar today's-cost widget
 (§67.10), the per-ticket rollup (`otel_rollup_ticket`), and the cross-project
 stats page (docs/70). Each reads a different payload and needs its own emitter
 plumbing.
+
+## 67.18 Token counters beyond Claude (HS-9604)
+
+§67.15 made telemetry *attributable*; this makes it *aggregate*. The rollup's
+token columns were Claude-shaped literals, so codex data landed in the raw
+tables and contributed zero to every total.
+
+### 67.18.1 Two emission shapes, and they need opposite handling
+
+**Claude Code** emits ONE metric, `claude_code.token.usage`, with a `type`
+attribute. Its four values — `input` / `output` / `cacheRead` /
+`cacheCreation` — are **disjoint partitions of one stream**, which is exactly
+why summing the four rollup columns yields a valid total.
+
+**Codex** emits a separate metric per counter, and they are **nested**. Measured
+over **4,778 real `TokenUsage` records** from `~/.codex/sessions`:
+
+| relation | holds |
+|---|---|
+| `cached_input_tokens <= input_tokens` | 4778/4778 (non-zero in 4698) |
+| `reasoning_output_tokens <= output_tokens` | 4778/4778 |
+| `total_tokens == input_tokens + output_tokens` | 4778/4778 |
+
+So `input_tokens` **contains** the cached portion. Routing it to `input_tokens`
+alongside `cached_input_tokens` → `cache_read_tokens` counts cached input twice.
+On the largest real sample — 190,406,252 input of which 186,577,664 cached — a
+summed total reads **~377M against a true ~190M**. Near-exactly 2×, and
+plausible-looking, which is the same failure shape as §67.17.
+
+### 67.18.2 Ignore the parents; do not subtract them
+
+The obvious correction is `input - cached`, and it cannot work: counters arrive
+as **independent datapoints**, so no single ingest call sees both, and any
+subtraction would need cross-datapoint state on the hot path.
+
+Instead each tool declares only the counters that are **already disjoint** and
+marks the inclusive parents `'ignore'` — a positive declaration, distinct from a
+name the table has never heard of, so an exclusion is auditable rather than
+looking like an oversight. Codex publishes `non_cached_input_tokens` beside
+`cached_input_tokens`, so the disjoint pair is available directly. Stateless and
+correct per datapoint.
+
+The routing rules live on `AiToolPlugin.telemetryTokenMetrics` (docs/132's
+one-place rule); `src/aiTools/tokenMetrics.ts` defines the vocabulary and
+`src/db/otelTokenRouting.ts` is the registry lookup (under `db/` because
+`src/aiTools/` must not import `src/db/`).
+
+### 67.18.3 The backfill derives from the same table
+
+`otelRollupBackfill.ts::backfillDailyForDir` **`DELETE`s and recomputes**
+`otel_rollup_daily` from raw rows. A disagreement with live ingest would
+therefore not merely be inconsistent — a rebuild would **rewrite history**,
+dropping every non-Claude tool's tokens or reinstating the parents live ingest
+excludes. Its `FILTER` clauses are now generated from `tokenRollupSources()`,
+the same routing table, so the agreement is structural. Pinned by matching
+tests on both paths using the same real turn.
+
+### 67.18.4 `reasoning_output_tokens` deliberately goes nowhere
+
+It is a subset of `output_tokens`, so the "column or fold into output" framing
+had a wrong option in it: **folding double-counts**. Storing it faithfully means
+a new breakdown column (a schema-version bump), tracked separately. Until then
+it is ignored, so no wrong number is produced, and the value stays visible on
+the raw `otel_metrics` row.
+
+### 67.18.5 The GenAI conventions are inherited, not per-tool
+
+`gen_ai.usage.{input,output}_tokens` + `gen_ai.usage.cache_{read,write}.input_tokens`
+route for **any** tool, so a future one following the conventions aggregates with
+no new mapping. A tool's own map wins, so it can suppress a duplicate. **Caveat:
+the conventions are read as disjoint, unverified against a live stream** — codex
+derives its convention output from the nested fields, so if that nesting carries
+through, `gen_ai.usage.input_tokens` becomes an inclusive parent and must move to
+`ignore`.
+
+### 67.18.6 Still Claude-only
+
+The docs/68 **prompt timeline** still matches `claude_code.user_prompt` /
+`.api_request` / `.tool_result` by name, and `COST_METRIC` remains a literal
+(Claude is the only tool that reports cost at all — §67.17). Neither has been
+verified end-to-end against live codex bytes; HS-9603's exporter flag is
+parser-validated only.

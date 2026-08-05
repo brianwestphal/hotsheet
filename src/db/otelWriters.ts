@@ -401,9 +401,20 @@ export function extractMetricAggregation(metric: unknown): MetricAggregation {
   return { temporality: null, isMonotonic: null };
 }
 
-/** HS-8600 — the metrics the dashboards SUM (so a cumulative monotonic source
- *  re-inflates their totals — see HS-8599). */
-const SUMMED_COUNTER_METRICS = new Set(['claude_code.cost.usage', 'claude_code.token.usage']);
+/**
+ * HS-8600 — the metrics the dashboards SUM (so a cumulative monotonic source
+ * re-inflates their totals — see HS-8599).
+ *
+ * HS-9604 — `isRollupMetric` now answers this for EVERY registered tool's
+ * counters rather than Claude's two literals. That widening matters most for
+ * the tools it adds: HS-8599 forces delta temporality through the spawn env,
+ * which Hot Sheet controls for `claude` — a tool that ignores that env, or is
+ * configured elsewhere (codex reads `~/.codex/config.toml`), is exactly the
+ * "different telemetry source" this warning was built to make visible.
+ */
+function isSummedCounterMetric(metricName: string): boolean {
+  return isRollupMetric(metricName);
+}
 
 /** HS-8600 — module-once guard so the warning isn't emitted per data point. */
 let warnedCumulativeCounter = false;
@@ -420,7 +431,7 @@ export function warnIfCumulativeCounter(metricName: string, agg: MetricAggregati
   if (warnedCumulativeCounter) return;
   if (agg.temporality !== 'cumulative') return;
   if (agg.isMonotonic !== true) return;
-  if (!SUMMED_COUNTER_METRICS.has(metricName)) return;
+  if (!isSummedCounterMetric(metricName)) return;
   warnedCumulativeCounter = true;
   console.warn(
     `[otel] WARNING: received a CUMULATIVE monotonic counter for "${metricName}". `

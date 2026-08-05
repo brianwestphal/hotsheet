@@ -11,6 +11,12 @@ export const claudePlugin: AiToolPlugin = {
   productName: 'Claude Code',
   // HS-9602 — Claude Code's OTLP namespace (`claude_code.cost.usage`, …).
   telemetryMetricPrefix: 'claude_code.',
+  // HS-9604 — Claude reports tokens on ONE metric with a `type` attribute
+  // rather than a metric per counter, so the name-keyed map cannot express it;
+  // `otelRollupIngest.ts::tokenColumnFor` handles the attribute split. Declared
+  // here anyway so the metric is recognized as a routed token counter, with the
+  // per-datapoint column coming from `type`.
+  telemetryTokenMetrics: { 'claude_code.token.usage': 'by-type-attribute' },
   // HS-9605 — `claude_code.cost.usage`; the whole cost UI was built on it.
   telemetryReportsCost: true,
   tier: 'cli-agent',

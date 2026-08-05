@@ -57,6 +57,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
+import type { TokenColumn } from '../aiTools/tokenMetrics.js';
 import { createBackup } from '../backup.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
@@ -64,15 +65,17 @@ import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClus
 import { computeTicketRollupFromRaw } from './otelDashboard.js';
 import { latencyBucketIndex } from './otelHistogram.js';
 import { eventNameMatchSql } from './otelRollups.js';
+import { tokenRollupSources } from './otelTokenRouting.js';
 
 /** Mirrors `getWindowTotals` / ingest: a cumulative monotonic counter carries its
  *  running total in every export, so SUMming re-inflates — exclude it. */
 const EXCLUDE_CUMULATIVE_MONOTONIC_SQL =
   "(aggregation_temporality IS DISTINCT FROM 'cumulative' OR is_monotonic IS NOT TRUE)";
 
-/** The two metrics the daily time-series rollup tracks (cost + split tokens). */
+/** The cost metric the daily time-series rollup tracks. The token metrics are
+ *  no longer a literal here — HS-9604 derives them from the plugin registry via
+ *  `tokenRollupSources()`, so this path and live ingest cannot diverge. */
 const COST_METRIC = 'claude_code.cost.usage';
-const TOKEN_METRIC = 'claude_code.token.usage';
 
 /** Yield the event loop between projects/tickets so a large backfill never
  *  starves the already-listening server (mirrors the HS-8874 migration). */
@@ -219,6 +222,30 @@ function dayString(v: unknown): string {
  * db's daily rollups. Returns the number of rows written.
  */
 export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz: string): Promise<number> {
+  // HS-9604 — the token columns are derived from the SAME routing table live
+  // ingest uses (`tokenRollupSources`), not from Claude-shaped literals. This
+  // function DELETEs and recomputes, so a disagreement between the two paths
+  // would not merely be inconsistent — a rebuild would silently rewrite
+  // history, dropping every non-Claude tool's tokens.
+  const src = tokenRollupSources();
+  const cols: TokenColumn[] = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens'];
+  // $1 tz, $2 cost metric, then 3 params per token column.
+  const params: unknown[] = [tz, COST_METRIC];
+  const sums: string[] = [];
+  const rollupMetricNames = new Set<string>([COST_METRIC]);
+  for (const col of cols) {
+    const { names, typedMetrics, types } = src[col];
+    for (const n of [...names, ...typedMetrics]) rollupMetricNames.add(n);
+    const i = params.length;
+    params.push(names, typedMetrics, types);
+    sums.push(
+      `COALESCE(SUM(val) FILTER (WHERE mn = ANY($${String(i + 1)}::text[])`
+      + ` OR (mn = ANY($${String(i + 2)}::text[]) AND ttype = ANY($${String(i + 3)}::text[]))), 0) AS ${col}`,
+    );
+  }
+  const metricsParam = params.length + 1;
+  params.push([...rollupMetricNames]);
+
   // Per (secret, server-local day, model, query.source): cost + split-by-type
   // token sums + datapoint_count, mirroring the reads' metric handling exactly.
   const grain = await clusterDb.query<Record<string, unknown>>(
@@ -232,18 +259,15 @@ export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz:
          attributes_json->>'type' AS ttype,
          COALESCE((value_json->>'asDouble')::numeric, (value_json->>'asInt')::numeric, 0) AS val
        FROM otel_metrics
-       WHERE metric_name IN ($2, $3) AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
+       WHERE metric_name = ANY($${String(metricsParam)}::text[]) AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}
      )
      SELECT secret, day, model, query_source,
        COALESCE(SUM(val) FILTER (WHERE mn = $2), 0) AS cost_usd,
-       COALESCE(SUM(val) FILTER (WHERE mn = $3 AND ttype = 'input'), 0) AS input_tokens,
-       COALESCE(SUM(val) FILTER (WHERE mn = $3 AND ttype = 'output'), 0) AS output_tokens,
-       COALESCE(SUM(val) FILTER (WHERE mn = $3 AND ttype IN ('cacheRead', 'cache_read')), 0) AS cache_read_tokens,
-       COALESCE(SUM(val) FILTER (WHERE mn = $3 AND ttype IN ('cacheCreation', 'cache_creation')), 0) AS cache_creation_tokens,
+       ${sums.join(',\n       ')},
        COUNT(*) AS datapoint_count
      FROM pts
      GROUP BY secret, day, model, query_source`,
-    [tz, COST_METRIC, TOKEN_METRIC],
+    params,
   );
 
   // HS-9259 — distinct prompt/session counts are no longer stored on

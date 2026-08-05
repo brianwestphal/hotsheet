@@ -13,8 +13,8 @@
 // the client bundle (`src/client/agentName.ts`), so a filesystem import here would break
 // the build. That constraint is why `detect` is DATA (a `DetectionSpec`) evaluated by a
 // server-side helper rather than a `(projectRoot) => boolean` closure; see `detect.ts`.
-
 import type { AgentTransport } from '../agentBackendParse.js';
+import type { TokenMetricMap } from './tokenMetrics.js';
 
 /**
  * How to tell whether a project uses this tool, expressed as data so the pure registry
@@ -112,6 +112,18 @@ export interface AiToolPlugin {
    * questions not yet settled (e.g. whether codex reports cost at all).
    */
   readonly telemetryMetricPrefix?: string;
+  /**
+   * HS-9604 — this tool's token counters, mapped to their `otel_rollup_daily`
+   * column (see `tokenMetrics.ts`).
+   *
+   * Absent means the tool contributes no token aggregates. The map's `'ignore'`
+   * routing is load-bearing rather than decorative: codex's counters are
+   * NESTED (`cached_input_tokens` is inside `input_tokens`), so the inclusive
+   * parents must be positively excluded or a summed total doubles. Claude's are
+   * disjoint by construction, which is why the two tools' maps look so
+   * different for what reads like the same data.
+   */
+  readonly telemetryTokenMetrics?: TokenMetricMap;
   /**
    * HS-9605 — whether this tool reports COST in its telemetry, not just tokens.
    *

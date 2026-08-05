@@ -105,6 +105,51 @@ describe('updateDailyRollup (HS-9233)', () => {
     expect(rows.rows[0].datapoint_count).toBe(2);
   });
 
+  it('aggregates codex, whose counters are SEPARATE metrics and NESTED (HS-9604)', async () => {
+    // The end-to-end shape of the double-count guard: feed one real turn's
+    // worth of codex counters — inclusive parents included, exactly as they
+    // arrive on the wire — and the persisted columns must total the turn's own
+    // `total_tokens`, not ~2x it.
+    const db = await getDb();
+    const base = { model: 'gpt-5-codex', 'query.source': 'main_agent' };
+    const cx = 'codex.turn.token_usage.';
+    const turn: [string, number][] = [
+      [`${cx}input_tokens`, 47468],            // inclusive of cached — must NOT land
+      [`${cx}cached_input_tokens`, 18176],
+      [`${cx}non_cached_input_tokens`, 29292],
+      [`${cx}output_tokens`, 340],
+      [`${cx}reasoning_output_tokens`, 60],    // inside output — must NOT land
+      [`${cx}total_tokens`, 47808],            // derivable — must NOT land
+    ];
+    for (const [name, value] of turn) {
+      await updateDailyRollup(db, 'sec', ts, name, value, base, DELTA);
+    }
+
+    const r = await db.query<{ input_tokens: string; output_tokens: string; cache_read_tokens: string; cache_creation_tokens: string; datapoint_count: number }>(
+      `SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, datapoint_count FROM otel_rollup_daily WHERE project_secret='sec'`,
+    );
+    expect(r.rows).toHaveLength(1);
+    const row = r.rows[0];
+    expect(Number(row.input_tokens)).toBe(29292);
+    expect(Number(row.cache_read_tokens)).toBe(18176);
+    expect(Number(row.output_tokens)).toBe(340);
+    expect(Number(row.cache_creation_tokens)).toBe(0);
+    // The property that actually matters — the sum is the truth.
+    const summed = Number(row.input_tokens) + Number(row.output_tokens)
+      + Number(row.cache_read_tokens) + Number(row.cache_creation_tokens);
+    expect(summed).toBe(47808);
+    // And the ignored counters did not even create datapoints.
+    expect(row.datapoint_count).toBe(3);
+  });
+
+  it('reports an ignored codex counter as not-a-rollup-metric, so no row is written', async () => {
+    const db = await getDb();
+    const base = { model: 'gpt-5-codex', 'query.source': 'main_agent' };
+    expect(await updateDailyRollup(db, 'sec', ts, 'codex.turn.token_usage.input_tokens', 999, base, DELTA)).toBe(false);
+    const r = await db.query(`SELECT 1 FROM otel_rollup_daily WHERE project_secret='sec'`);
+    expect(r.rows).toHaveLength(0);
+  });
+
   it('splits token.usage into the right column by type', async () => {
     const db = await getDb();
     const base = { model: 'sonnet-4', 'query.source': 'main_agent' };
