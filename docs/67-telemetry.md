@@ -775,13 +775,38 @@ excludes. Its `FILTER` clauses are now generated from `tokenRollupSources()`,
 the same routing table, so the agreement is structural. Pinned by matching
 tests on both paths using the same real turn.
 
-### 67.18.4 `reasoning_output_tokens` deliberately goes nowhere
+### 67.18.4 `reasoning_output_tokens` is a BREAKDOWN, not a fifth column (HS-9607)
 
-It is a subset of `output_tokens`, so the "column or fold into output" framing
-had a wrong option in it: **folding double-counts**. Storing it faithfully means
-a new breakdown column (a schema-version bump), tracked separately. Until then
-it is ignored, so no wrong number is produced, and the value stays visible on
-the raw `otel_metrics` row.
+It is a subset of `output_tokens` (4778/4778), so the "column or fold into
+output" framing had a wrong option in it: **folding double-counts**. HS-9607
+stores it in its own `otel_rollup_daily.reasoning_output_tokens` column
+(`SCHEMA_VERSION` 12 → 13).
+
+**The type system enforces the distinction**, which is the part worth copying if
+another such counter appears. `TokenBreakdownColumn` is a *separate type* from
+the summable `TokenColumn`, and `tokenColumnForDatapoint` /
+`breakdownColumnForDatapoint` return incompatible types — so a caller computing
+a total cannot pick up a breakdown even by mistake. That is a compiler
+guarantee rather than a comment asking readers not to make the error. Adding it
+to `TokenColumn` as a fifth member would have looked natural and been wrong.
+`BREAKDOWN_PARENT` records which disjoint column each breakdown lives inside.
+
+Surfaced in the UI as *"N of that reasoning"* — phrased as containment rather
+than as another addend — and rendered only when non-zero, since no tool but
+codex reports it and a permanent "0 reasoning" would be noise on every Claude
+dashboard.
+
+**No standard name to inherit.** Checked as part of this work: the OTel GenAI
+conventions codex emits are exactly `gen_ai.usage.{input,output}_tokens` +
+`cache_{read,write}.input_tokens` — **no reasoning counter**. So the
+codex-specific name is the only one available, and `GEN_AI_TOKEN_METRICS` gains
+nothing here.
+
+**One more codex metric, found while enumerating.** `codex.usage.*` is the
+session-cumulative counterpart of the per-turn family and has exactly two token
+metrics — `total_tokens` and `reasoning_output_tokens`. Both duplicate a
+per-turn counter at session scope, so both are `'ignore'`d; routing either
+would count the same tokens twice.
 
 ### 67.18.5 The GenAI conventions are inherited, not per-tool
 

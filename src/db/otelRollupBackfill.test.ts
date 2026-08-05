@@ -36,15 +36,19 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 describe('assembleDailyRows (HS-9234 / HS-9259, pure)', () => {
   it('maps grain rows 1:1, coercing string numerics (PGlite returns NUMERIC/BIGINT as strings)', () => {
     const grain = [
-      { secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent', cost_usd: '0.5', input_tokens: '100', output_tokens: '50', cache_read_tokens: '9', cache_creation_tokens: '0', datapoint_count: 3 },
+      { secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent', cost_usd: '0.5', input_tokens: '100', output_tokens: '50', cache_read_tokens: '9', cache_creation_tokens: '0', reasoning_output_tokens: '12', datapoint_count: 3 },
       { secret: 'A', day: '2026-06-30', model: 'haiku', query_source: 'subagent', cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0, datapoint_count: 9 },
     ];
     const rows = assembleDailyRows(grain);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toEqual({
       project_secret: 'A', day: '2026-06-30', model: 'sonnet', query_source: 'main_agent',
-      cost_usd: 0.5, input_tokens: 100, output_tokens: 50, cache_read_tokens: 9, cache_creation_tokens: 0, datapoint_count: 3,
+      cost_usd: 0.5, input_tokens: 100, output_tokens: 50, cache_read_tokens: 9, cache_creation_tokens: 0,
+      reasoning_output_tokens: 12, datapoint_count: 3,
     });
+    // HS-9607 — an absent breakdown coerces to 0, not NaN/undefined: older
+    // grain rows predate the column and must not poison the insert.
+    expect(rows[1].reasoning_output_tokens).toBe(0);
     // HS-9259 — no prompt_count / session_count fields anymore (moved to otel_daily_seen).
     expect(rows[0]).not.toHaveProperty('prompt_count');
     expect(rows[0]).not.toHaveProperty('session_count');
@@ -232,7 +236,7 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
         [`${cx}cached_input_tokens`, 18176],
         [`${cx}non_cached_input_tokens`, 29292],
         [`${cx}output_tokens`, 340],
-        [`${cx}reasoning_output_tokens`, 60],   // inside output
+        [`${cx}reasoning_output_tokens`, 60],   // inside output — own column
         [`${cx}total_tokens`, 47808],
       ];
       for (const [name, value] of turn) {
@@ -244,8 +248,8 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       }
 
       await backfillDailyForDir(clusterDb, mainDb, TZ);
-      const r = await mainDb.query<{ input_tokens: string; output_tokens: string; cache_read_tokens: string; cache_creation_tokens: string }>(
-        `SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM otel_rollup_daily WHERE project_secret = '${SECRET}'`,
+      const r = await mainDb.query<{ input_tokens: string; output_tokens: string; cache_read_tokens: string; cache_creation_tokens: string; reasoning_output_tokens: string }>(
+        `SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, reasoning_output_tokens FROM otel_rollup_daily WHERE project_secret = '${SECRET}'`,
       );
       expect(r.rows).toHaveLength(1);
       const row = r.rows[0];
@@ -255,6 +259,9 @@ describe('backfill against a real PGlite cluster (HS-9234)', () => {
       const summed = Number(row.input_tokens) + Number(row.output_tokens)
         + Number(row.cache_read_tokens) + Number(row.cache_creation_tokens);
       expect(summed).toBe(47808);
+      // HS-9607 — the backfill fills the breakdown too, and it
+      // stays outside the sum above — the same invariant on both paths.
+      expect(Number(row.reasoning_output_tokens)).toBe(60);
     });
 
     it('excludes cumulative-monotonic counters (no re-inflation)', async () => {

@@ -532,8 +532,11 @@ function sumWindowTotals(parts: WindowTotals[]): WindowTotals {
     outputTokens: acc.outputTokens + w.outputTokens,
     cacheReadTokens: acc.cacheReadTokens + w.cacheReadTokens,
     cacheCreationTokens: acc.cacheCreationTokens + w.cacheCreationTokens,
+    // HS-9607 — summing a breakdown ACROSS dbs is fine: it stays a breakdown of
+    // the summed `outputTokens`, and is still never added into `tokens`.
+    reasoningOutputTokens: acc.reasoningOutputTokens + w.reasoningOutputTokens,
     promptCount: acc.promptCount + w.promptCount,
-  }), { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, promptCount: 0 });
+  }), { cost: 0, tokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, reasoningOutputTokens: 0, promptCount: 0 });
 }
 
 /** HS-8874 — group cost-by-model rows from multiple DBs by model, summing each

@@ -118,15 +118,15 @@ describe('updateDailyRollup (HS-9233)', () => {
       [`${cx}cached_input_tokens`, 18176],
       [`${cx}non_cached_input_tokens`, 29292],
       [`${cx}output_tokens`, 340],
-      [`${cx}reasoning_output_tokens`, 60],    // inside output — must NOT land
+      [`${cx}reasoning_output_tokens`, 60],    // inside output — its OWN column, never summed
       [`${cx}total_tokens`, 47808],            // derivable — must NOT land
     ];
     for (const [name, value] of turn) {
       await updateDailyRollup(db, 'sec', ts, name, value, base, DELTA);
     }
 
-    const r = await db.query<{ input_tokens: string; output_tokens: string; cache_read_tokens: string; cache_creation_tokens: string; datapoint_count: number }>(
-      `SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, datapoint_count FROM otel_rollup_daily WHERE project_secret='sec'`,
+    const r = await db.query<{ input_tokens: string; output_tokens: string; cache_read_tokens: string; cache_creation_tokens: string; reasoning_output_tokens: string; datapoint_count: number }>(
+      `SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, reasoning_output_tokens, datapoint_count FROM otel_rollup_daily WHERE project_secret='sec'`,
     );
     expect(r.rows).toHaveLength(1);
     const row = r.rows[0];
@@ -138,8 +138,11 @@ describe('updateDailyRollup (HS-9233)', () => {
     const summed = Number(row.input_tokens) + Number(row.output_tokens)
       + Number(row.cache_read_tokens) + Number(row.cache_creation_tokens);
     expect(summed).toBe(47808);
-    // And the ignored counters did not even create datapoints.
-    expect(row.datapoint_count).toBe(3);
+    // HS-9607 — reasoning IS stored, in its own column, and is NOT part of the
+    // sum above. That is the whole point of the breakdown/column split.
+    expect(Number(row.reasoning_output_tokens)).toBe(60);
+    // The two inclusive parents + the derivable total created no datapoints.
+    expect(row.datapoint_count).toBe(4);
   });
 
   it('reports an ignored codex counter as not-a-rollup-metric, so no row is written', async () => {

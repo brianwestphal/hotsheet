@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  breakdownColumnForDatapoint,
   isTokenRollupMetric,
   tokenColumnForDatapoint,
   tokenColumnFromTypeAttribute,
@@ -59,11 +60,19 @@ describe('codex — separate metrics, NESTED (the double-count guard)', () => {
     expect(tokenColumnForDatapoint(`${CX}input_tokens`, {})).toBeNull();
   });
 
-  it('does NOT route `reasoning_output_tokens` — it is inside `output_tokens`', () => {
-    // 4778/4778. Folding it into output would double-count; storing it
-    // faithfully needs a breakdown column, tracked separately. Neither is
-    // "route it anyway".
-    expect(isTokenRollupMetric(`${CX}reasoning_output_tokens`)).toBe(false);
+  it('routes `reasoning_output_tokens` to a BREAKDOWN, never a summable column (HS-9607)', () => {
+    // 4778/4778 it is inside `output_tokens`. It IS stored — but the two
+    // accessors return incompatible types, so a caller computing a total
+    // cannot pick it up even by mistake.
+    expect(isTokenRollupMetric(`${CX}reasoning_output_tokens`)).toBe(true);
+    expect(breakdownColumnForDatapoint(`${CX}reasoning_output_tokens`)).toBe('reasoning_output_tokens');
+    expect(tokenColumnForDatapoint(`${CX}reasoning_output_tokens`, {})).toBeNull();
+  });
+
+  it('reports no breakdown for the ordinary disjoint counters', () => {
+    expect(breakdownColumnForDatapoint(`${CX}output_tokens`)).toBeNull();
+    expect(breakdownColumnForDatapoint(CLAUDE_TOKENS)).toBeNull();
+    expect(breakdownColumnForDatapoint(`${CX}input_tokens`)).toBeNull();
   });
 
   it('does NOT route either total — both are derivable and would triple-count', () => {
@@ -114,5 +123,16 @@ describe('unrecognized metrics', () => {
     // A stray metric carrying `type: 'input'` must not be swept into Claude's
     // bucket just because the attribute happens to be present.
     expect(tokenColumnForDatapoint('vendor.token.usage', { type: 'input' })).toBeNull();
+  });
+});
+
+describe('the session-cumulative `codex.usage.*` family (HS-9607)', () => {
+  it('is excluded so its counters are not counted alongside the per-turn ones', () => {
+    // Enumerated from codex-cli 0.146.0, `codex.usage.*` has exactly two token
+    // metrics and both duplicate a per-turn counter at session scope. Routing
+    // either would double-count.
+    expect(isTokenRollupMetric('codex.usage.total_tokens')).toBe(false);
+    expect(isTokenRollupMetric('codex.usage.reasoning_output_tokens')).toBe(false);
+    expect(breakdownColumnForDatapoint('codex.usage.reasoning_output_tokens')).toBeNull();
   });
 });

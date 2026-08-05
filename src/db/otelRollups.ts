@@ -50,6 +50,13 @@ export interface WindowTotals {
   cacheReadTokens: number;
   /** HS-8639 — `type='cacheCreation'` tokens (cache write, billed ~1.25× input). */
   cacheCreationTokens: number;
+  /**
+   * HS-9607 — reasoning tokens, a BREAKDOWN of `outputTokens` rather than a
+   * peer of it. Measured 4778/4778 inside `output_tokens`, so it is deliberately
+   * NOT part of `tokens` and must never be added to a total. Zero for tools that
+   * do not report it (every tool but codex today).
+   */
+  reasoningOutputTokens: number;
   promptCount: number;
 }
 
@@ -291,7 +298,7 @@ export async function getWindowTotals(
 
   const totals = await db.query<{
     cost: string | null; tokens: string | null; input: string | null; output: string | null;
-    cache_read: string | null; cache_creation: string | null;
+    cache_read: string | null; cache_creation: string | null; reasoning: string | null;
   }>(
     `SELECT
         COALESCE(SUM(cost_usd), 0) AS cost,
@@ -299,7 +306,9 @@ export async function getWindowTotals(
         COALESCE(SUM(input_tokens), 0) AS input,
         COALESCE(SUM(output_tokens), 0) AS output,
         COALESCE(SUM(cache_read_tokens), 0) AS cache_read,
-        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation
+        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation,
+        -- HS-9607 — a breakdown of output, deliberately absent from tokens.
+        COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning
      FROM otel_rollup_daily
      WHERE TRUE${daily.clauses}`,
     daily.params,
@@ -317,6 +326,7 @@ export async function getWindowTotals(
     outputTokens: Number(totals.rows[0]?.output ?? 0),
     cacheReadTokens: Number(totals.rows[0]?.cache_read ?? 0),
     cacheCreationTokens: Number(totals.rows[0]?.cache_creation ?? 0),
+    reasoningOutputTokens: Number(totals.rows[0]?.reasoning ?? 0),
     promptCount,
   };
 }

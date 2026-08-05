@@ -57,7 +57,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
-import type { TokenColumn } from '../aiTools/tokenMetrics.js';
+import type { TokenBreakdownColumn, TokenColumn } from '../aiTools/tokenMetrics.js';
 import { createBackup } from '../backup.js';
 import { readGlobalConfig, writeGlobalConfig } from '../global-config.js';
 import { readProjectList } from '../project-list.js';
@@ -190,6 +190,8 @@ interface DailyGrainRow {
   output_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  /** HS-9607 — a BREAKDOWN of `output_tokens`, never added to a total. */
+  reasoning_output_tokens: number;
   datapoint_count: number;
 }
 
@@ -228,7 +230,13 @@ export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz:
   // would not merely be inconsistent — a rebuild would silently rewrite
   // history, dropping every non-Claude tool's tokens.
   const src = tokenRollupSources();
-  const cols: TokenColumn[] = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens'];
+  // HS-9607 — the breakdown column rides the same generation loop (it needs
+  // filling from the same raw rows) but is listed AFTER the disjoint four, and
+  // is typed `TokenBreakdownColumn` so it can never be mistaken for an addend.
+  const cols: (TokenColumn | TokenBreakdownColumn)[] = [
+    'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens',
+    'reasoning_output_tokens',
+  ];
   // $1 tz, $2 cost metric, then 3 params per token column.
   const params: unknown[] = [tz, COST_METRIC];
   const sums: string[] = [];
@@ -303,6 +311,7 @@ export function assembleDailyRows(
     output_tokens: n(r.output_tokens),
     cache_read_tokens: n(r.cache_read_tokens),
     cache_creation_tokens: n(r.cache_creation_tokens),
+    reasoning_output_tokens: n(r.reasoning_output_tokens),
     datapoint_count: n(r.datapoint_count),
   }));
 }
@@ -310,7 +319,7 @@ export function assembleDailyRows(
 /** Bulk-insert daily rollup rows, batched under the bind-param ceiling. */
 async function insertDailyRows(mainDb: PGlite, rows: DailyGrainRow[]): Promise<void> {
   if (rows.length === 0) return;
-  const PER_BATCH = 400; // 400 rows x 10 cols = 4000 params, well under PostgreSQL's 65535.
+  const PER_BATCH = 400; // 400 rows x 11 cols = 4400 params, well under PostgreSQL's 65535.
   for (let i = 0; i < rows.length; i += PER_BATCH) {
     const batch = rows.slice(i, i + PER_BATCH);
     const params: unknown[] = [];
@@ -319,16 +328,16 @@ async function insertDailyRows(mainDb: PGlite, rows: DailyGrainRow[]): Promise<v
       params.push(
         r.project_secret, r.day, r.model, r.query_source,
         r.cost_usd, r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_creation_tokens,
-        r.datapoint_count,
+        r.reasoning_output_tokens, r.datapoint_count,
       );
       const p = (k: number) => `$${String(base + k)}`;
-      return `(${p(1)}, ${p(2)}::date, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)})`;
+      return `(${p(1)}, ${p(2)}::date, ${p(3)}, ${p(4)}, ${p(5)}, ${p(6)}, ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)}, ${p(11)})`;
     });
     await mainDb.query(
       `INSERT INTO otel_rollup_daily
          (project_secret, day, model, query_source,
           cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-          datapoint_count)
+          reasoning_output_tokens, datapoint_count)
        VALUES ${valueRows.join(', ')}`,
       params,
     );

@@ -15,6 +15,8 @@ interface WindowTotals {
   tokens: number;
   inputTokens: number;
   outputTokens: number;
+  /** HS-9607 — a breakdown of `outputTokens`, never added to `tokens`. */
+  reasoningOutputTokens?: number;
   promptCount: number;
 }
 
@@ -344,5 +346,22 @@ describe('cost chip availability (HS-9605)', () => {
   it('renders an empty window as before rather than warning about nothing', () => {
     const chip = _testing.renderWindowChip('Today', { ...totals, cost: 0 }, costAvailabilityFor([]));
     expect(chip.querySelector('.telemetry-chip-cost')?.textContent).toContain('$0.00');
+  });
+});
+
+describe('reasoning tokens as a breakdown, not an addend (HS-9607)', () => {
+  it('phrases reasoning as "of that", since it is inside the output figure', () => {
+    const body = _testing.renderBody(
+      makePayload({ windowTotalsAllTime: { ...nonEmptyTotals(3), reasoningOutputTokens: 120 } }),
+      'secretA',
+    );
+    expect(body.textContent).toContain('of that reasoning');
+  });
+
+  it('does not render a permanent "0 reasoning" line for tools that never report it', () => {
+    // Every Claude dashboard would otherwise carry a zero forever, which is
+    // noise, not information.
+    const body = _testing.renderBody(makePayload(), 'secretA');
+    expect(body.textContent).not.toContain('reasoning');
   });
 });

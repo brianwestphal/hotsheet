@@ -21,11 +21,19 @@ export const codexPlugin: AiToolPlugin = {
     'codex.turn.token_usage.cached_input_tokens': 'cache_read_tokens',
     'codex.turn.token_usage.cache_write_input_tokens': 'cache_creation_tokens',
     'codex.turn.token_usage.output_tokens': 'output_tokens',
-    // Inclusive parents + derivable totals: real counters, deliberately unrouted.
+    // A BREAKDOWN of output_tokens, not a peer — stored for detail, never summed.
+    'codex.turn.token_usage.reasoning_output_tokens': 'reasoning_output_tokens',
+    // Inclusive parent + derivable totals: real counters, deliberately unrouted.
     'codex.turn.token_usage.input_tokens': 'ignore',
-    'codex.turn.token_usage.reasoning_output_tokens': 'ignore',
+
     'codex.turn.token_usage.total_tokens': 'ignore',
     'codex.usage.total_tokens': 'ignore',
+    // The `codex.usage.*` family is the SESSION-cumulative counterpart of the
+    // per-turn ones above. Routing this alongside the turn-level reasoning
+    // counter would count reasoning twice, so it is excluded for the same
+    // reason `codex.usage.total_tokens` is. (Enumerated from codex-cli 0.146.0:
+    // these two are the only `codex.usage.*` token metrics.)
+    'codex.usage.reasoning_output_tokens': 'ignore',
   },
   // HS-9605 — stated rather than left absent: codex reports tokens in detail and
   // cost NEVER (verified against 0.146.0 — zero `*.cost*` metrics exist). Absence

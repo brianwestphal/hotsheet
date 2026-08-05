@@ -1,7 +1,7 @@
 import { type PGlite } from '@electric-sql/pglite';
 
 import { latencyBucketIndex } from './otelHistogram.js';
-import { isTokenRollupMetric, tokenColumnForDatapoint } from './otelTokenRouting.js';
+import { breakdownColumnForDatapoint, isTokenRollupMetric, tokenColumnForDatapoint } from './otelTokenRouting.js';
 import type { MetricAggregation } from './otelWriters.js';
 
 /**
@@ -275,6 +275,8 @@ export async function updateDailyRollup(
   let outputT = 0;
   let cacheReadT = 0;
   let cacheCreationT = 0;
+  // HS-9607 — a breakdown of outputT, tracked separately so no total picks it up.
+  let reasoningT = 0;
   if (metricName === COST_METRIC) {
     cost = value;
   } else {
@@ -285,21 +287,25 @@ export async function updateDailyRollup(
       case 'cache_creation_tokens': cacheCreationT = value; break;
       case null: break; // unknown token type → datapoint_count only
     }
+    const breakdown = breakdownColumnForDatapoint(metricName);
+    if (breakdown === 'reasoning_output_tokens') reasoningT = value;
   }
 
   await mainDb.query(
     `INSERT INTO otel_rollup_daily
        (project_secret, day, model, query_source,
-        cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, datapoint_count)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+        cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+        reasoning_output_tokens, datapoint_count)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1)
      ON CONFLICT (project_secret, day, model, query_source) DO UPDATE SET
        cost_usd              = otel_rollup_daily.cost_usd              + EXCLUDED.cost_usd,
        input_tokens          = otel_rollup_daily.input_tokens          + EXCLUDED.input_tokens,
        output_tokens         = otel_rollup_daily.output_tokens         + EXCLUDED.output_tokens,
        cache_read_tokens     = otel_rollup_daily.cache_read_tokens     + EXCLUDED.cache_read_tokens,
        cache_creation_tokens = otel_rollup_daily.cache_creation_tokens + EXCLUDED.cache_creation_tokens,
+       reasoning_output_tokens = otel_rollup_daily.reasoning_output_tokens + EXCLUDED.reasoning_output_tokens,
        datapoint_count       = otel_rollup_daily.datapoint_count       + 1`,
-    [projectSecret, day, model, querySource, cost, inputT, outputT, cacheReadT, cacheCreationT],
+    [projectSecret, day, model, querySource, cost, inputT, outputT, cacheReadT, cacheCreationT, reasoningT],
   );
   return true;
 }

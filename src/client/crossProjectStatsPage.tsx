@@ -78,6 +78,9 @@ interface WindowTotals {
   // HS-8639 — cache tokens (excluded from `tokens`, shown so cost reconciles).
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /** HS-9607 — reasoning tokens, a BREAKDOWN of `outputTokens` (never an
+   *  addend). Optional so an older server's payload still renders. */
+  reasoningOutputTokens?: number;
   promptCount: number;
 }
 

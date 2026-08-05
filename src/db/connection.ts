@@ -53,7 +53,7 @@ export { isClusterStorageFailure } from './storageFailure.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 12; // HS-9279 — added otel_hourly_seen (per-(day,hour) distinct-prompt dedup for the heatmap; epic HS-9226 Phase 3b)
+export const SCHEMA_VERSION = 13; // HS-9607 — added otel_rollup_daily.reasoning_output_tokens (a BREAKDOWN of output_tokens, never summed with it)
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1859,6 +1859,12 @@ async function initSchema(db: PGlite): Promise<void> {
       PRIMARY KEY (project_secret, day, model, query_source)
     );
     CREATE INDEX IF NOT EXISTS idx_otel_rollup_daily_day ON otel_rollup_daily(project_secret, day);
+    -- HS-9607 — a BREAKDOWN of output_tokens, NOT a fifth disjoint column.
+    -- Codex's reasoning tokens are already inside output_tokens (measured
+    -- 4778/4778), so this must never be added to a token total. The type system
+    -- enforces that: TokenBreakdownColumn in aiTools/tokenMetrics.ts is a
+    -- separate type from the summable TokenColumn.
+    ALTER TABLE otel_rollup_daily ADD COLUMN IF NOT EXISTS reasoning_output_tokens BIGINT NOT NULL DEFAULT 0;
 
     -- Per-ticket cost rollup, kept INDEFINITELY (the user's explicit requirement).
     -- Maintained at ingest (HS-9233) by attributing each api_request to the OPEN

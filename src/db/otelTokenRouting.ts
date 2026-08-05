@@ -12,8 +12,8 @@
  * disjoint, so the same-looking data needs opposite handling.
  */
 import { getPlugin, listPlugins } from '../aiTools/registry.js';
-import type { TokenColumn, TokenMetricMap } from '../aiTools/tokenMetrics.js';
-import { GEN_AI_TOKEN_METRICS, routeTokenMetric } from '../aiTools/tokenMetrics.js';
+import type { TokenBreakdownColumn, TokenColumn, TokenMetricMap } from '../aiTools/tokenMetrics.js';
+import { GEN_AI_TOKEN_METRICS, isBreakdownColumn, routeTokenMetric } from '../aiTools/tokenMetrics.js';
 import { emitterForSignalName } from './otelEmitter.js';
 
 /** A tool's declared token map, or `undefined` if the emitter is unrecognized
@@ -66,7 +66,23 @@ export function tokenColumnForDatapoint(
   const routing = routeTokenMetric(metricName, mapFor(metricName));
   if (routing === 'by-type-attribute') return tokenColumnFromTypeAttribute(attrs);
   if (routing === null || routing === 'ignore') return null;
+  // A breakdown is stored separately and must never reach a summable column —
+  // this is the containment invariant, enforced by the type split.
+  if (isBreakdownColumn(routing)) return null;
   return routing;
+}
+
+/**
+ * The BREAKDOWN column a datapoint belongs in, or `null`.
+ *
+ * Separate from `tokenColumnForDatapoint` on purpose: a caller wanting a total
+ * uses that one and cannot accidentally pick this up, because the two return
+ * incompatible types (HS-9607).
+ */
+export function breakdownColumnForDatapoint(metricName: string): TokenBreakdownColumn | null {
+  const routing = routeTokenMetric(metricName, mapFor(metricName));
+  if (routing === null || routing === 'ignore' || routing === 'by-type-attribute') return null;
+  return isBreakdownColumn(routing) ? routing : null;
 }
 
 /** Every `type`-attribute spelling the by-type-attribute shape accepts, so the
@@ -93,12 +109,15 @@ export interface TokenRollupSources {
  * parents the live path excludes. Deriving both from one table is what makes
  * that agreement structural rather than a thing to remember.
  */
-export function tokenRollupSources(): Record<TokenColumn, TokenRollupSources> {
-  const out: Record<TokenColumn, TokenRollupSources> = {
+export function tokenRollupSources(): Record<TokenColumn | TokenBreakdownColumn, TokenRollupSources> {
+  const out: Record<TokenColumn | TokenBreakdownColumn, TokenRollupSources> = {
     input_tokens: { names: [], typedMetrics: [], types: [] },
     output_tokens: { names: [], typedMetrics: [], types: [] },
     cache_read_tokens: { names: [], typedMetrics: [], types: [] },
     cache_creation_tokens: { names: [], typedMetrics: [], types: [] },
+    // A breakdown, not an addend — the backfill must fill it and must NOT add
+    // it to any total (HS-9607).
+    reasoning_output_tokens: { names: [], typedMetrics: [], types: [] },
   };
   const maps = [
     GEN_AI_TOKEN_METRICS,

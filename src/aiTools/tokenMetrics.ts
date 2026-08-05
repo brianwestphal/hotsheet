@@ -36,21 +36,48 @@
  * and the inclusive `input_tokens` is simply not routed. Stateless, and correct
  * per datapoint.
  *
- * ## `reasoning_output_tokens` deliberately goes nowhere
+ * ## `reasoning_output_tokens` is a BREAKDOWN, not a fifth column
  *
- * It is a subset of `output_tokens`, so adding it double-counts; folding is not
- * an option the measurement leaves open. Storing it faithfully means a new
- * breakdown column on `otel_rollup_daily` (a schema-version bump) — tracked
- * separately. Until then it is `ignore`d, so no wrong number is produced, and
- * the value remains visible on the raw `otel_metrics` row either way.
+ * It is a subset of `output_tokens` (4778/4778), so adding it to the disjoint
+ * set would double-count in any caller that sums them. HS-9607 stores it in its
+ * own column typed `TokenBreakdownColumn` — a separate type from `TokenColumn`,
+ * so the compiler refuses to treat it as an addend rather than a comment asking
+ * readers not to.
  */
 
-/** The disjoint rollup columns on `otel_rollup_daily`. */
+/**
+ * The **disjoint** rollup columns on `otel_rollup_daily`. Summing all four is a
+ * valid total — that property is what the routing rules exist to protect, and
+ * nothing that is a subset of another column may join this type.
+ */
 export type TokenColumn =
   | 'input_tokens'
   | 'output_tokens'
   | 'cache_read_tokens'
   | 'cache_creation_tokens';
+
+/**
+ * A **breakdown** column: a counter that is already INSIDE one of the disjoint
+ * columns, stored for detail rather than for summing (HS-9607).
+ *
+ * Deliberately a separate type from `TokenColumn` rather than a fifth member.
+ * Measured 4778/4778, `reasoning_output_tokens` is a subset of
+ * `output_tokens` — so a caller that sums "all the token columns" would
+ * double-count it. Keeping it out of `TokenColumn` means the type system
+ * refuses that mistake instead of a comment asking readers not to make it.
+ */
+export type TokenBreakdownColumn = 'reasoning_output_tokens';
+
+/** Which disjoint column each breakdown lives inside, so a reader (or a future
+ *  consistency check) can see the containment rather than infer it. */
+export const BREAKDOWN_PARENT: Readonly<Record<TokenBreakdownColumn, TokenColumn>> = {
+  reasoning_output_tokens: 'output_tokens',
+};
+
+/** Type guard separating the two, since `routeTokenMetric` returns either. */
+export function isBreakdownColumn(r: TokenRouting): r is TokenBreakdownColumn {
+  return r in BREAKDOWN_PARENT;
+}
 
 /**
  * Where a counter goes. `'ignore'` is a **positive** declaration — "this
@@ -64,7 +91,7 @@ export type TokenColumn =
  * The column then comes from the attribute rather than the name, so the map
  * says *how to look*, not *where it goes*.
  */
-export type TokenRouting = TokenColumn | 'ignore' | 'by-type-attribute';
+export type TokenRouting = TokenColumn | TokenBreakdownColumn | 'ignore' | 'by-type-attribute';
 
 /**
  * A tool's token metrics: exact metric name → routing.

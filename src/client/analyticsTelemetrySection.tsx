@@ -70,6 +70,9 @@ interface WindowTotals {
   // 1M-context rate premium). Optional for back-compat with cached responses.
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /** HS-9607 — reasoning tokens, a BREAKDOWN of `outputTokens` (never an
+   *  addend). Optional so an older server's payload still renders. */
+  reasoningOutputTokens?: number;
   promptCount: number;
 }
 
@@ -189,6 +192,7 @@ function renderWindowChip(label: string, totals: WindowTotals, cost: CostAvailab
   const cacheRead = totals.cacheReadTokens ?? 0;
   const cacheCreation = totals.cacheCreationTokens ?? 0;
   const hasCache = cacheRead > 0 || cacheCreation > 0;
+  const reasoning = totals.reasoningOutputTokens ?? 0;
   return toElement(
     <div className="telemetry-chip">
       <div className="telemetry-chip-label">{label}</div>
@@ -201,6 +205,13 @@ function renderWindowChip(label: string, totals: WindowTotals, cost: CostAvailab
         : null}
       {hasCache
         ? <div className="telemetry-chip-submeta telemetry-chip-submeta-cache">{`${formatTokens(cacheRead)} cache read · ${formatTokens(cacheCreation)} cache write`}</div>
+        : null}
+      {/* HS-9607 — reasoning is INSIDE the output figure above, so it is
+          phrased as "of which" rather than listed as another addend. Only
+          rendered when non-zero: no tool but codex reports it, and a
+          permanent "0 reasoning" would be noise on every Claude dashboard. */}
+      {reasoning > 0
+        ? <div className="telemetry-chip-submeta" title="Reasoning tokens are part of the output total above, not additional to it.">{`${formatTokens(reasoning)} of that reasoning`}</div>
         : null}
     </div>
   );
