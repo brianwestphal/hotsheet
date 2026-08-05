@@ -1,9 +1,13 @@
+// HS-8566 — shared cost formatter (the $1000-cutoff + half-up rule).
+// HS-8670 — shared token formatter (was duplicated here + 3 other surfaces).
+import type { SafeHtml } from 'kerfjs';
+
+import { type CostAvailability, costAvailabilityFor, costAvailabilityNote } from '../aiTools/costAvailability.js';
 import { getPerTicketRollup, type TicketRollup } from '../api/index.js';
+import { telemetrySectionTitle } from './analyticsTelemetrySection.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { projectScoped } from './projectScoped.js';
 import { getActiveProject } from './state.js';
-// HS-8566 — shared cost formatter (the $1000-cutoff + half-up rule).
-// HS-8670 — shared token formatter (was duplicated here + 3 other surfaces).
 import { formatCost, formatTokens } from './telemetryFormat.js';
 
 /**
@@ -64,18 +68,49 @@ const keyFor = (ticketNumber: string): string => `${getActiveProject()?.secret ?
 
 /** Paint one rollup into the container, or hide the block (empty container) when
  *  the ticket has zero attributed prompts. `replaceChildren` keeps it idempotent. */
+/**
+ * HS-9610 — the cost stat, qualified when it cannot be believed in full
+ * (docs/67 §67.17).
+ *
+ * This rollup is kept INDEFINITELY while the raw rows age out under the
+ * retention sweep, so an unqualified figure here outlives the data that could
+ * have corrected it. Of every cost surface, this is the one where being wrong
+ * is permanent — which is why it gets the full three-state treatment rather
+ * than only the partial flag.
+ */
+function renderTicketCost(total: number, cost: CostAvailability): SafeHtml {
+  const note = costAvailabilityNote(cost);
+  if (cost.status === 'unavailable') {
+    return <span className="ticket-telemetry-stat-value telemetry-chip-cost-unavailable" title={note ?? ''}>—</span>;
+  }
+  if (cost.status === 'partial') {
+    return (
+      <span className="ticket-telemetry-stat-value telemetry-chip-cost-partial" title={note ?? ''}>
+        {formatCost(total)}<span className="telemetry-chip-cost-flag" aria-hidden="true">*</span>
+      </span>
+    );
+  }
+  return <span className="ticket-telemetry-stat-value">{formatCost(total)}</span>;
+}
+
 function renderRollup(container: HTMLElement, rollup: TicketRollup): void {
   if (rollup.promptCount === 0) {
     container.replaceChildren();
     return;
   }
+  // HS-9610 — the heading follows the DATA, not a hard-coded vendor, the same
+  // rule HS-9602 applied to the dashboard. A codex-worked ticket labelled
+  // "Claude Usage" is the same lie in a smaller place.
+  const emitters = rollup.emitters ?? [];
+  const cost = costAvailabilityFor(emitters);
+  const title = `${telemetrySectionTitle(emitters).replace(/ Usage$/, '')} Usage on This Ticket`;
   container.replaceChildren(toElement(
     <div className="ticket-telemetry-block">
-      <h4 className="ticket-telemetry-label">Claude Usage on This Ticket</h4>
+      <h4 className="ticket-telemetry-label">{title}</h4>
       <div className="ticket-telemetry-stats-grid">
         <div className="ticket-telemetry-stat">
           <span className="ticket-telemetry-stat-label">Cost</span>
-          <span className="ticket-telemetry-stat-value">{formatCost(rollup.totalCost)}</span>
+          {renderTicketCost(rollup.totalCost, cost)}
         </div>
         <div className="ticket-telemetry-stat">
           <span className="ticket-telemetry-stat-label">Tokens</span>
@@ -161,4 +196,5 @@ export const _testing = {
   formatTokens,
   formatDuration,
   resetCache(): void { rollupCache.get().clear(); paintedKey = null; },
+  renderRollup,
 };

@@ -10,14 +10,27 @@ import { describe, expect, it } from 'vitest';
 import { eventNameMatchSql, isClaudeCodeEvent } from './otelRollups.js';
 
 describe('eventNameMatchSql', () => {
-  it('emits an IN clause over the bare + claude_code-prefixed variants', () => {
-    expect(eventNameMatchSql('event_name', 'user_prompt'))
-      .toBe(`event_name IN ('user_prompt', 'claude_code.user_prompt')`);
+  it('emits an IN clause over the bare form plus EVERY registered tool prefix', () => {
+    // HS-9610 — was Claude-only. Until this widened, `codex.api_request`
+    // matched nothing and codex work never reached the per-ticket rollup.
+    const sql = eventNameMatchSql('event_name', 'user_prompt');
+    expect(sql.startsWith(`event_name IN ('user_prompt', `)).toBe(true);
+    expect(sql).toContain(`'claude_code.user_prompt'`);
+    expect(sql).toContain(`'codex.user_prompt'`);
+  });
+
+  it('enumerates KNOWN prefixes rather than accepting any `*.user_prompt`', () => {
+    // A wildcard would let an unrelated vendor's identically-named event land
+    // on someone's ticket. Every variant must be an exact literal.
+    const sql = eventNameMatchSql('event_name', 'user_prompt');
+    expect(sql).not.toContain('LIKE');
+    expect(sql).not.toContain('%');
   });
 
   it('uses the column name it is given', () => {
-    expect(eventNameMatchSql('e.name', 'tool_result'))
-      .toBe(`e.name IN ('tool_result', 'claude_code.tool_result')`);
+    const sql = eventNameMatchSql('e.name', 'tool_result');
+    expect(sql.startsWith(`e.name IN ('tool_result', `)).toBe(true);
+    expect(sql).toContain(`'claude_code.tool_result'`);
   });
 });
 

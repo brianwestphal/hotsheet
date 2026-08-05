@@ -53,7 +53,7 @@ export { isClusterStorageFailure } from './storageFailure.js';
  *  a reader know whether the rows match today's schema. Start at 1; the
  *  exact value is opaque, only equality with the current code's version
  *  matters. */
-export const SCHEMA_VERSION = 13; // HS-9607 — added otel_rollup_daily.reasoning_output_tokens (a BREAKDOWN of output_tokens, never summed with it)
+export const SCHEMA_VERSION = 14; // HS-9610 — added otel_rollup_ticket.emitters (which tool produced a ticket's telemetry; empty reads as ['claude'])
 
 /**
  * HS-8426 — pure helper: should this open-time error trigger the
@@ -1882,6 +1882,14 @@ async function initSchema(db: PGlite): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (project_secret, ticket_number)
     );
+    -- HS-9610 — which AI tool(s) produced this ticket's telemetry, so the
+    -- per-ticket cost can be qualified the way every other cost surface is
+    -- (docs/67 §67.17). This rollup is kept INDEFINITELY while the raw rows age
+    -- out, so an unqualified figure here outlives the data that could correct
+    -- it. An EMPTY array is read as ['claude'] rather than backfilled: every
+    -- pre-HS-9610 row predates codex ingestion and is Claude's, so the
+    -- read-time default is both accurate and invisible on upgrade.
+    ALTER TABLE otel_rollup_ticket ADD COLUMN IF NOT EXISTS emitters TEXT[] NOT NULL DEFAULT '{}';
 
     -- HS-9243 (epic HS-9226 Phase 2 follow-up) — dedup SET of the distinct
     -- prompt / session ids seen per (project, server-local day). Distinct counts

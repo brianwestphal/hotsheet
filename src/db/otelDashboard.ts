@@ -20,7 +20,7 @@ import {
   getAnnouncerUsageByProject, getAnnouncerUsageTotals,
 } from './announcerUsage.js';
 import { centralTelemetryDataDir, getDataDir, getRollupDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
-import { resolveWindowEmitters } from './otelEmitter.js';
+import { emitterForSignalName, resolveWindowEmitters } from './otelEmitter.js';
 import { readAllOtelJsonl } from './otelJsonlStore.js';
 import { type CostOverTimePoint,
   eventNameMatchSql,
@@ -265,6 +265,17 @@ export interface TicketRollup {
    *  — represents "time Claude spent working on this ticket" rather
    *  than the user's calendar time. */
   totalDurationSeconds: number;
+  /**
+   * HS-9610 — the AI tool(s) whose telemetry this ticket's figures come from,
+   * so the cost can be qualified (docs/67 §67.17).
+   *
+   * An empty stored set resolves to `['claude']`: every row written before
+   * HS-9610 predates codex ingestion and is Claude's, so the read-time default
+   * is accurate and invisible on upgrade — no migration, and it cannot
+   * half-apply. A ticket with NO telemetry at all resolves to `[]`, so the UI
+   * names no vendor over a blank panel.
+   */
+  emitters: string[];
 }
 
 /**
@@ -279,8 +290,8 @@ export async function getPerTicketRollup(ticketNumber: string, secret?: string):
   const db = await getRollupDb();
   const secretParam = secret !== undefined && secret !== '' ? secret : '';
 
-  const scalarResult = await db.query<{ cost: string | null; tokens: string | null; prompt_count: number | null }>(
-    `SELECT cost_usd AS cost, total_tokens AS tokens, prompt_count
+  const scalarResult = await db.query<{ cost: string | null; tokens: string | null; prompt_count: number | null; emitters: string[] | null }>(
+    `SELECT cost_usd AS cost, total_tokens AS tokens, prompt_count, emitters
        FROM otel_rollup_ticket
       WHERE project_secret = $1 AND ticket_number = $2`,
     [secretParam, ticketNumber],
@@ -303,6 +314,9 @@ export async function getPerTicketRollup(ticketNumber: string, secret?: string):
     totalCost: Number(row?.cost ?? 0),
     totalTokens: Number(row?.tokens ?? 0),
     totalDurationSeconds: Number(durationResult.rows[0].total_seconds ?? '0'),
+    // `row === undefined` means no rollup row at all — no telemetry for this
+    // ticket — which must name nothing rather than defaulting to Claude.
+    emitters: row === undefined ? [] : resolveWindowEmitters(row.emitters ?? [], true),
   };
 }
 
@@ -344,6 +358,7 @@ export async function computeTicketRollupFromRaw(db: PGlite, ticketNumber: strin
     total_cost: string | null;
     total_tokens: string | null;
     total_seconds: string | null;
+    event_names: string[] | null;
   }>(
     `WITH marker_prompts AS (
        SELECT DISTINCT prompt_id FROM otel_events
@@ -355,6 +370,7 @@ export async function computeTicketRollupFromRaw(db: PGlite, ticketNumber: strin
        SELECT
          e.prompt_id,
          e.ts,
+         e.event_name,
          COALESCE(
            (e.attributes_json->>'cost')::numeric,
            (e.attributes_json->>'cost_usd')::numeric,
@@ -386,7 +402,11 @@ export async function computeTicketRollupFromRaw(db: PGlite, ticketNumber: strin
        (SELECT COALESCE(SUM(dur), 0) FROM (
           SELECT EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) AS dur
           FROM matched WHERE prompt_id IS NOT NULL GROUP BY prompt_id
-        ) per_prompt) AS total_seconds`,
+        ) per_prompt) AS total_seconds,
+       -- HS-9610 — this path scans raw events, so the emitters are derivable
+       -- directly from the event names it already matched. No stored column
+       -- needed here, and no chance of drifting from what was counted.
+       (SELECT ARRAY_AGG(DISTINCT event_name) FROM matched) AS event_names`,
     [`%${marker}%`, secretParam, ticketNumber],
   );
 
@@ -397,6 +417,10 @@ export async function computeTicketRollupFromRaw(db: PGlite, ticketNumber: strin
     totalCost: Number(row.total_cost ?? 0),
     totalTokens: Number(row.total_tokens ?? 0),
     totalDurationSeconds: Number(row.total_seconds ?? 0),
+    emitters: resolveWindowEmitters(
+      (row.event_names ?? []).map(emitterForSignalName),
+      (row.event_names ?? []).length > 0,
+    ),
   };
 }
 

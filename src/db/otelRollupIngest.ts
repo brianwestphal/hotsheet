@@ -1,5 +1,6 @@
 import { type PGlite } from '@electric-sql/pglite';
 
+import { listPlugins } from '../aiTools/registry.js';
 import { latencyBucketIndex } from './otelHistogram.js';
 import { breakdownColumnForDatapoint, isTokenRollupMetric, tokenColumnForDatapoint } from './otelTokenRouting.js';
 import type { MetricAggregation } from './otelWriters.js';
@@ -242,7 +243,17 @@ export function stripNestedAttributes<T extends Record<string, unknown>>(obj: T)
  *  both the bare (`api_request`) and dotted (`claude_code.api_request`) forms —
  *  mirrors `eventNameMatchSql` / `isClaudeCodeEvent` in otelRollups. */
 export function eventNameMatches(stored: string, bare: string): boolean {
-  return stored === bare || stored === `claude_code.${bare}`;
+  if (stored === bare) return true;
+  // HS-9610 — any registered tool's namespace, not just Claude's. Until this,
+  // `codex.api_request` matched nothing, so codex work was never attributed to
+  // a ticket AT ALL — the per-ticket rollup silently stayed Claude-only no
+  // matter what arrived. Suffix-matching a KNOWN prefix rather than any
+  // `*.api_request`, so an unrelated vendor's identically-named event cannot
+  // land on someone's ticket.
+  return listPlugins().some(p => {
+    const prefix = p.telemetryMetricPrefix;
+    return prefix !== undefined && prefix !== '' && stored === `${prefix}${bare}`;
+  });
 }
 
 /**
@@ -389,6 +400,10 @@ export async function attributeApiRequestToTicket(
   ts: Date,
   attrs: Record<string, unknown>,
   promptId?: string | null,
+  /** HS-9610 — the tool that emitted this event, recorded so the per-ticket
+   *  cost can be qualified. Omitted by older callers → nothing recorded, and
+   *  the read-time default handles it. */
+  emitter?: string,
 ): Promise<void> {
   if (secret === null || secret === '') return; // central store has no tickets
   const ticket = await ticketForInstant(clusterDb, secret, ts);
@@ -402,8 +417,9 @@ export async function attributeApiRequestToTicket(
     cost_usd: string | number;
     total_tokens: string | number;
     model_breakdown: Record<string, { cost: number; tokens: number }> | string;
+    emitters: string[] | null;
   }>(
-    `SELECT cost_usd, total_tokens, model_breakdown FROM otel_rollup_ticket
+    `SELECT cost_usd, total_tokens, model_breakdown, emitters FROM otel_rollup_ticket
      WHERE project_secret = $1 AND ticket_number = $2`,
     [secret, ticket],
   );
@@ -417,16 +433,21 @@ export async function attributeApiRequestToTicket(
   entry.tokens += tokens;
   breakdown[model] = entry;
 
+  // HS-9610 — accumulate the distinct set. Sorted so the stored value is stable
+  // across ingests and a test can compare it without ordering noise.
+  const emitters = [...new Set([...(prev?.emitters ?? []), ...(emitter !== undefined ? [emitter] : [])])].sort();
+
   await mainDb.query(
     `INSERT INTO otel_rollup_ticket
-       (project_secret, ticket_number, cost_usd, total_tokens, model_breakdown, updated_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
+       (project_secret, ticket_number, cost_usd, total_tokens, model_breakdown, emitters, updated_at)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::text[], NOW())
      ON CONFLICT (project_secret, ticket_number) DO UPDATE SET
        cost_usd        = $3,
        total_tokens    = $4,
        model_breakdown = $5::jsonb,
+       emitters        = $6::text[],
        updated_at      = NOW()`,
-    [secret, ticket, prevCost + cost, prevTokens + tokens, JSON.stringify(breakdown)],
+    [secret, ticket, prevCost + cost, prevTokens + tokens, JSON.stringify(breakdown), emitters],
   );
 
   // HS-9243 — widen this prompt's duration span for the ticket.

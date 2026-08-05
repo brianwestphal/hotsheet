@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { costAvailabilityFor } from '../aiTools/costAvailability.js';
+import { listPlugins } from '../aiTools/registry.js';
 import { getAllProjects } from '../projects.js';
 import { maxOf, minOf } from '../utils/largeArray.js';
 import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTelemetryDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
@@ -182,11 +183,20 @@ function buildSecretsInClause(
  * healthy. The broadened headline count in `getWindowTotals` sidesteps the
  * problem only because it dropped the `event_name` filter entirely.
  */
-const CLAUDE_CODE_EVENT_PREFIX = 'claude_code.';
-
-/** Both spellings Claude Code may stamp for a given bare event name. */
+/**
+ * Every spelling a REGISTERED tool may stamp for a bare event name: the bare
+ * form, plus one per tool namespace.
+ *
+ * HS-9610 — was `['x', 'claude_code.x']`. Until this, `codex.api_request`
+ * matched nothing, so codex work never reached the per-ticket rollup at all.
+ * Enumerating the registry rather than accepting any `*.api_request` keeps an
+ * unrelated vendor's identically-named event off someone's ticket.
+ */
 function eventNameVariants(bareName: string): readonly string[] {
-  return [bareName, `${CLAUDE_CODE_EVENT_PREFIX}${bareName}`];
+  const prefixes = listPlugins()
+    .map(p => p.telemetryMetricPrefix)
+    .filter((p): p is string => p !== undefined && p !== '');
+  return [bareName, ...prefixes.map(prefix => `${prefix}${bareName}`)];
 }
 
 /**

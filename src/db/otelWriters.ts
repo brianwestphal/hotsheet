@@ -529,7 +529,7 @@ export async function persistLogsPayload(
           // lives in the cluster db (`db`), the rollup in the main db. Best-effort.
           try {
             if (eventNameMatches(eventName, 'api_request')) {
-              await attributeApiRequestToTicket(db, mainDb, resCtx.projectSecret, ts, attrs, promptId);
+              await attributeApiRequestToTicket(db, mainDb, resCtx.projectSecret, ts, attrs, promptId, emitterForSignalName(eventName));
             } else if (eventNameMatches(eventName, 'user_prompt')) {
               await attributeUserPromptToTicket(db, mainDb, resCtx.projectSecret, ts);
             }

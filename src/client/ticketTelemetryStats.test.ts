@@ -56,8 +56,13 @@ describe('loadAndRenderTicketTelemetry (HS-8152 / HS-8648)', () => {
     vi.mocked(getPerTicketRollup).mockResolvedValue(mockRollup());
     await loadAndRenderTicketTelemetry('HS-1');
 
+    // HS-9610 — the heading follows the DATA. This fixture carries no
+    // `emitters`, so the neutral form is correct: with nothing recorded, the
+    // panel must not assert a vendor. A real server always supplies emitters
+    // for a ticket that has telemetry (empty resolves to `['claude']` at read
+    // time), so the named form is what users actually see.
     expect(container().querySelector('.ticket-telemetry-label')?.textContent)
-      .toBe('Claude Usage on This Ticket');
+      .toBe('AI Usage on This Ticket');
     expect(container().querySelectorAll('.ticket-telemetry-stat')).toHaveLength(4);
   });
 
@@ -260,5 +265,50 @@ describe('project isolation (HS-9414)', () => {
     await loadAndRenderTicketTelemetry('HS-42');
     // Fetch failed, but A's own cached value repaints — not B's.
     expect(container().textContent).toContain('999');
+  });
+});
+
+describe('per-ticket cost qualification + data-driven heading (HS-9610)', () => {
+  function paint(rollup: Record<string, unknown>): HTMLElement {
+    const el = document.createElement('div');
+    _testing.renderRollup(el, rollup as never);
+    return el;
+  }
+  const base = { ticketNumber: 'HS-1', promptCount: 3, totalCost: 1.5, totalTokens: 900, totalDurationSeconds: 10 };
+
+  it('shows an em dash rather than $0.00 for a ticket worked only by codex', () => {
+    // This rollup is kept indefinitely while the raw rows age out, so a wrong
+    // figure here is the one that becomes permanent.
+    const el = paint({ ...base, totalCost: 0, emitters: ['codex'] });
+    const cost = el.querySelector('.telemetry-chip-cost-unavailable');
+    expect(cost?.textContent).toBe('—');
+    expect(cost?.getAttribute('title')).toContain('Codex');
+  });
+
+  it('flags a ticket worked by BOTH tools as an under-count', () => {
+    const el = paint({ ...base, emitters: ['claude', 'codex'] });
+    expect(el.querySelector('.telemetry-chip-cost-flag')).not.toBeNull();
+    expect(el.querySelector('.telemetry-chip-cost-partial')?.getAttribute('title')).toContain('higher');
+  });
+
+  it('names the heading from the DATA, not a hard-coded vendor', () => {
+    // A codex-worked ticket labelled "Claude Usage" is the same lie HS-9602
+    // fixed on the dashboard, in a smaller place.
+    expect(paint({ ...base, emitters: ['codex'] }).querySelector('.ticket-telemetry-label')?.textContent)
+      .toBe('Codex Usage on This Ticket');
+    expect(paint({ ...base, emitters: ['claude'] }).querySelector('.ticket-telemetry-label')?.textContent)
+      .toBe('Claude Code Usage on This Ticket');
+  });
+
+  it('stays neutral when more than one tool contributed', () => {
+    expect(paint({ ...base, emitters: ['claude', 'codex'] }).querySelector('.ticket-telemetry-label')?.textContent)
+      .toBe('AI Usage on This Ticket');
+  });
+
+  it('renders an unflagged figure for an older payload with no emitters field', () => {
+    const el = paint(base);
+    expect(el.querySelector('.telemetry-chip-cost-flag')).toBeNull();
+    expect(el.querySelector('.telemetry-chip-cost-unavailable')).toBeNull();
+    expect(el.textContent).toContain('$1.50');
   });
 });

@@ -281,6 +281,37 @@ describe('per-ticket attribution (HS-9233)', () => {
     expect(mb['haiku'].tokens).toBe(200);
   });
 
+  it('accumulates the distinct emitter set across a ticket worked by two tools (HS-9610)', async () => {
+    // This rollup is kept INDEFINITELY while the raw rows age out, so an
+    // unqualified figure here outlives the data that could correct it — which
+    // is why the emitter set has to be recorded rather than inferred later.
+    const db = await getDb();
+    await openInterval(db, 'sec', 'HS-2', new Date(2026, 0, 1, 9, 0, 0), null);
+    const ts = new Date(2026, 0, 1, 9, 30, 0);
+
+    await attributeApiRequestToTicket(db, db, 'sec', ts, { cost: 0.2, model: 'm' }, null, 'claude');
+    await attributeApiRequestToTicket(db, db, 'sec', ts, { tokens: 500, model: 'm' }, null, 'codex');
+    await attributeApiRequestToTicket(db, db, 'sec', ts, { cost: 0.1, model: 'm' }, null, 'claude');
+
+    const r = await db.query<{ emitters: string[] }>(
+      `SELECT emitters FROM otel_rollup_ticket WHERE project_secret='sec' AND ticket_number='HS-2'`,
+    );
+    // Deduped and sorted, so the stored value is stable across ingest order.
+    expect(r.rows[0].emitters).toEqual(['claude', 'codex']);
+  });
+
+  it('records nothing when the caller supplies no emitter, leaving the read-time default to apply', async () => {
+    const db = await getDb();
+    await openInterval(db, 'sec', 'HS-3', new Date(2026, 0, 1, 9, 0, 0), null);
+    await attributeApiRequestToTicket(db, db, 'sec', new Date(2026, 0, 1, 9, 30, 0), { cost: 0.2, model: 'm' });
+    const r = await db.query<{ emitters: string[] }>(
+      `SELECT emitters FROM otel_rollup_ticket WHERE project_secret='sec' AND ticket_number='HS-3'`,
+    );
+    // Empty, NOT ['claude'] — the default is applied at READ time so it can
+    // never half-apply, and so a stored empty stays distinguishable.
+    expect(r.rows[0].emitters).toEqual([]);
+  });
+
   it('does not attribute an api_request outside any window', async () => {
     const db = await getDb();
     await openInterval(db, 'sec', 'HS-1', new Date(2026, 0, 1, 9, 0, 0), new Date(2026, 0, 1, 9, 10, 0));

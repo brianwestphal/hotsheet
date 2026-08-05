@@ -710,14 +710,33 @@ the reader has already drawn a conclusion from it. These totals span everything
 and so read as the most authoritative in the app, which is precisely why an
 unmarked under-count is worse here than anywhere else.
 
-**Per-ticket rollup — deliberately not done.** `otel_rollup_ticket` is keyed
-`(project_secret, ticket_number)` and has **no emitter dimension at all**. The
-only approximation available without a schema change is to take the emitters of
-the *days* a ticket's prompt spans touch — a **superset**, which would flag a
-ticket as partial because codex ran that day on unrelated work. Once someone
-uses both tools, essentially every ticket would carry the flag, and a warning
-that is always on teaches readers to ignore it. A real emitter column is the
-honest fix; tracked separately.
+**Per-ticket rollup (HS-9610).** Now covered, via the real emitter column
+rather than the day-grain approximation HS-9606 rejected (that would have
+flagged a ticket because codex ran that day on unrelated work, and a warning
+that is always on teaches readers to ignore it).
+
+`otel_rollup_ticket.emitters TEXT[]` (`SCHEMA_VERSION` 13 → 14), accumulated as
+a distinct sorted set at ingest. An **empty stored array reads as `['claude']`**
+— every pre-HS-9610 row predates codex ingestion and is Claude's, so the
+read-time default is accurate, invisible on upgrade, and cannot half-apply the
+way a migration could. A ticket with no telemetry at all resolves to `[]`, so
+the panel names no vendor over a blank. This is the surface where being wrong is
+**permanent** — the rollup is kept indefinitely while raw rows age out under the
+retention sweep — so it gets the full three-state treatment, and the heading now
+follows the data (a codex-worked ticket no longer reads "Claude Usage").
+
+**The prerequisite nobody had noticed.** `eventNameVariants` matched only
+`['x', 'claude_code.x']`, so `codex.api_request` matched **nothing** and codex
+work never reached the per-ticket rollup *at all* — the emitter column would
+have been dead weight without fixing it. It now enumerates every registered
+tool's `telemetryMetricPrefix`. Deliberately an enumeration of **known**
+prefixes rather than accepting any `*.api_request`: a wildcard would let an
+unrelated vendor's identically-named event land on someone's ticket.
+
+**Both writers carry it**, for the §67.18.3 reason — `backfillTicketsForDir`
+rebuilds the same table, and omitting emitters there would silently reset every
+ticket to the Claude default on a rebuild. The backfill path derives them from
+the event names it already matched, so the two agree by construction.
 
 ## 67.18 Token counters beyond Claude (HS-9604)
 

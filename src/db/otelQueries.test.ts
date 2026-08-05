@@ -1694,6 +1694,32 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(rollup.totalTokens).toBe(1500);
     });
 
+    it('carries the emitter set through the backfill, so a rebuild does not reset it (HS-9610)', async () => {
+      // The daily-rollup lesson from HS-9604 applied here: the backfill and
+      // live ingest write the SAME table, so a rebuild that dropped emitters
+      // would silently reset every ticket to the read-time Claude default.
+      const now = new Date();
+      const db = await getTelemetryDb();
+      await createRawOtelTables(db);
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [now, SECRET_A, 'session-1', 'p-cx', 'user_prompt', '{}', JSON.stringify({ body: '<!-- hotsheet:ticket=HS-9002 --> go' })],
+      );
+      await db.query(
+        `INSERT INTO otel_events (ts, project_secret, session_id, prompt_id, event_name, attributes_json, body_json)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+        [new Date(now.getTime() + 1000), SECRET_A, 'session-1', 'p-cx', 'codex.api_request', JSON.stringify({ tokens: 900 }), '{}'],
+      );
+      await backfillTicketsForDir('', db, await getRollupDb(), SECRET_A);
+      const rollup = await getPerTicketRollup('HS-9002', SECRET_A);
+      // Attribution itself is the first thing this proves: before HS-9610
+      // widened `eventNameVariants`, `codex.api_request` matched nothing and
+      // the ticket had no telemetry at all.
+      expect(rollup.totalTokens).toBe(900);
+      expect(rollup.emitters).toEqual(['codex']);
+    });
+
     it('prompt counts (window / cost-by-project / heatmap) work on bare-named events', async () => {
       const now = new Date();
       // Cost metric so the project appears in the cross-project rollup.

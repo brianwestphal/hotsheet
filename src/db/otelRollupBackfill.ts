@@ -536,11 +536,16 @@ export async function backfillTicketsForDir(
     // HS-9259 — duration_seconds column dropped; per-ticket duration is now
     // recomputed at read time from otel_ticket_prompt_span (populated by
     // backfillTicketPromptSpansForDir), so the ticket rollup no longer stores it.
+    // HS-9610 — carry the emitters through. `computeTicketRollupFromRaw`
+    // already derives them from the event names it matched, so this path agrees
+    // with live ingest by construction. Omitting them would make a backfill
+    // silently reset every ticket to the read-time Claude default — the same
+    // rewrite-history hazard HS-9604 found on the daily rollup.
     await mainDb.query(
       `INSERT INTO otel_rollup_ticket
-         (project_secret, ticket_number, cost_usd, total_tokens, prompt_count, model_breakdown, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW())`,
-      [secret, ticket, scalar.totalCost, scalar.totalTokens, scalar.promptCount, JSON.stringify(breakdown)],
+         (project_secret, ticket_number, cost_usd, total_tokens, prompt_count, model_breakdown, emitters, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::text[], NOW())`,
+      [secret, ticket, scalar.totalCost, scalar.totalTokens, scalar.promptCount, JSON.stringify(breakdown), scalar.emitters],
     );
     written++;
     await yieldToEventLoop();

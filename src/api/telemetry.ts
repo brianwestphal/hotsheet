@@ -137,6 +137,9 @@ export const TicketRollupSchema = z.object({
   totalCost: z.number(),
   totalTokens: z.number(),
   totalDurationSeconds: z.number(),
+  /** HS-9610 — the tool(s) whose telemetry these figures come from. Optional so
+   *  an older server's payload still parses. */
+  emitters: z.array(z.string()).optional(),
 });
 export type TicketRollup = z.infer<typeof TicketRollupSchema>;
 
