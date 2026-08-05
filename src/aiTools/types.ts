@@ -100,6 +100,18 @@ export interface AiToolPlugin {
    * binding, and the `revealAgyPerms` tool-id branch.
    */
   readonly preferences?: readonly AiToolPreference[];
+  /**
+   * HS-9602 — the OTLP metric/event-name prefix this tool emits under
+   * (`claude_code.` / `codex.`). Absent = we cannot attribute its telemetry.
+   *
+   * Lives here rather than in a lookup table beside the ingest code for the
+   * §132 reason: a tool is defined in ONE place. This is the first, narrowest
+   * slice of the fuller `telemetry` capability HS-9603 will add (counter names,
+   * cumulative-vs-delta, prompt-lifecycle events) — deliberately just the
+   * namespace, because that is all attribution needs and the rest depends on
+   * questions not yet settled (e.g. whether codex reports cost at all).
+   */
+  readonly telemetryMetricPrefix?: string;
 }
 
 /**

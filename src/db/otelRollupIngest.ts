@@ -83,7 +83,13 @@ export async function markDailySeen(
   mainDb: PGlite,
   secret: string | null,
   ts: Date,
-  kind: 'prompt' | 'session',
+  /** HS-9602 — `emitter` records WHICH AI TOOL produced the day's telemetry, so
+   *  the dashboard can label itself from the data instead of asserting a vendor.
+   *  Reuses this table rather than widening the rollup grain: "the distinct X
+   *  seen per (project, day)" is exactly what it already answers, so it needs no
+   *  schema change and no new index. Named `emitter`, not `tool`, because
+   *  `otel_rollup_activity` already uses `kind='tool'` for tool-CALL latency. */
+  kind: 'prompt' | 'session' | 'emitter',
   id: string | null | undefined,
 ): Promise<void> {
   if (id === null || id === undefined || id === '') return;

@@ -7,6 +7,9 @@ export const codexPlugin: AiToolPlugin = {
   id: 'codex',
   displayName: 'Codex',
   productName: 'Codex',
+  // HS-9602 — measured against codex-cli 0.146.0: `codex.api_request`,
+  // `codex.conversation.turn.count`, … over the standard OTLP exporter.
+  telemetryMetricPrefix: 'codex.',
   tier: 'cli-agent',
   maturity: 'beta',
   transport: 'mcp-hooks',

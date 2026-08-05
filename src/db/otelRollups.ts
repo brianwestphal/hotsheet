@@ -249,6 +249,29 @@ async function seenDistinctCount(
 }
 
 /**
+ * HS-9602 — which AI tools produced telemetry in this window.
+ *
+ * Reads the `emitter` kind from `otel_daily_seen`, the same distinct-set table
+ * the prompt/session counts come from. `hasData` lets the caller distinguish
+ * pre-HS-9602 rows (data, but no emitter recorded → Claude, since that is all
+ * Hot Sheet ever ingested) from an empty window (name no vendor at all) — see
+ * `resolveWindowEmitters`.
+ */
+export async function getWindowEmitters(
+  projectSecret: string | null,
+  sinceTs: Date | null,
+  allowedSecrets: readonly string[] | null = null,
+): Promise<string[]> {
+  const db = await getRollupDb();
+  const c = buildRollupDayClauses(projectSecret, sinceTs, 1, allowedSecrets);
+  const rows = await db.query<{ id: string }>(
+    `SELECT DISTINCT id FROM otel_daily_seen WHERE kind = $1${c.clauses}`,
+    ['emitter', ...c.params],
+  );
+  return rows.rows.map((r) => r.id);
+}
+
+/**
  * Window totals: total cost + total tokens + count of distinct prompts over the
  * given window. **HS-9235** — reads the daily ROLLUP tables in the main db:
  * cost / token sums from `otel_rollup_daily`, distinct prompt/session counts

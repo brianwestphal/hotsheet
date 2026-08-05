@@ -221,6 +221,9 @@ export const ProjectRollupPayloadSchema = z.object({
   ingestedDates: z.array(z.string()).default([]),
   // HS-8766 — Announcer usage for this project (optional for back-compat).
   announcer: AnnouncerUsageTotalsSchema.optional(),
+  // HS-9602 — the AI tool(s) whose telemetry this payload holds, so the section
+  // labels itself from the data. Optional+default so an older server still parses.
+  emitters: z.array(z.string()).default([]),
 });
 export type ProjectRollupPayload = z.infer<typeof ProjectRollupPayloadSchema>;
 

@@ -293,6 +293,51 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
 
     // HS-9233 — dual-write the compact daily rollup into the SNAPSHOTTED main db
     // (not the cluster), and strip the redundant nested attributes from value_json.
+    /**
+     * HS-9602 — the pipeline records WHOSE telemetry it holds, so the dashboard
+     * can label itself from the data instead of hard-coding "Claude Usage".
+     * Recorded into the existing `otel_daily_seen` distinct-set table under a new
+     * `emitter` kind — that table already answers "the distinct X seen per
+     * (project, day)", so this needs no schema change and no new index.
+     */
+    it('records the emitting tool for a metrics payload (HS-9602)', async () => {
+      await persistMetricsPayload(SAMPLE_METRICS_JSON, isKnownProject);
+      const mainDb = await getDb();
+      const seen = await mainDb.query<{ id: string }>(
+        `SELECT DISTINCT id FROM otel_daily_seen WHERE project_secret = $1 AND kind = 'emitter'`,
+        [KNOWN_SECRET],
+      );
+      expect(seen.rows.map(r => r.id)).toEqual(['claude']);
+    });
+
+    it('attributes a codex payload to codex, not Claude (HS-9602)', async () => {
+      // The whole point: a second vendor over the SAME OTLP transport. Codex
+      // links the standard exporter and emits under `codex.*` (measured against
+      // codex-cli 0.146.0), so this is the shape real codex data would arrive in.
+      const codexPayload = {
+        resourceMetrics: [{
+          resource: {
+            attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }],
+          },
+          scopeMetrics: [{
+            metrics: [{
+              name: 'codex.api_request',
+              sum: {
+                dataPoints: [{ timeUnixNano: '1700000000000000000', asDouble: 1 }],
+              },
+            }],
+          }],
+        }],
+      };
+      await persistMetricsPayload(codexPayload, isKnownProject);
+      const mainDb = await getDb();
+      const seen = await mainDb.query<{ id: string }>(
+        `SELECT DISTINCT id FROM otel_daily_seen WHERE project_secret = $1 AND kind = 'emitter' ORDER BY id`,
+        [KNOWN_SECRET],
+      );
+      expect(seen.rows.map(r => r.id)).toContain('codex');
+    });
+
     it('rolls up cost into otel_rollup_daily (main db) and strips nested attributes', async () => {
       const result = await persistMetricsPayload(SAMPLE_METRICS_JSON, isKnownProject);
       expect(result.inserted).toBe(2);

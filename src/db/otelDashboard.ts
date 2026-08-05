@@ -20,9 +20,9 @@ import {
   getAnnouncerUsageByProject, getAnnouncerUsageTotals,
 } from './announcerUsage.js';
 import { centralTelemetryDataDir, getDataDir, getRollupDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
+import { resolveWindowEmitters } from './otelEmitter.js';
 import { readAllOtelJsonl } from './otelJsonlStore.js';
-import {
-  type CostOverTimePoint,
+import { type CostOverTimePoint,
   eventNameMatchSql,
   getCostByModel,
   getCostByProject,
@@ -31,15 +31,14 @@ import {
   getIngestedDates,
   getRecentPrompts,
   getToolLatencyHistogram,
-  getWindowTotals,
+getWindowEmitters,  getWindowTotals,
   type HourlyActivityCell,
   isClaudeCodeEvent,
   type ModelRollup,
   type ProjectCostRow,
   type RecentPrompt,
   type ToolLatencyHistogram,
-  type WindowTotals,
-} from './otelRollups.js';
+  type WindowTotals } from './otelRollups.js';
 
 function windowBoundaries(now: Date): { midnight: Date; weekStart: Date; monthStart: Date } {
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -598,6 +597,13 @@ export interface ProjectRollupPayload {
   ingestedDates: string[];
   /** HS-8766 — Announcer token usage + cost for this project in the window. */
   announcer: AnnouncerUsageTotals;
+  /**
+   * HS-9602 — the AI tool(s) whose telemetry this payload contains, so the UI
+   * labels itself from the DATA rather than asserting a vendor. Empty when the
+   * window holds nothing. Pre-HS-9602 rows have no emitter recorded and resolve
+   * to `['claude']`, which is what they all are.
+   */
+  emitters: string[];
 }
 
 export async function getProjectRollupPayload(
@@ -609,7 +615,7 @@ export async function getProjectRollupPayload(
   const { midnight, weekStart, monthStart } = windowBoundaries(now);
   const windowSinceTs = resolveDashboardWindowSinceTs(window, now);
 
-  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime, ingestedDates, announcer] = await Promise.all([
+  const [today, week, month, allTime, costByModel, toolLatencyHistogram, recentPrompts, costOverTime, ingestedDates, announcer, recordedEmitters] = await Promise.all([
     getWindowTotals(projectSecret, midnight),
     getWindowTotals(projectSecret, weekStart),
     getWindowTotals(projectSecret, monthStart),
@@ -623,6 +629,7 @@ export async function getProjectRollupPayload(
     getCostOverTime(windowSinceTs, projectSecret, timezone, now),
     getIngestedDates(windowSinceTs, projectSecret, timezone),
     getAnnouncerUsageTotals(projectSecret, windowSinceTs),
+    getWindowEmitters(projectSecret, windowSinceTs),
   ]);
 
   return {
@@ -634,5 +641,8 @@ export async function getProjectRollupPayload(
     costOverTime,
     ingestedDates,
     announcer,
+    // `hasData` is judged from the WINDOW's own totals, not all-time: a window
+    // with nothing in it must name no vendor rather than claim Claude.
+    emitters: resolveWindowEmitters(recordedEmitters, ingestedDates.length > 0),
   };
 }

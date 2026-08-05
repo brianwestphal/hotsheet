@@ -9,6 +9,8 @@ export const claudePlugin: AiToolPlugin = {
   id: 'claude',
   displayName: 'Claude',
   productName: 'Claude Code',
+  // HS-9602 — Claude Code's OTLP namespace (`claude_code.cost.usage`, …).
+  telemetryMetricPrefix: 'claude_code.',
   tier: 'cli-agent',
   maturity: 'stable',
   transport: 'claude-channel',

@@ -42,6 +42,7 @@
  * kicks off its own fetch + re-renders on window-selector change.
  */
 
+import { getPlugin } from '../aiTools/registry.js';
 import { getProjectRollup } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { projectScoped } from './projectScoped.js';
@@ -97,6 +98,9 @@ interface ProjectRollupPayload {
   /** HS-8810 — days with ≥1 ingested metric point (shade no-telemetry days). */
   ingestedDates?: string[];
   announcer?: AnnouncerUsageTotals;
+  /** HS-9602 — the AI tool(s) whose telemetry this payload holds. Optional so an
+   *  older server's payload still renders (the title stays generic). */
+  emitters?: string[];
 }
 
 let currentWindow: TelemetryWindow = 'month';
@@ -358,6 +362,35 @@ function clearDashboardSlots(): void {
   byIdOrNull('dashboard-claude-chips-slot')?.replaceChildren();
 }
 
+/**
+ * HS-9602 — the section's heading, derived from WHOSE telemetry the window
+ * actually holds.
+ *
+ * It used to be the literal string "Claude Usage". Renaming it to the project's
+ * `ai_tool` would have been worse than leaving it: a codex project would claim
+ * "Codex Usage" over Claude's data, or over an empty chart. So the label follows
+ * the payload — one tool names it, several stay neutral, none keeps the generic
+ * heading rather than asserting a vendor over a blank panel.
+ *
+ * `productName` comes from the `AiToolPlugin` registry (docs/132), so adding a
+ * tool does not touch this file.
+ */
+export function telemetrySectionTitle(emitters: readonly string[]): string {
+  const named = emitters
+    .map(id => getPlugin(id)?.productName)
+    .filter((n): n is string => typeof n === 'string' && n !== '');
+  // One recognized tool and nothing unrecognized alongside it — name it.
+  if (named.length === 1 && emitters.length === 1) return `${named[0]} Usage`;
+  return 'AI Usage';
+}
+
+/** Repaint the heading for a payload. Separate from `renderBody` because the
+ *  heading lives OUTSIDE the body slot the body replaces wholesale. */
+function applySectionTitle(emitters: readonly string[]): void {
+  const el = document.getElementById('analytics-telemetry-title');
+  if (el !== null) el.textContent = telemetrySectionTitle(emitters);
+}
+
 async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Promise<void> {
   const active = getActiveProject();
   if (active === null) {
@@ -377,6 +410,7 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
       const cachedHasData = cached.windowTotals.allTime.promptCount > 0 || cached.windowTotals.allTime.cost > 0;
       if (!cachedHasData) clearDashboardSlots();
       bodySlot.replaceChildren(renderBody(cached, active.secret));
+      applySectionTitle(cached.emitters ?? []);
       lastPaintedAnalyticsFor.set(bodySlot, cachedSerialized);
     }
   } else {
@@ -398,6 +432,7 @@ async function fetchAndPopulate(bodySlot: HTMLElement, w: TelemetryWindow): Prom
     const hasData = payload.windowTotals.allTime.promptCount > 0 || payload.windowTotals.allTime.cost > 0;
     if (!hasData) clearDashboardSlots();
     bodySlot.replaceChildren(renderBody(payload, active.secret));
+    applySectionTitle(payload.emitters ?? []);
     lastPaintedAnalyticsFor.set(bodySlot, fresh);
   } catch (err) {
     // HS-8572 — keep showing cached data when a poll-tick fetch fails
@@ -456,7 +491,7 @@ export function renderAnalyticsTelemetrySection(days?: number): HTMLElement {
   const root = toElement(
     <div className="analytics-telemetry-section">
       <div className="analytics-telemetry-header">
-        <h2 className="analytics-telemetry-title">Claude Usage</h2>
+        <h2 className="analytics-telemetry-title" id="analytics-telemetry-title">AI Usage</h2>
       </div>
       <div className="analytics-telemetry-body-slot" id="analytics-telemetry-body"></div>
     </div>

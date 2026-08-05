@@ -515,3 +515,64 @@ The full feature decomposed into 14 tickets:
 | HS-8154 | Maintenance | Retention + auto-GC |
 
 Foundations are the unblockers for everything else. Within Foundation, the order is: HS-8144 (schema) → HS-8143 (receiver) → HS-8145 (spawn-env) → HS-8146 (Settings UI). HS-8142 + HS-8144 + HS-8143 are shipping together as the first wave; the rest follow incrementally.
+
+## 67.12 Attributing telemetry to the tool that emitted it (HS-9602)
+
+Every `otel_*` row used to be anonymous. Everything downstream inferred Claude
+because the metric names happen to be `claude_code.*` — true today, and exactly
+the assumption that had to end: **codex links the same OTLP exporter** and emits
+under `codex.*` (measured against codex-cli 0.146.0), so its data would arrive
+over these same routes and aggregate into nothing.
+
+### The label follows the DATA, not the project setting
+
+The obvious first move — rename "Claude Usage" to the project's `ai_tool` — makes
+things **worse**: a codex project would claim "Codex Usage" over *Claude's* data,
+or over an empty chart. The old hard-coded label was at least true.
+
+So the emitter is recorded at ingest and the heading is derived from it:
+
+| window contains | heading |
+|---|---|
+| one recognized tool | that tool's `productName` ("Claude Code Usage") |
+| several tools | "AI Usage" — naming one would misattribute the other's spend |
+| an unrecognized emitter | "AI Usage" — *received but unattributable* is not a product name |
+| nothing | "AI Usage" — name no vendor over a blank panel |
+
+`productName` comes from the `AiToolPlugin` registry (docs/132), so adding a tool
+does not touch the telemetry UI.
+
+### Where it is recorded
+
+`otel_daily_seen` under a new `kind = 'emitter'`, alongside the existing
+`prompt` / `session` kinds. That table already answers "the distinct X seen per
+(project, day)", which is precisely the question — so this needs **no schema
+change, no new index, and no change to the rollup grain**. Recorded for *every*
+metric and log event, not only the two rollup metrics: a tool that reports no
+cost still has usage worth attributing, and the label must not depend on whether
+a vendor happens to emit the two counters Claude Code does.
+
+`emitterForSignalName` derives it from the metric/event **namespace**, not
+OTLP `service.name` — `service.name` is a resource attribute the emitter chooses
+and a user's `OTEL_SERVICE_NAME` can override, whereas a tool cannot rename its
+own metrics without breaking its own aggregation.
+
+The prefix lives on each plugin (`AiToolPlugin.telemetryMetricPrefix`), not in a
+table beside the ingest code. The repo's `no-restricted-syntax` tool-id guard
+caught the first version of this, which hard-coded both ids — the rule was right.
+
+### Legacy rows
+
+Rows written before HS-9602 carry no emitter, and every one of them is Claude
+Code's. `resolveWindowEmitters` reads "data present, no emitter recorded" as
+`claude` — a **read-time default rather than a data migration**, because it costs
+nothing and cannot half-apply. The `hasData` flag is what keeps that safe: an
+*empty* window resolves to no tools at all rather than to Claude.
+
+### Not covered here
+
+Ingesting codex's metrics into the cost/token rollups, and the per-tool
+aggregation mapping, are HS-9603. Note also that **nothing arrives until Hot
+Sheet asks for it** — it sets `CLAUDE_CODE_ENABLE_TELEMETRY=1` when spawning a
+Claude terminal (`terminals/registry/otelEnv.ts`) and has no codex equivalent
+yet.

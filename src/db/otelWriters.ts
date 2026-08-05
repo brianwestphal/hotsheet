@@ -1,5 +1,6 @@
 import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
+import { emitterForSignalName } from './otelEmitter.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
   attributeApiRequestToTicket,
@@ -299,6 +300,17 @@ export async function persistMetricsPayload(
             } catch (err) {
               console.debug('[otel] hour-cost rollup update failed:', err);
             }
+            // HS-9602 — record WHICH TOOL emitted this, derived from the metric
+            // namespace, so the dashboard can label itself from the data. Done for
+            // EVERY metric, not just the rollup ones: a tool that reports no cost
+            // still has usage worth attributing, and the label must not depend on
+            // whether that particular vendor happens to report the two metrics
+            // Claude Code does.
+            try {
+              await markDailySeen(mainDb, resCtx.projectSecret, ts, 'emitter', emitterForSignalName(metricName));
+            } catch (err) {
+              console.debug('[otel] emitter record failed:', err);
+            }
             // HS-9243 — record this session in the daily dedup set so the reads can
             // derive an exact daily distinct `session_count` without scanning raw.
             // Only the rollup metrics carry the session proxy the reads count.
@@ -531,6 +543,13 @@ export async function persistLogsPayload(
             } catch (err) {
               console.debug('[otel] hourly-seen prompt update failed:', err);
             }
+          }
+          // HS-9602 — same attribution on the LOG side: a tool that emits only
+          // events (no metrics) must still be nameable on the dashboard.
+          try {
+            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'emitter', emitterForSignalName(eventName));
+          } catch (err) {
+            console.debug('[otel] emitter record failed:', err);
           }
           // HS-9243 — record this prompt in the daily dedup set so the reads can
           // derive an exact daily distinct `prompt_count` without scanning raw. Any

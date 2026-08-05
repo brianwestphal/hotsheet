@@ -7,7 +7,7 @@
 // escape hatch with fixture payloads.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { _testing, renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
+import { _testing, renderAnalyticsTelemetrySection, telemetrySectionTitle } from './analyticsTelemetrySection.js';
 
 interface WindowTotals {
   cost: number;
@@ -196,10 +196,13 @@ describe('renderBody (HS-8508 analytics-dashboard telemetry section)', () => {
 });
 
 describe('renderAnalyticsTelemetrySection (mount shell)', () => {
-  it('renders the section header with the "Claude usage" title and no window selector (HS-8512)', () => {
+  it('renders the section header with a neutral title and no window selector (HS-8512)', () => {
     const root = renderAnalyticsTelemetrySection();
     const title = root.querySelector('.analytics-telemetry-title');
-    expect(title?.textContent).toBe('Claude Usage');
+    // HS-9602 — the mount shell renders BEFORE any payload arrives, so it must
+    // not assert a vendor. The heading is replaced once the data says whose it
+    // is (see `telemetrySectionTitle`).
+    expect(title?.textContent).toBe('AI Usage');
     // HS-8512 — the in-section window selector was removed; the
     // dashboard's top-level 7/30/90 day range bar drives the
     // telemetry window now.
@@ -219,5 +222,37 @@ describe('renderAnalyticsTelemetrySection (mount shell)', () => {
     expect(_testing.getWindow()).toBe('month');
     renderAnalyticsTelemetrySection(90);
     expect(_testing.getWindow()).toBe('90d');
+  });
+});
+
+/**
+ * HS-9602 — the section names the tool whose telemetry it is SHOWING, not the
+ * tool the project is configured to use.
+ *
+ * Renaming the old hard-coded "Claude Usage" to the project's `ai_tool` was the
+ * obvious move and would have been worse: a codex project would claim "Codex
+ * Usage" over Claude's data, or over an empty chart. So the label follows the
+ * payload.
+ */
+describe('telemetrySectionTitle (HS-9602)', () => {
+  it('names a single recognized tool', () => {
+    expect(telemetrySectionTitle(['claude'])).toBe('Claude Code Usage');
+    expect(telemetrySectionTitle(['codex'])).toBe('Codex Usage');
+  });
+
+  it('stays neutral when several tools contributed', () => {
+    // Naming one of them would misattribute the other's spend.
+    expect(telemetrySectionTitle(['claude', 'codex'])).toBe('AI Usage');
+  });
+
+  it('stays neutral for an empty window rather than naming a vendor over a blank panel', () => {
+    expect(telemetrySectionTitle([])).toBe('AI Usage');
+  });
+
+  it('stays neutral for an unrecognized emitter', () => {
+    // "we received data and cannot attribute it" must not be dressed up as a
+    // specific product.
+    expect(telemetrySectionTitle(['unknown'])).toBe('AI Usage');
+    expect(telemetrySectionTitle(['claude', 'unknown'])).toBe('AI Usage');
   });
 });
