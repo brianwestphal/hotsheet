@@ -23,6 +23,12 @@ export const RecoveryMarkerSchema = z.object({
   errorMessage: z.string(),
   restoredFrom: z.string().optional(),
   restoredTicketCount: z.number().optional(),
+  /** HS-9576 — `empty-cluster` means no cluster was renamed aside; the live one
+   *  was created empty over a project that used to hold data, and durability
+   *  writes are being refused to keep the good artifacts (docs/135). Optional
+   *  so a marker written by an older server still parses. */
+  kind: z.enum(['corrupt-open', 'empty-cluster']).optional(),
+  priorTicketCount: z.number().optional(),
 });
 export type RecoveryMarker = z.infer<typeof RecoveryMarkerSchema>;
 

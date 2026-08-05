@@ -20,15 +20,38 @@ export interface DbRecoveryMarker {
    *  fallback, show the banner. */
   restoredFrom?: string;
   restoredTicketCount?: number;
+  /** HS-9576 — `empty-cluster` is the docs/135 case: nothing failed to load,
+   *  the cluster was created empty over a project that used to hold data, and
+   *  snapshots/backups are being refused so the good copies survive. */
+  kind?: 'corrupt-open' | 'empty-cluster';
+  priorTicketCount?: number;
 }
 
 /** Pure formatter — extracted so it can be unit-tested without DOM. */
 export function formatRecoveryBannerLabel(marker: DbRecoveryMarker): string {
+  if (marker.kind === 'empty-cluster') return formatEmptyClusterBannerLabel(marker);
   const when = formatRelativeTime(marker.recoveredAt);
   const tail = marker.errorMessage !== ''
     ? ` (${truncate(marker.errorMessage, 120)})`
     : '';
   return `Database failed to load ${when} and was reset to empty${tail}. Restore from a backup to recover your tickets.`;
+}
+
+/** HS-9576 — copy for the empty-cluster guard (docs/135).
+ *
+ * It has to say three things the corrupt-open wording does not: nothing is
+ * broken *right now* (so "failed to load" would be a lie), the existing backups
+ * are being actively protected rather than merely available, and a preserved
+ * `db-corrupt-*` directory may be NEWER than the newest backup — which is the
+ * choice HS-9575 made selectable and the one a user would otherwise not know
+ * they had. */
+export function formatEmptyClusterBannerLabel(marker: DbRecoveryMarker): string {
+  const prior = marker.priorTicketCount ?? 0;
+  const had = `${String(prior)} ticket${prior === 1 ? '' : 's'}`;
+  return `This project's database is empty, but Hot Sheet last captured ${had} from it. `
+    + `Snapshots and backups are paused so your existing copies stay intact. `
+    + `Restore from Settings → Backups — and check Repair Database first: a preserved `
+    + `db-corrupt-* folder may hold more recent data than the newest backup.`;
 }
 
 /** HS-8677 — delegates to the shared `timeFormat.ts::formatRelativeTime`.

@@ -4,6 +4,7 @@ import { join } from 'path';
 import { z } from 'zod';
 
 import { parseJsonOrNull } from '../schemas.js';
+import { clearEmptyClusterMarker, writeRecoveryMarker } from './recoveryMarker.js';
 
 /**
  * HS-9573 — refuse to write a durability artifact from a cluster that was
@@ -163,7 +164,13 @@ export async function checkArtifactGuard(dataDir: string, db: PGlite): Promise<A
     // protect and nothing to compare — let the write proceed.
     return { blocked: false, liveTicketCount: 0, priorTicketCount: 0 };
   }
-  if (liveTicketCount > 0) clearClusterCreatedEmpty(dataDir);
+  if (liveTicketCount > 0) {
+    clearClusterCreatedEmpty(dataDir);
+    // HS-9576 — rows are back, so the banner's claim ("your data is not here")
+    // has stopped being true. Retract it without waiting for a dismissal.
+    surfacedEmpty.delete(dataDir);
+    clearEmptyClusterMarker(dataDir);
+  }
 
   const priorTicketCount = readContentMarker(dataDir)?.lastTicketCount ?? 0;
   const blocked = shouldBlockArtifactWrite({
@@ -171,7 +178,43 @@ export async function checkArtifactGuard(dataDir: string, db: PGlite): Promise<A
     liveTicketCount,
     priorTicketCount,
   });
+  if (blocked) surfaceEmptyCluster(dataDir, priorTicketCount);
   return { blocked, liveTicketCount, priorTicketCount };
+}
+
+/** dataDirs already told to the user this process. Keeps the banner from being
+ *  rewritten under a user who dismissed it — a blocked project trips the guard
+ *  again every backup tick (5 min) and every snapshot tick, so without this the
+ *  "Dismiss" button would only work for a few minutes. */
+const surfacedEmpty = new Set<string>();
+
+/**
+ * HS-9576 — turn the refusal into something the user can see.
+ *
+ * The guard's whole value is buying time, and it buys none if the only evidence
+ * is a stderr line in a process nobody is watching: the 2026-08-04 incident was
+ * invisible for a day precisely because an empty project looks like a working
+ * one. This writes the same `.db-recovery-marker.json` the HS-7899 corrupt-open
+ * banner already reads, tagged `kind: 'empty-cluster'` so the client can say
+ * what actually happened.
+ *
+ * **Both writers feed this, deliberately.** Snapshots and backups run on
+ * different cadences and a blocked project trips both, but the user's situation
+ * is one situation, not two — so the once-per-project-per-session gate below is
+ * what dedupes them, rather than picking one writer and hoping it fires.
+ */
+function surfaceEmptyCluster(dataDir: string, priorTicketCount: number): void {
+  if (surfacedEmpty.has(dataDir)) return;
+  surfacedEmpty.add(dataDir);
+  writeRecoveryMarker(dataDir, {
+    kind: 'empty-cluster',
+    // No rename happened in THIS process — a preserved directory, if one
+    // exists, was left by an earlier one and is offered by the §42 picker.
+    corruptPath: '',
+    recoveredAt: new Date().toISOString(),
+    errorMessage: '',
+    priorTicketCount,
+  });
 }
 
 /** The refusal log line. One shape for both writers so an incident leaves a
@@ -184,7 +227,9 @@ export function logArtifactBlocked(kind: string, dataDir: string, verdict: Artif
   );
 }
 
-/** Test seam — the created-empty set is process-global by design. */
+/** Test seam — the created-empty and already-surfaced sets are process-global
+ *  by design. */
 export function _resetEmptyClusterGuardForTests(): void {
   createdEmpty.clear();
+  surfacedEmpty.clear();
 }

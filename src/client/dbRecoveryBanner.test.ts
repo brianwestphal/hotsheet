@@ -114,6 +114,68 @@ describe('formatRecoveryToastLabel (HS-8587)', () => {
   });
 });
 
+/**
+ * HS-9576 (docs/135): the same banner, a different situation. Nothing failed to
+ * load — the cluster came up empty over a project that had data, and the
+ * durability writers are refusing to run. The copy has to be recognisably NOT
+ * the corrupt-open copy, or the user reads "database failed to load" and goes
+ * looking for a failure that never happened.
+ */
+describe('formatEmptyClusterBannerLabel (HS-9576)', () => {
+  function emptyMarker(overrides: Partial<DbRecoveryMarker> = {}): DbRecoveryMarker {
+    return {
+      kind: 'empty-cluster',
+      corruptPath: '',
+      recoveredAt: new Date().toISOString(),
+      errorMessage: '',
+      priorTicketCount: 432,
+      ...overrides,
+    };
+  }
+
+  it('says what is wrong, what is protected, and what to do', () => {
+    const out = formatRecoveryBannerLabel(emptyMarker());
+    expect(out).toMatch(/database is empty/);
+    expect(out).toMatch(/432 tickets/);
+    // The reassurance is the point: the good copies are being actively kept.
+    expect(out).toMatch(/paused/);
+    expect(out).toMatch(/Settings → Backups/);
+  });
+
+  it('points at the preserved directory, which may be newer than any backup', () => {
+    // HS-9575 made those selectable; a user who does not know they exist would
+    // restore an older backup and lose the difference.
+    const out = formatRecoveryBannerLabel(emptyMarker());
+    expect(out).toMatch(/db-corrupt-/);
+    expect(out).toMatch(/more recent data than the newest backup/);
+  });
+
+  it('does not claim the database failed to load', () => {
+    expect(formatRecoveryBannerLabel(emptyMarker())).not.toMatch(/failed to load/);
+  });
+
+  it('pluralizes a single ticket', () => {
+    expect(formatRecoveryBannerLabel(emptyMarker({ priorTicketCount: 1 }))).toMatch(/1 ticket from it/);
+  });
+
+  function corruptMarker(overrides: Partial<DbRecoveryMarker> = {}): DbRecoveryMarker {
+    return {
+      corruptPath: '/some/path/db-corrupt-1234',
+      recoveredAt: new Date().toISOString(),
+      errorMessage: 'Aborted().',
+      ...overrides,
+    };
+  }
+
+  it('still routes a corrupt-open marker to the original copy', () => {
+    expect(formatRecoveryBannerLabel(corruptMarker({ kind: 'corrupt-open' }))).toMatch(/Database failed to load/);
+  });
+
+  it('treats a marker with no kind as corrupt-open (written by an older server)', () => {
+    expect(formatRecoveryBannerLabel(corruptMarker())).toMatch(/Database failed to load/);
+  });
+});
+
 /** Sanity check: the module exports both the formatter and the entry
  *  point used by app.tsx. If either ever stops being a function the
  *  client boot sequence fails silently — these guards catch a

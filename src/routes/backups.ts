@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 
 import { cleanupPreview, createBackup, listBackups, loadBackupForPreview, restoreBackup, triggerManualBackup } from '../backup.js';
 import { clearRecoveryMarker } from '../db/connection.js';
+import { readRecoveryMarker } from '../db/recoveryMarker.js';
 import { getBackupDir, readFileSettings } from '../file-settings.js';
 import { revealInFileManager } from '../open-in-file-manager.js';
 import { findStrandedBackupRoots } from '../strandedBackups.js';
@@ -56,16 +57,31 @@ backupRoutes.post('/create', async (c) => {
   const parsed = parseBody(CreateBackupSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const info = await createBackup(dataDir, parsed.data.tier);
-  if (!info) return c.json({ error: 'Backup already in progress' }, 409);
+  if (!info) return c.json({ error: noBackupReason(dataDir) }, 409);
   return c.json(info);
 });
 
 backupRoutes.post('/now', async (c) => {
   const dataDir = c.get('dataDir');
   const info = await triggerManualBackup(dataDir);
-  if (!info) return c.json({ error: 'Backup already in progress' }, 409);
+  if (!info) return c.json({ error: noBackupReason(dataDir) }, 409);
   return c.json(info);
 });
+
+/**
+ * HS-9576 — `createBackup` returns null for two very different reasons, and
+ * until now both were reported as "Backup already in progress". When the
+ * empty-cluster guard (docs/135) is what refused, that message is a lie told to
+ * a user who just clicked "Back up now" on a project whose data is missing —
+ * the precise moment they need the truth. The marker the guard writes is the
+ * signal, so read it back rather than plumbing a reason through the writer.
+ */
+function noBackupReason(dataDir: string): string {
+  if (readRecoveryMarker(dataDir)?.kind === 'empty-cluster') {
+    return 'This project\'s database is empty but it previously held tickets, so backups are paused to protect the existing ones. Restore from a backup or a preserved db-corrupt-* folder first.';
+  }
+  return 'Backup already in progress';
+}
 
 backupRoutes.get('/preview/:tier/:filename', async (c) => {
   const dataDir = c.get('dataDir');

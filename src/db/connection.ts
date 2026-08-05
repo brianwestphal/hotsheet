@@ -39,6 +39,7 @@ import { forceGcNow, type ForceGcResult } from './forceGc.js';
 import { describeExternalCeiling, externalCeilingBytes } from './memoryCeiling.js';
 import { createPglite, TELEMETRY_START_PARAMS } from './pglite.js';
 import { instrumentDbQueries, setClusterReopener, setStorageFailureHandler, setWasmTrapHandler } from './queryInstrumentation.js';
+import { writeRecoveryMarker } from './recoveryMarker.js';
 import { isClusterStorageFailure } from './storageFailure.js';
 import { currentSystemPressure } from './systemMemoryPressure.js';
 import { PoisonedClusterError } from './wasmTrap.js';
@@ -115,83 +116,11 @@ export function isRecoverableOpenError(err: unknown): boolean {
 }
 
 
-/** HS-7899: written into a marker file when `recoverFromOpenFailure`
- *  falls all the way through to the rename-as-corrupt + fresh-cluster
- *  path. The client polls for this on launch so it can prompt the user
- *  to restore from backup instead of silently presenting an empty
- *  Hot Sheet. Persisted (rather than process-local) so the prompt
- *  survives subsequent restarts until the user dismisses or restores. */
-export interface DbRecoveryMarker {
-  /** Absolute path the live `db/` directory was renamed to. */
-  corruptPath: string;
-  /** ISO 8601 timestamp of when recovery happened. */
-  recoveredAt: string;
-  /** Underlying error message that triggered the recovery, for the UI. */
-  errorMessage: string;
-  /** HS-8587 — when the recovery auto-restored from a Snapshot Protection
-   *  source (§73), the source label (`snapshot` / `backup:<tier>:<ts>`).
-   *  Absent means no good source existed and we fell back to an empty
-   *  fresh cluster — the client shows the blocking restore banner in that
-   *  case, but a friendly "recovered from snapshot" toast when present. */
-  restoredFrom?: string;
-  /** HS-8587 — ticket count in the restored cluster, for the toast. */
-  restoredTicketCount?: number;
-}
-
-const RECOVERY_MARKER_FILENAME = '.db-recovery-marker.json';
-
-function recoveryMarkerPath(dataDir: string): string {
-  return join(dataDir, RECOVERY_MARKER_FILENAME);
-}
-
-/** Read the marker file for this dataDir, or null if no recovery has
- *  happened (or the user has already dismissed). Tolerates corrupt /
- *  unreadable marker files by returning null and silently moving on —
- *  the marker is informational, not load-bearing. */
-export function readRecoveryMarker(dataDir: string): DbRecoveryMarker | null {
-  const path = recoveryMarkerPath(dataDir);
-  if (!existsSync(path)) return null;
-  try {
-    // HS-8567 — zod-validate the marker file at the parse boundary.
-    const raw = readFileSync(path, 'utf8');
-    const parsed: unknown = JSON.parse(raw);
-    const RecoveryMarkerSchema = z.object({
-      corruptPath: z.string(),
-      recoveredAt: z.string(),
-      errorMessage: z.string().optional(),
-      restoredFrom: z.string().optional(),
-      restoredTicketCount: z.number().optional(),
-    }).loose();
-    const result = RecoveryMarkerSchema.safeParse(parsed);
-    if (!result.success) return null;
-    return {
-      corruptPath: result.data.corruptPath,
-      recoveredAt: result.data.recoveredAt,
-      errorMessage: result.data.errorMessage ?? '',
-      restoredFrom: result.data.restoredFrom,
-      restoredTicketCount: result.data.restoredTicketCount,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeRecoveryMarker(dataDir: string, marker: DbRecoveryMarker): void {
-  try {
-    writeFileSync(recoveryMarkerPath(dataDir), JSON.stringify(marker, null, 2));
-  } catch (writeErr: unknown) {
-    const writeMessage = getErrorMessage(writeErr);
-    console.error(`Could not write DB recovery marker: ${writeMessage}`);
-  }
-}
-
-/** Clear the marker. Called when the user dismisses the recovery banner
- *  or successfully restores from backup. Idempotent — missing file is
- *  fine. */
-export function clearRecoveryMarker(dataDir: string): void {
-  const path = recoveryMarkerPath(dataDir);
-  try { rmSync(path, { force: true }); } catch { /* ignore */ }
-}
+// HS-9576 — the marker's read/write/clear moved to `recoveryMarker.ts` so the
+// empty-cluster guard can write one too without importing this module (which
+// imports the guard). Re-exported so every existing caller is unaffected.
+export type { DbRecoveryMarker } from './recoveryMarker.js';
+export { clearRecoveryMarker, readRecoveryMarker } from './recoveryMarker.js';
 
 // HS-8717 — "pending recovery" marker. Written when a corrupt-open recovery
 // CANNOT preserve `db/` aside in-process: on Windows the just-failed PGLite
@@ -1422,6 +1351,7 @@ async function completeDeferredRecovery(dbPath: string): Promise<PGlite | null> 
   const restored = await tryRestoreFromSources(dbPath, dataDir);
   writeRecoveryMarker(dataDir, {
     corruptPath,
+    kind: 'corrupt-open',
     recoveredAt: new Date().toISOString(),
     errorMessage: PENDING_RECOVERY_CAUSE[pending.reason],
     ...(restored !== null ? { restoredFrom: restored.label, restoredTicketCount: restored.ticketCount } : {}),
@@ -1520,7 +1450,8 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
     // ("Recovered from snapshot — N tickets") instead of the blocking banner.
     writeRecoveryMarker(dataDir, {
       corruptPath,
-      recoveredAt: new Date().toISOString(),
+      kind: 'corrupt-open',
+    recoveredAt: new Date().toISOString(),
       errorMessage: message,
       restoredFrom: restored.label,
       restoredTicketCount: restored.ticketCount,
@@ -1536,6 +1467,7 @@ async function recoverFromOpenFailure(dbPath: string, err: unknown, forceRecover
   console.error('No snapshot or backup could be restored; creating a fresh empty database.');
   writeRecoveryMarker(dataDir, {
     corruptPath,
+    kind: 'corrupt-open',
     recoveredAt: new Date().toISOString(),
     errorMessage: message,
   });
