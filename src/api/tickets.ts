@@ -56,9 +56,22 @@ const TicketSyncInfoSchema = z.object({
   syncStatus: z.string(),
 });
 
+/** HS-9597 (docs/6 §6.6) — one auto-context block that applies to a ticket, with
+ *  its provenance. Structured rather than a joined string so a consumer keeps
+ *  "which rule produced this"; `.map(p => p.text).join('\n\n')` reproduces the
+ *  worklist rendering. Computed on read — never a stored column. */
+export const TicketAutoContextSchema = z.object({
+  source: z.enum(['category', 'tag']),
+  key: z.string(),
+  text: z.string(),
+});
+export type TicketAutoContextEntry = z.infer<typeof TicketAutoContextSchema>;
+
 export const TicketDetailSchema = TicketSchema.extend({
   attachments: z.array(TicketAttachmentSchema),
   syncInfo: z.array(TicketSyncInfoSchema),
+  // Optional so a response from an older server still parses.
+  auto_context: z.array(TicketAutoContextSchema).optional().default([]),
 });
 export type TicketDetail = z.infer<typeof TicketDetailSchema>;
 

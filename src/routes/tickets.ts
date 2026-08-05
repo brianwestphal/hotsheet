@@ -5,6 +5,7 @@ import { type Context, Hono } from 'hono';
 import { isAbsolute } from 'path';
 
 import { projectRootFromDataDir } from '../aiInstructions.js';
+import { loadAutoContext, resolveTicketAutoContext, type TicketAutoContext } from '../autoContextResolve.js';
 // HS-8555 — centralized attachment-blob delete helper.
 import { deleteAttachmentFile, deleteDraftAttachments, getDraftAttachments } from '../db/attachments.js';
 import { getBlockedBy, isBlocked, setBlockedBy } from '../db/blockedBy.js';
@@ -62,6 +63,46 @@ const VALID_STATUS_FILTERS = new Set<string>([
   'not_started', 'started', 'completed', 'verified', 'backlog', 'archive', 'deleted',
   'open', 'non_verified', 'active',
 ]);
+
+/**
+ * HS-9597 (docs/6 §6.6) — attach the ticket's resolved auto-context to a
+ * response.
+ *
+ * Computed on read and **never stored**: it derives from `settings.auto_context`
+ * plus the ticket's `category`/`tags`, so a persisted copy would go stale the
+ * moment a rule is edited, a category renamed, or a tag added — and it would
+ * additionally need invalidating against the docs/95 per-machine local delta,
+ * which is not a DB concept at all.
+ *
+ * The list is the RESOLVED one (user entries over built-in defaults, minus
+ * locally-hidden shared entries), per docs/95 §95.3 — never the shared layer raw.
+ *
+ * Cheap since HS-9600: the settings read behind `loadAutoContext` is cached, and
+ * the match itself is a find + filter + sort over ~12-20 entries.
+ */
+/**
+ * HS-9598 — the list form. Resolves the auto-context entries **once per request**
+ * and matches per ticket, so a 500-row list pays one settings resolve (itself
+ * cached since HS-9600) plus a find/filter/sort over ~12-20 entries per row.
+ *
+ * Default-on rather than opt-in (maintainer decision, 2026-08-05): a consumer
+ * should never have to know which endpoint a ticket arrived through to know
+ * whether the field is there.
+ */
+async function withAutoContextAll<T extends { category: string; tags?: unknown }>(
+  dataDir: string,
+  tickets: T[],
+): Promise<(T & { auto_context: TicketAutoContext[] })[]> {
+  const entries = await loadAutoContext(dataDir);
+  return tickets.map(t => ({ ...t, auto_context: resolveTicketAutoContext(t, entries) }));
+}
+
+async function withAutoContext<T extends { category: string; tags?: unknown }>(
+  dataDir: string,
+  ticket: T,
+): Promise<T & { auto_context: TicketAutoContext[] }> {
+  return { ...ticket, auto_context: resolveTicketAutoContext(ticket, await loadAutoContext(dataDir)) };
+}
 
 export const ticketRoutes = new Hono<AppEnv>();
 
@@ -180,7 +221,7 @@ ticketRoutes.get('/tickets', async (c) => {
   }
 
   const tickets = await getTickets(filters);
-  return c.json(tickets);
+  return c.json(await withAutoContextAll(c.get('dataDir'), tickets));
 });
 
 /**
@@ -243,7 +284,12 @@ ticketRoutes.post('/tickets/claim-next', async (c) => {
   // HS-8975 — a queue-only worker is served only its dispatched tickets, then null.
   const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, { ownOnly: isQueueOnly(dataDir, parsed.data.worker) });
   if (ticket !== null) { notifyMutation(c.get('dataDir')); emitSync(c, { type: 'claims-changed' }); }
-  return c.json({ ticket });
+  // HS-9597 (docs/6 §6.6) — the single most important place for this. The
+  // `hotsheet-worker` loop is claim → work `details` → complete; a pool worker
+  // NEVER reads `worklist.md`, so without this it gets strictly less standing
+  // guidance than the main agent working the identical ticket, and has no
+  // fallback path to the file.
+  return c.json({ ticket: ticket === null ? null : await withAutoContext(dataDir, ticket) });
 });
 
 ticketRoutes.post('/tickets/:id/claim', async (c) => {
@@ -465,7 +511,10 @@ ticketRoutes.get('/tickets/:id', async (c) => {
   }));
   const syncInfo = syncInfoRaw.filter(s => s !== null);
 
-  return c.json({ ...ticket, notes: JSON.stringify(notes), attachments, syncInfo });
+  return c.json({
+    ...await withAutoContext(c.get('dataDir'), ticket),
+    notes: JSON.stringify(notes), attachments, syncInfo,
+  });
 });
 
 ticketRoutes.patch('/tickets/:id', async (c) => {
@@ -868,5 +917,5 @@ ticketRoutes.post('/tickets/query', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { logic, conditions, sort_by, sort_dir, required_tag, include_archived } = parsed.data;
   const tickets = await queryTickets(logic, conditions, sort_by, sort_dir, required_tag, include_archived);
-  return c.json(tickets);
+  return c.json(await withAutoContextAll(c.get('dataDir'), tickets));
 });

@@ -127,6 +127,82 @@ When running multiple Hot Sheet instances, AI tools can accidentally connect to 
 - **Port recovery**: Skill files and worklist.md instruct AI tools to re-read those files when requests fail (connection refused or 403), as the port or secret may have changed. Since HS-9475 that re-read is the *only* way a skill obtains them, so recovery is automatic rather than dependent on a regeneration.
 - **Channel completion signal**: The `/channel/done` curl command embedded in channel triggers includes the secret header so it passes the middleware.
 
+### 6.6 Auto-context (HS-9593 / HS-9596 / HS-9597 / HS-9598)
+
+**Where this is documented.** Until HS-9597 auto-context appeared in NO
+requirements doc for the export that consumes it — the only text was
+[4-user-interface.md](4-user-interface.md) §4.18, which describes the settings
+*UI*. This section is its home for the behavior; §4.18 remains the UI.
+
+Auto-context is per-category / per-tag standing guidance the project defines
+once and every agent should follow on a ticket of that kind. It is **prepended
+into the ticket's `- Details:` block** in both `worklist.md` and
+`open-tickets.md` — deliberately not a separate labeled field, so an agent reads
+it as part of the ticket rather than as metadata it might skip.
+
+#### The match rule
+
+`src/autoContextResolve.ts::resolveTicketAutoContext` — one shared, pure
+function, because three things about it are easy to re-implement wrongly:
+
+| | |
+|---|---|
+| **category** | at most one entry, `key === ticket.category`, **case-SENSITIVE** (categories are ids) |
+| **tags** | every matching entry, **case-INSENSITIVE** (tags are free text the user types), ordered **alphabetically by entry key** — not settings order, not ticket order |
+| **precedence** | **concatenation, not override** — the category block first, then the tag blocks. Neither suppresses the other. |
+| **empty text** | a **suppression**, not an empty paragraph (HS-9247 — an explicit empty-text entry exists to cancel a built-in default) |
+
+The entries themselves are the **resolved** list: the user's saved entries
+layered over the built-in defaults (`autoContextDefaults.ts`), minus any shared
+entry hidden by this machine's local delta (HS-9256). Per
+[95-settings-sharing-classification.md](95-settings-sharing-classification.md)
+§95.3 (`auto_context` = disable / override / add-local, no order override), every
+surface must expose that resolved list — never the shared layer raw.
+
+#### It is not only a markdown concern
+
+A ticket reached through the API or MCP used to carry **no** auto-context, so an
+agent that never opened `worklist.md` saw strictly less standing guidance than
+one that did. The worst case was `hotsheet_claim_next`: the `hotsheet-worker`
+loop is claim → work `details` → complete, and a pool worker **never reads the
+worklist file**, so it had no fallback path to that guidance at all.
+
+Every ticket-returning surface therefore carries an `auto_context` field:
+
+| surface | carries it |
+|---|---|
+| `worklist.md` · `open-tickets.md` | ✅ (prepended into `- Details:`) |
+| `POST /api/tickets/claim-next` → `hotsheet_claim_next` | ✅ |
+| `GET /api/tickets/:id` → `hotsheet_get_ticket` | ✅ |
+| `GET /api/tickets` · `POST /api/tickets/query` → `hotsheet_query_tickets` | ✅ |
+| write acks (create / PATCH / batch / up-next / restore / duplicate / `:id/claim`) | ❌ — an agent that just wrote a ticket does not need standing instructions echoed back |
+| plugin sync → GitHub | ❌ — internal agent guidance must not leak into an issue body, and it would break `syncEngine`'s local-vs-remote body diffing |
+| WebSocket `/ws/sync` · `/api/poll` | ❌ — deltas by design; clients refetch |
+| client UI | ❌ — the user already has Settings → Context |
+
+**Shape** (`{ source: 'category' | 'tag', key, text }[]`) — structured, not one
+joined string, so provenance survives and the markdown builder's formatting is
+not frozen into the wire contract. `.map(p => p.text).join('\n\n')` reproduces
+the worklist rendering exactly. Always present, `[]` when nothing applies, so a
+consumer can iterate unconditionally.
+
+**Computed on read, never stored.** It derives from settings + the ticket's
+`category`/`tags`, so a column would go stale the moment a rule is edited, a
+category renamed or a tag added — and would additionally need invalidating
+against the per-machine local delta, which is not a DB concept.
+
+**On by default everywhere, with no opt-in flag** (maintainer decision,
+2026-08-05). A flag would make the wire contract depend on the caller, so no
+consumer could rely on the field existing. The cost that made opt-in tempting —
+the settings load — was fixed at its source instead (HS-9600 caches it), and the
+list surfaces resolve the entries **once per request** rather than per ticket.
+
+**Measured payload cost:** ~**279 bytes per ticket** with the built-in defaults
+(30 tickets → +8.4 KB), i.e. roughly 140 KB on a 500-ticket list. Most of that is
+duplication — every `bug` row repeats the identical `bug` rule. If that ever
+matters for the sidebar, the fix is a top-level `{ tickets, rules }` envelope
+carrying each rule once with per-ticket rule *ids*, **not** reintroducing a flag.
+
 ## Non-Functional Requirements
 
 ### 6.10 Debouncing

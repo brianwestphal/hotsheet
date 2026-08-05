@@ -277,6 +277,8 @@ Each has three options:
 
 ### 4.18 Auto-Context
 
+> Behavior (the match rule, and which API/MCP surfaces carry it) is documented in [6-markdown-sync.md](6-markdown-sync.md) §6.6. This section is the settings UI.
+
 - Users can configure automatic context that is prepended to ticket details in the worklist and open-tickets markdown files.
 - **Settings tab**: "Context" tab (Lucide file-text icon) in the settings dialog.
   - "Add" button opens a dialog with a filterable list of categories and tags (excluding already-configured ones).

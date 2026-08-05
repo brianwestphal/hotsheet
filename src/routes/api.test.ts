@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { join } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 
+import { _resetSettingsCacheForTests, _settingsParseCountForTests } from '../file-settings.js';
 import type { PtyFactory } from '../terminals/registry.js';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import type { AppEnv } from '../types.js';
@@ -2239,6 +2240,189 @@ describe('claim/lease endpoints (HS-8862)', () => {
   });
 });
 
+/**
+ * HS-9597 (docs/6 §6.6) — auto-context must reach the AGENT-facing surfaces, not
+ * only `worklist.md`.
+ *
+ * The gap this closes: the `hotsheet-worker` loop is claim → work `details` →
+ * complete, and a pool worker never reads the worklist file. So on the identical
+ * ticket it saw strictly less standing guidance than the main agent — no
+ * "reproduce first", no "file follow-ups for anything out of scope" — with no
+ * fallback path to the file.
+ */
+describe('auto_context on the agent-facing surfaces (HS-9597)', () => {
+  async function setAutoContext(entries: { type: string; key: string; text: string }[]): Promise<void> {
+    const res = await app.request('/api/file-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_context: entries }),
+    });
+    expect(res.ok).toBe(true);
+  }
+
+  async function makeTicket(title: string, category: string, tags?: string[]): Promise<number> {
+    const r = await app.request('/api/tickets', post({
+      title,
+      defaults: { up_next: true, category, ...(tags !== undefined ? { tags: JSON.stringify(tags) } : {}) },
+    }));
+    return (await r.json() as TicketResponse).id;
+  }
+
+  it('GET /tickets/:id carries the matching category + tag blocks, with provenance', async () => {
+    await setAutoContext([
+      { type: 'category', key: 'bug', text: 'Reproduce before fixing.' },
+      { type: 'tag', key: 'urgent', text: 'Drop everything.' },
+      { type: 'category', key: 'feature', text: 'SHOULD NOT APPEAR' },
+    ]);
+    const id = await makeTicket('ctx bug', 'bug', ['urgent']);
+
+    const body = await (await app.request(`/api/tickets/${String(id)}`)).json() as
+      { auto_context?: { source: string; key: string; text: string }[] };
+    expect(body.auto_context).toEqual([
+      { source: 'category', key: 'bug', text: 'Reproduce before fixing.' },
+      { source: 'tag', key: 'urgent', text: 'Drop everything.' },
+    ]);
+  });
+
+  it('POST /tickets/claim-next carries it — the surface that needed it most', async () => {
+    await setAutoContext([{ type: 'category', key: 'bug', text: 'Reproduce before fixing.' }]);
+    await makeTicket('claimable bug', 'bug');
+
+    const body = await (await app.request('/api/tickets/claim-next', post({ worker: 'w-ctx' }))).json() as
+      { ticket: { auto_context?: { text: string }[] } | null };
+    expect(body.ticket?.auto_context?.map(p => p.text)).toContain('Reproduce before fixing.');
+  });
+
+  it('the two surfaces agree for the same ticket — one shape everywhere', async () => {
+    // The maintainer's requirement on HS-9598: a consumer must never have to
+    // know which endpoint a ticket arrived through.
+    await setAutoContext([
+      { type: 'category', key: 'bug', text: 'CAT' },
+      { type: 'tag', key: 'urgent', text: 'TAG' },
+    ]);
+    await makeTicket('agreement', 'bug', ['urgent']);
+
+    const claimed = (await (await app.request('/api/tickets/claim-next', post({ worker: 'w-agree' }))).json() as
+      { ticket: { id: number; auto_context?: unknown } | null }).ticket;
+    expect(claimed).not.toBeNull();
+    const fetched = await (await app.request(`/api/tickets/${String(claimed?.id ?? 0)}`)).json() as
+      { auto_context?: unknown };
+    expect(fetched.auto_context).toEqual(claimed?.auto_context);
+  });
+
+  it('is an empty list — never absent, never null — when nothing applies', async () => {
+    // Note the built-in DEFAULTS (HS-9247) apply to a category with no user
+    // entry, so "nothing applies" has to be produced by an explicit empty-text
+    // override — which is itself the suppression rule, exercised here through
+    // the API rather than only through the markdown builder.
+    await setAutoContext([
+      { type: 'category', key: 'bug', text: 'only bugs' },
+      { type: 'category', key: 'task', text: '' },
+    ]);
+    const id = await makeTicket('no match', 'task');
+    const body = await (await app.request(`/api/tickets/${String(id)}`)).json() as { auto_context?: unknown };
+    expect(body.auto_context).toEqual([]);
+  });
+
+  it('serves the built-in default for a category the user has not customized', async () => {
+    // The flip side, and the reason the test above needs an override: a fresh
+    // project gets useful guidance without configuring anything, and that has to
+    // reach an agent through the API too — not just the worklist file.
+    await setAutoContext([{ type: 'category', key: 'bug', text: 'custom bug rule' }]);
+    const id = await makeTicket('untouched category', 'task');
+    const body = await (await app.request(`/api/tickets/${String(id)}`)).json() as
+      { auto_context?: { source: string; key: string }[] };
+    expect(body.auto_context?.some(p => p.source === 'category' && p.key === 'task')).toBe(true);
+  });
+
+  it('claim-next still answers {ticket:null} cleanly when nothing is claimable', async () => {
+    // The wrapper must not turn "nothing to claim" into a crash or a bogus shape.
+    const body = await (await app.request('/api/tickets/claim-next', post({ worker: 'w-empty-x' }))).json() as
+      { ticket: unknown };
+    expect(body).toHaveProperty('ticket');
+  });
+});
+
+/**
+ * HS-9598 — auto_context on the list/query surfaces, ON BY DEFAULT (maintainer
+ * decision 2026-08-05: a consumer must never have to know which endpoint a
+ * ticket arrived through). The remaining honest question was payload size, so it
+ * is MEASURED here rather than asserted from intuition.
+ */
+describe('auto_context on the list/query surfaces (HS-9598)', () => {
+  async function setAutoContext(entries: { type: string; key: string; text: string }[]): Promise<void> {
+    const res = await app.request('/api/file-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_context: entries }),
+    });
+    expect(res.ok).toBe(true);
+  }
+
+  it('GET /tickets and POST /tickets/query both carry it', async () => {
+    await setAutoContext([{ type: 'category', key: 'bug', text: 'LIST RULE' }]);
+    await app.request('/api/tickets', post({ title: 'list ctx', defaults: { category: 'bug', up_next: true } }));
+
+    const listed = await (await app.request('/api/tickets')).json() as { category: string; auto_context?: { text: string }[] }[];
+    const bug = listed.find(t => t.category === 'bug');
+    expect(bug?.auto_context?.map(p => p.text)).toContain('LIST RULE');
+
+    const queried = await (await app.request('/api/tickets/query', post({
+      logic: 'all', conditions: [{ field: 'category', operator: 'equals', value: 'bug' }],
+    }))).json() as { auto_context?: { text: string }[] }[];
+    expect(queried[0]?.auto_context?.map(p => p.text)).toContain('LIST RULE');
+  });
+
+  it('agrees per-ticket with the single-ticket endpoint', async () => {
+    // "One shape everywhere" as an assertion rather than an aspiration.
+    await setAutoContext([
+      { type: 'category', key: 'bug', text: 'CAT' },
+      { type: 'tag', key: 'urgent', text: 'TAG' },
+    ]);
+    const created = await (await app.request('/api/tickets', post({
+      title: 'cross-surface', defaults: { category: 'bug', tags: JSON.stringify(['urgent']), up_next: true },
+    }))).json() as TicketResponse;
+
+    const one = await (await app.request(`/api/tickets/${String(created.id)}`)).json() as { auto_context?: unknown };
+    const many = await (await app.request('/api/tickets')).json() as { id: number; auto_context?: unknown }[];
+    expect(many.find(t => t.id === created.id)?.auto_context).toEqual(one.auto_context);
+  });
+
+  it('resolves the settings ONCE per request, not once per ticket', async () => {
+    // The per-ticket match is trivial; the settings resolve is what would hurt.
+    // Asserting the parse count is the only way to see the difference.
+    for (let i = 0; i < 12; i++) {
+      await app.request('/api/tickets', post({ title: `bulk ${String(i)}`, defaults: { category: 'bug' } }));
+    }
+    _resetSettingsCacheForTests();
+    const before = _settingsParseCountForTests();
+    const listed = await (await app.request('/api/tickets')).json() as unknown[];
+    expect(listed.length).toBeGreaterThanOrEqual(12);
+    // A per-ticket resolve would parse the settings files once per row.
+    expect(_settingsParseCountForTests() - before).toBeLessThan(6);
+  });
+
+  it('MEASURED: what auto_context adds to a list response', async () => {
+    // Recorded rather than asserted tightly — the number is the useful output.
+    // If this ever gets large enough to matter for the sidebar, the fix is the
+    // top-level `{tickets, rules}` envelope (HS-9598 body), not an opt-in flag.
+    // Seeds its own rows so the figure means something when run in isolation.
+    await setAutoContext([]); // built-in defaults only — the realistic worst case
+    for (const category of ['bug', 'feature', 'task', 'issue', 'investigation']) {
+      for (let i = 0; i < 6; i++) {
+        await app.request('/api/tickets', post({ title: `measure ${category} ${String(i)}`, defaults: { category } }));
+      }
+    }
+    const listed = await (await app.request('/api/tickets')).json() as Record<string, unknown>[];
+    const withCtx = JSON.stringify(listed).length;
+    const withoutCtx = JSON.stringify(listed.map(({ auto_context: _ac, ...rest }) => rest)).length;
+    const perTicket = listed.length > 0 ? Math.round((withCtx - withoutCtx) / listed.length) : 0;
+     
+    console.log(`[HS-9598] ${String(listed.length)} tickets: +${String(withCtx - withoutCtx)} bytes total, ~${String(perTicket)} bytes/ticket`);
+    expect(withCtx).toBeGreaterThanOrEqual(withoutCtx);
+  });
+});
+
 describe('blocked_by gate endpoints (HS-8865)', () => {
   async function mkTicket(title: string, upNext = false): Promise<number> {
     const r = await app.request('/api/tickets', post({ title, defaults: { up_next: upNext } }));
@@ -2519,3 +2703,4 @@ describe('layered file-settings (HS-9004)', () => {
     expect(res.status).toBe(400);
   });
 });
+

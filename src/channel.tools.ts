@@ -727,7 +727,7 @@ const TOOLS: ToolEntry[] = [
   // HS-8347 — Phase 2: 9 more tools (14 total).
   {
     name: 'hotsheet_get_ticket',
-    description: 'Read a single ticket\'s current state by id. Returns the full ticket JSON including title, status, category, priority, up_next, tags, notes, details, and timestamps.',
+    description: 'Read a single ticket\'s current state by id. Returns the full ticket JSON including title, status, category, priority, up_next, tags, notes, details, and timestamps. The ticket carries `auto_context`: the project\'s standing per-category/per-tag instructions for a ticket like this one — the same guidance the worklist file prepends to its details, so treat it as part of the ticket.',
     inputSchema: GetTicketInputSchema,
     call: dispatchGetTicket,
   },
@@ -783,7 +783,7 @@ const TOOLS: ToolEntry[] = [
   // the Up Next pool: claim_next → work → (renew_lease while working) → release.
   {
     name: 'hotsheet_claim_next',
-    description: 'Atomically claim the highest-priority Up Next ticket that is unclaimed (or whose lease expired) for this worker, so parallel workers never grab the same ticket. Returns {ticket} (the claimed ticket) or {ticket:null} when nothing is claimable. Work the returned ticket, then hotsheet_release it (and set status=completed via hotsheet_update_ticket).',
+    description: 'Atomically claim the highest-priority Up Next ticket that is unclaimed (or whose lease expired) for this worker, so parallel workers never grab the same ticket. Returns {ticket} (the claimed ticket) or {ticket:null} when nothing is claimable. Work the returned ticket, then hotsheet_release it (and set status=completed via hotsheet_update_ticket). The ticket carries `auto_context`: the project\'s standing per-category/per-tag instructions for a ticket like this one (the same guidance the worklist file prepends to its details). TREAT IT AS PART OF THE TICKET — it is where rules like "reproduce before fixing" and "file follow-ups for anything out of scope" live.',
     inputSchema: ClaimNextInputSchema,
     call: dispatchClaimNext,
   },

@@ -81,7 +81,7 @@ import { getProjectSecret } from './secret-file.js';
 //   `HOTSHEET_DRIVE_SPAWNED=1` env the play/command drives export) so a one-shot
 //   run's own MCP child is excluded from the multi-connection warning count,
 //   leader preference, and "Disconnect all" cleanup.
-export const CHANNEL_VERSION = 19;
+export const CHANNEL_VERSION = 20;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
