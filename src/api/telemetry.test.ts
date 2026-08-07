@@ -51,10 +51,20 @@ describe('telemetry callers route to the right endpoint (HS-8632)', () => {
     expect(lastCall?.path).toBe('/telemetry/today-cost');
   });
 
-  it('getTodayCostByProject → GET …, unwrapped to the map', async () => {
-    stub({ costs: { a: 1, b: 2 } });
-    expect(await getTodayCostByProject()).toEqual({ a: 1, b: 2 });
+  // HS-9606 made this caller return the WHOLE response rather than unwrapping to
+  // the map: `partialSecrets` names the projects whose figure is an under-count
+  // (a tool that reports no cost also ran), and unwrapping would discard it.
+  it('getTodayCostByProject → GET …, returning the whole response', async () => {
+    stub({ costs: { a: 1, b: 2 }, partialSecrets: ['b'] });
+    expect(await getTodayCostByProject()).toEqual({ costs: { a: 1, b: 2 }, partialSecrets: ['b'] });
     expect(lastCall?.path).toBe('/telemetry/today-cost-by-project');
+  });
+
+  it('getTodayCostByProject parses a response with no partialSecrets (older server)', async () => {
+    // The field is optional precisely so a client polling a pre-HS-9606 server
+    // still parses instead of throwing away every chip's cost.
+    stub({ costs: { a: 1 } });
+    expect(await getTodayCostByProject()).toEqual({ costs: { a: 1 } });
   });
 
   it('getPromptTimeline → GET /telemetry/prompt/:id', async () => {

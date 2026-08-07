@@ -14,6 +14,7 @@
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { TodayCostByProject } from '../db/otelRollups.js';
 import type { AppEnv } from '../types.js';
 
 // --- Mocks ---
@@ -21,7 +22,12 @@ import type { AppEnv } from '../types.js';
 // quiet (vi.fn defaults to `any`).
 
 const mockTodayCost = vi.fn<(secret: string) => Promise<number>>();
-const mockTodayCostByProject = vi.fn<() => Promise<Record<string, number>>>();
+// HS-9616 — typed from the REAL return type, not a hand-written copy of it. The
+// hand-written `Promise<Record<string, number>>` was the pre-HS-9606 shape, so when
+// the helper started returning `{costs, partialSecrets}` nothing failed to compile
+// and the mock silently kept feeding the route a shape it no longer destructures.
+// Importing the type means the next shape change breaks here at build time.
+const mockTodayCostByProject = vi.fn<() => Promise<TodayCostByProject>>();
 const mockPromptTimeline = vi.fn<(id: string) => Promise<unknown>>();
 const mockPerTicketRollup = vi.fn<(num: string) => Promise<unknown>>();
 const mockDashboardPayload = vi.fn<(window: string, tz: string, projects: ReadonlyArray<{ secret: string; dataDir: string }> | null) => Promise<unknown>>();
@@ -34,7 +40,7 @@ const mockGetAllProjects = vi.fn<() => Array<{ secret: string; dataDir: string; 
 
 vi.mock('../db/otelQueries.js', () => ({
   getTodayCost: (secret: string): Promise<number> => mockTodayCost(secret),
-  getTodayCostByProject: (): Promise<Record<string, number>> => mockTodayCostByProject(),
+  getTodayCostByProject: (): Promise<TodayCostByProject> => mockTodayCostByProject(),
   getPromptTimeline: (id: string): Promise<unknown> => mockPromptTimeline(id),
   getPerTicketRollup: (num: string): Promise<unknown> => mockPerTicketRollup(num),
   getDashboardPayload: (window: string, tz: string, projects: ReadonlyArray<{ secret: string; dataDir: string }> | null): Promise<unknown> => mockDashboardPayload(window, tz, projects),
@@ -103,18 +109,32 @@ describe('GET /telemetry/today-cost', () => {
 });
 
 describe('GET /telemetry/today-cost-by-project', () => {
+  // HS-9606 changed the DB helper's return from a bare `secret → cost` map to
+  // `{costs, partialSecrets}`, and the route destructures both. The mock must
+  // resolve that shape: resolving the OLD bare map made the route read
+  // `undefined` for both fields, which `c.json` then dropped — so the response
+  // was `{}` and the test failed on a mock that no longer matched reality.
   it('returns the bulk by-project costs map verbatim', async () => {
     const costs = { 'secret-A': 0.5, 'secret-B': 2.7 };
-    mockTodayCostByProject.mockResolvedValue(costs);
+    mockTodayCostByProject.mockResolvedValue({ costs, partialSecrets: [] });
     const res = await buildApp().request('/api/telemetry/today-cost-by-project');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ costs });
+    expect(await res.json()).toEqual({ costs, partialSecrets: [] });
+  });
+
+  it('passes partialSecrets through — the under-count flag the chip renders', async () => {
+    // Nothing asserted this before, which is how the route could have dropped it
+    // silently. `secret-B`'s figure excludes a tool that reports no cost.
+    const costs = { 'secret-A': 0.5, 'secret-B': 2.7 };
+    mockTodayCostByProject.mockResolvedValue({ costs, partialSecrets: ['secret-B'] });
+    const res = await buildApp().request('/api/telemetry/today-cost-by-project');
+    expect(await res.json()).toEqual({ costs, partialSecrets: ['secret-B'] });
   });
 
   it('returns an empty costs map when no project has cost today', async () => {
-    mockTodayCostByProject.mockResolvedValue({});
+    mockTodayCostByProject.mockResolvedValue({ costs: {}, partialSecrets: [] });
     const res = await buildApp().request('/api/telemetry/today-cost-by-project');
-    expect(await res.json()).toEqual({ costs: {} });
+    expect(await res.json()).toEqual({ costs: {}, partialSecrets: [] });
   });
 });
 
