@@ -5,10 +5,11 @@ import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { isExecutableOnPath } from '../utils/isExecutableOnPath.js';
 import { DEFAULT_TERMINAL_ID, findTerminalConfig, type TerminalConfig } from './config.js';
-// HS-9492 — moved to `channel-config.ts` (beside the slug it mirrors) so the Claude
-// command capability and `workers/launchWorker.ts` can both use it without a cycle.
+// HS-9492 — moved out of this module (beside the slug it mirrors) so the Claude command
+// capability and `workers/launchWorker.ts` can both use it without a cycle; HS-9615 then
+// split it into `channelSlug.ts`, the client-safe half of `channel-config.ts`.
 // Re-exported so existing importers of this module keep working.
-export { claudeWithChannelCommand } from '../channel-config.js';
+export { claudeWithChannelCommand } from '../channelSlug.js';
 
 export interface ResolvedCommand {
   command: string;

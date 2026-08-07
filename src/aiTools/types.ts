@@ -13,6 +13,15 @@
 // the client bundle (`src/client/agentName.ts`), so a filesystem import here would break
 // the build. That constraint is why `detect` is DATA (a `DetectionSpec`) evaluated by a
 // server-side helper rather than a `(projectRoot) => boolean` closure; see `detect.ts`.
+//
+// HS-9615 — this is now ENFORCED by `src/clientBundlePurity.test.ts`, not just asserted
+// here. It was prose for six phases and HS-9601 walked straight through it: one import
+// of `channel-config.js` for the Claude worker launch line put `fs` / `path` /
+// `child_process` and the whole server graph in the browser bundle, and `tsc`, `lint`
+// and `npm test` were all green while `npm run build:client` failed with 132 errors.
+// If a plugin needs a helper that lives in an `fs`-importing module, SPLIT the pure part
+// out (as `channelSlug.ts` was split out of `channel-config.ts`) rather than importing
+// across — see docs/132 §132.11.11.
 import type { AgentTransport } from '../agentBackendParse.js';
 import type { TokenMetricMap } from './tokenMetrics.js';
 

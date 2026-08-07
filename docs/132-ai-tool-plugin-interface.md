@@ -815,6 +815,41 @@ The HS-9411 rule survives unchanged: the picker always offers **the tool the pro
 uses**, even one neither enabled nor shipped. That rule was never about gating — it exists so
 an existing working project is never silently switched — which is why it outlived the gates.
 
+### 132.11.11 The client-safety rule was prose, and prose does not hold (HS-9615)
+
+§132.11.1's split is load-bearing — it is the reason `serverCapabilities.ts` exists at all
+— and until HS-9615 the only thing enforcing it was a comment at the top of
+`aiTools/types.ts`. HS-9601 gave `claudePlugin` a `worker.launchCommand` sourced from
+`channel-config.js`, one import, and the browser bundle went from clean to **132
+unresolved node builtins**: `aiTools/registry.ts` is reached from
+`client/settingsDialog.tsx`, and `channel-config.ts` imports `fs`/`path`/`url` plus
+(transitively) acp, the db layer and `child_process`. `npm run tauri:dev` stopped
+starting.
+
+Three things about that failure are worth keeping:
+
+- **Every quality gate was green.** `tsc --noEmit`, `npm run lint` and `npm test` all pass
+  with the bad edge in place, because none of them bundles for the browser. The break
+  surfaces only when someone runs a client build — which, on a repo where the dev server
+  is normally already running, can be days later.
+- **The blast radius is the whole server graph, not one module.** Server modules import
+  each other freely, so the first bad edge does not add one builtin, it adds all of them.
+  That is why the error was 132 lines long and named files (`acp/acpFs.ts`,
+  `open-in-file-manager.ts`) with no plausible connection to the change.
+- **The fix is a split, not a move.** `slugifyDataDir` / `claudeWithChannelCommand` were
+  always pure string transforms sitting in a filesystem-heavy module; HS-9615 moved them
+  to `src/channelSlug.ts` and re-exported them from `channel-config.ts` so server callers
+  are unaffected. **The general shape of a §132.11.1 violation is a pure helper living in
+  an impure module** — reach for extracting it before concluding the capability is
+  behavioral.
+
+`src/clientBundlePurity.test.ts` now walks the static import graph from
+`src/client/app.tsx` and `pair.tsx` (following dynamic imports and re-exports, skipping
+type-only ones, exactly as esbuild does) and fails with the full chain from the entry
+point to the offending import. It also asserts `aiTools/registry.ts` reaches no builtin
+directly, which is the stricter statement: the entry-point walks would go green if
+someone merely stopped importing the registry from client code.
+
 ## 132.12 Cross-references
 
 - [113](113-multi-ai-tool-support.md) — the epic this consolidates; §113.2's A/B tiering

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'fs';
-import { basename, dirname, join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
@@ -9,6 +9,7 @@ import { appendMainServerEvent } from './channelLog.js';
 import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
 import { listAliveEntries } from './channelRegistry.js';
+import { slugifyDataDir } from './channelSlug.js';
 import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
 import { readFileSettings } from './file-settings.js';
 import type { ChannelTriggerTarget } from './routes/validation.js';
@@ -24,30 +25,14 @@ const McpConfigSchema = z.object({
 // during the one-time migration. New writes use `getMcpServerKey(dataDir)`.
 const LEGACY_MCP_SERVER_KEY = 'hotsheet-channel';
 
-/** HS-8349 — derive a stable per-project slug from the channel server's
- *  `--data-dir`. The basename of the project root (parent of `.hotsheet/`)
- *  is lowercased and non-alphanumeric runs collapse to a single `-`.
- *  Leading / trailing `-` are trimmed. An empty result falls back to
- *  `project` so the slug is always non-empty. */
-export function slugifyDataDir(dataDir: string): string {
-  const root = dataDir.replace(/[\\/]\.hotsheet[\\/]?$/, '');
-  const base = basename(root) || 'project';
-  const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  return slug !== '' ? slug : 'project';
-}
-
 /**
- * HS-8349 — the development-channel launch line for a project. The MCP server name is
- * per-project (`hotsheet-channel-<slug>`), so this mirrors `slugifyDataDir`.
- *
- * HS-9492 — lives HERE rather than in `terminals/resolveCommand.ts` because it has two
- * unrelated consumers: the terminal's Claude command capability and the worker-pool
- * launch line (`workers/launchWorker.ts`). Keeping it beside the slug it depends on lets
- * both import it without a cycle, and stops the string being written twice.
+ * HS-9615 — `slugifyDataDir` / `claudeWithChannelCommand` moved to `channelSlug.ts`,
+ * which imports no node builtins. They are re-exported here because this module is
+ * where every server caller (and `routes/api.test.ts`'s mock) already looks for them;
+ * client-reachable code — `aiTools/**` — must import `channelSlug.js` DIRECTLY, since
+ * reaching them through this file drags `fs` / `path` / the server graph along with it.
  */
-export function claudeWithChannelCommand(dataDir: string): string {
-  return `claude --dangerously-load-development-channels server:hotsheet-channel-${slugifyDataDir(dataDir)}`;
-}
+export { claudeWithChannelCommand, slugifyDataDir } from './channelSlug.js';
 
 /** HS-8349 — the per-project MCP server key written into `.mcp.json`.
  *  Claude Code namespaces tools by the `.mcp.json` key, so each project's
@@ -84,7 +69,7 @@ export function getChannelServerPath(): { command: string; args: string[] } {
 /** Get the project root directory (parent of .hotsheet/).
  *  HS-8715 — the `.hotsheet` separator class must accept BOTH `/` and `\`
  *  so this works on Windows (where dataDir uses backslashes). Mirrors the
- *  separator-agnostic regex already used by `slugifyDataDir` above. A
+ *  separator-agnostic regex already used by `slugifyDataDir` (`channelSlug.ts`). A
  *  forward-slash-only regex left `.hotsheet` attached on Windows, so
  *  `.mcp.json` was written inside the dataDir instead of the project root. */
 function projectRoot(dataDir: string): string {

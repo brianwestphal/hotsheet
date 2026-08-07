@@ -3,7 +3,9 @@
 // the canonical `CLAUDE.md` + `.claude/skills` source every adapter-family tool
 // references (docs/118). docs/132 §132.6 has it migrating LAST for exactly that reason.
 
-import { claudeWithChannelCommand } from '../../channel-config.js';
+// `channelSlug.js`, NOT `channel-config.js` — the latter imports `fs` / `path` and the
+// whole server graph, and this module is client-reachable (HS-9615).
+import { claudeWithChannelCommand } from '../../channelSlug.js';
 import type { AiToolPlugin } from '../types.js';
 
 export const claudePlugin: AiToolPlugin = {

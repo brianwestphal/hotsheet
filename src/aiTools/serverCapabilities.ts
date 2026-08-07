@@ -43,7 +43,8 @@ import type { AgentTransport } from '../agentBackendParse.js';
 import { canonicalClaudeSourceExists } from '../aiInstructions.js';
 import { ensureAntigravityMcpConfig } from '../antigravity.js';
 import { spawnAgyRun } from '../antigravityDrive.js';
-import { claudeWithChannelCommand, runClaudeChannelTrigger  } from '../channel-config.js';
+import { runClaudeChannelTrigger  } from '../channel-config.js';
+import { claudeWithChannelCommand } from '../channelSlug.js';
 import { ensureCodexMcpConfig } from '../codex.js';
 import {   clearCodexAppServerFailures,
   codexDriveDiscoverEnabled,
