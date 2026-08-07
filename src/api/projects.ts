@@ -51,12 +51,34 @@ const ProjectsFeedbackStateSchema = z.object({ projects: z.record(z.string(), z.
  *  `.catch('')` makes these required-in-the-type yet NON-throwing: a genuine
  *  permission always carries them, and a partial entry defaults to '' rather
  *  than failing validation (which would silently drop a real pending request
- *  on the long-poll). Extra server fields (e.g. `tool_input`) are stripped. */
+ *  on the long-poll). Extra server fields (e.g. `tool_input`) are stripped.
+ *
+ *  ⚠ HS-9586 — `options` MUST be listed here. This schema is the client's only
+ *  view of the poll, and zod STRIPS what it doesn't name. Omitting `options`
+ *  did not surface as a missing field; it silently downgraded every ACP
+ *  approval (codex, opencode) to the legacy two-icon Allow/Deny layout, which
+ *  responds WITHOUT an `option_id` — and the server reads a missing option id
+ *  as a dismissal. So "Allow" arrived at codex as a refusal, with no error
+ *  anywhere. Anything the option-driven overlay needs has to be added here as
+ *  well as to `PendingPermissionEntrySchema`; `permissionOptionsRoundTrip.test.ts`
+ *  pins the pair together. */
 const PermissionEntrySchema = z.object({
   request_id: z.string().catch(''),
   tool_name: z.string().catch(''),
   description: z.string().catch(''),
   input_preview: z.string().optional(),
+  // HS-9330 — agent-supplied choices; their `optionId` is what the overlay
+  // sends back and what the drive translates to a wire token.
+  // `.catch(undefined)` for the same reason the fields above use `.catch('')`:
+  // an option shape this client can't read must degrade to the legacy Allow/Deny
+  // layout, never reject the whole poll response — that would drop EVERY pending
+  // permission and strand the agent waiting. The HS-9586 respond-route fallback
+  // recovers a correct answer from that degraded layout.
+  options: z.array(z.object({
+    optionId: z.string(),
+    name: z.string(),
+    kind: z.string(),
+  })).optional().catch(undefined),
 });
 
 export const ProjectsPermissionsSchema = z.object({

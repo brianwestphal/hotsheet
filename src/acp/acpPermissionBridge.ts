@@ -90,6 +90,20 @@ export function hasAcpPermission(request_id: string): boolean {
 }
 
 /**
+ * The options a pending request was raised with, or null when the id isn't ours.
+ *
+ * HS-9586 — used by `/channel/permission/respond` to recover an `option_id` from
+ * the binary `behavior` when a client sends one without the other. That combination
+ * should not happen, but when it did the consequence was invisible and severe: the
+ * route read the missing id as a dismissal, so "Allow" reached the agent as a
+ * refusal with nothing logged. Recovering from the agent's OWN option list keeps
+ * the fallback in the agent's vocabulary rather than guessing a literal.
+ */
+export function acpPermissionOptions(request_id: string): AcpPermissionOption[] | null {
+  return entries.get(request_id)?.pending.options ?? null;
+}
+
+/**
  * Resolve a pending ACP permission with the chosen reply. Returns false when the
  * `request_id` isn't ours (the caller then falls through to the Claude-channel path).
  * Idempotent: a second resolve for the same id is a no-op false.

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 
-import { hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBridge.js';
+import { pickAllowOptionId, pickRejectOptionId } from '../acp/acpMapping.js';
+import { acpPermissionOptions, hasAcpPermission, resolveAcpPermission } from '../acp/acpPermissionBridge.js';
 import { agentDisplayName } from '../agentDisplayName.js';
 import { prestartProjectDriveService, projectDriveService } from '../aiTools/serverCapabilities.js';
 import { checkChannelVersion, getChannelPort, isChannelAlive, registerChannel, registerChannelForAll, shutdownChannel, slugifyDataDir, triggerChannel, unregisterChannel, unregisterChannelForAll } from '../channel-config.js';
@@ -24,6 +25,21 @@ import { addPermissionWaiter, notifyChange, notifyPermission } from './notify.js
 import { ChannelHeartbeatSchema, ChannelTriggerSchema, CodexTranscriptEventSchema, parseBody, PermissionRespondSchema } from './validation.js';
 
 export const channelRoutes = new Hono<AppEnv>();
+
+/**
+ * HS-9586 — the `option_id` for a response that carried only a binary `behavior`,
+ * chosen from the pending request's own options; null when the request is unknown,
+ * the behavior is absent (a genuine dismissal), or the agent offered nothing of the
+ * needed kind. See the call site for why the missing-id case must not simply cancel.
+ */
+function recoverAcpOptionId(requestId: string, behavior: string | undefined): string | null {
+  if (behavior !== 'allow' && behavior !== 'deny') return null;
+  const options = acpPermissionOptions(requestId);
+  if (options === null || options.length === 0) return null;
+  return behavior === 'allow'
+    ? pickAllowOptionId(options, false)
+    : pickRejectOptionId(options, false);
+}
 
 // HS-8456 — track the last-known channel-alive state per dataDir so the
 // `/channel/status` handler can write a single line to `<dataDir>/mcp.log`
@@ -436,10 +452,22 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   // (no channel-server hop): resolve it with the chosen option and return. The option
   // id is authoritative for ACP; `behavior` is only used for the command-log summary.
   if (hasAcpPermission(parsed.data.request_id)) {
-    const optionId = parsed.data.option_id;
+    // HS-9586 — a response that carries `behavior` but no `option_id` used to fall
+    // straight through to `{ cancelled: true }`, i.e. a REFUSAL. That is the wrong
+    // default for the one case it actually occurs in — a client that rendered the
+    // legacy Allow/Deny buttons because it never saw the options — and it fails
+    // silently: the user clicks Allow, the agent is told no, and nothing anywhere
+    // records a disagreement. Recover the id from the pending request's own options
+    // (by kind) so the answer matches the button that was pressed. Cancelling is
+    // now reserved for a genuine dismissal (no behavior, no id) or an agent that
+    // offered no option of the needed kind.
+    const explicitId = parsed.data.option_id;
+    const optionId = explicitId !== undefined && explicitId !== ''
+      ? explicitId
+      : recoverAcpOptionId(parsed.data.request_id, parsed.data.behavior);
     resolveAcpPermission(
       parsed.data.request_id,
-      optionId !== undefined && optionId !== '' ? { optionId } : { cancelled: true },
+      optionId !== null ? { optionId } : { cancelled: true },
     );
     const acpAction = parsed.data.behavior === 'allow' ? 'Allowed' : 'Denied';
     const acpTool = parsed.data.tool_name ?? 'tool';

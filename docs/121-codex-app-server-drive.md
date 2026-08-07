@@ -350,10 +350,20 @@ this invites.
 ## 121.13 Approval responses are per-method, not one shape (HS-9586)
 
 **The bug:** a user approved `npm install motion` in the §47 overlay and codex ran
-nothing — it read the reply as a refusal. The drive answered every approval with
-`{decision: 'accept'}`, but `accept` is not a member of `ReviewDecision`, the type
-the v1 methods answer with. Wrong from the day the drive shipped, not a
-regression: the contract is identical in codex-cli 0.145.0 and 0.146.0.
+nothing — it read the reply as a refusal.
+
+> ⚠ **This section describes the FIRST diagnosis, which did not fix the reported
+> problem.** The per-method response contracts below are correct and worth keeping,
+> but they were not what the user was hitting. The actual cause is
+> [§121.14](#12114-the-option-driven-overlay-lost-its-options-hs-9586-round-2), and
+> §121.14's opening paragraphs are the more important read: they explain how a round
+> of work verified against codex's own schema still shipped a broken approval.
+
+The drive answered every approval with `{decision: 'accept'}`, but `accept` is not a
+member of `ReviewDecision`, the type the v1 methods answer with. That is a real
+defect — it just isn't reachable from a normal driven turn, because a v1 method never
+raises one (see §121.14). The contract is identical in codex-cli 0.145.0 and 0.146.0,
+so none of this was a regression.
 
 ### The three response contracts
 
@@ -406,6 +416,109 @@ is always expressible. `deny` is always offered — a refusal must always be rea
 codex and validates every payload the drive can produce against the response schema
 for the method it answers — including the auto-accept and dismissed-popup paths. It
 skips when codex is absent (CI) and never starts a daemon or runs a turn.
+
+**Know its limit** (§121.14): it proves a payload is a valid instance of *some*
+schema. It cannot say which method a real turn raises, and it never observes whether
+codex acted on the reply. Both blind spots are why the bug survived it.
+
+---
+
+## 121.14 The option-driven overlay lost its options (HS-9586, round 2)
+
+**The actual cause of the reported bug**, found after §121.13 shipped and the user
+reported the same symptom unchanged.
+
+The overlay's Allow never reached the drive at all. Every codex approval was answered
+`{ cancelled: true }` — a refusal — no matter which button was pressed.
+
+### The chain
+
+`api/projects.ts::PermissionEntrySchema` is the client's only view of the
+`/projects/permissions` long-poll, and **it did not name `options`**. Zod strips what
+it does not name, so:
+
+1. The server put the agent's `options` on the pending entry (`routes/projects.ts`)
+   and declared them in `schemas.ts::PendingPermissionEntrySchema`. ✅
+2. The client's typed caller parsed the response and **dropped `options`**. ❌
+3. `permissionOverlay.tsx` saw an empty option list and rendered the *legacy*
+   two-icon Allow/Deny layout, which responds with `behavior` and **no `option_id`**.
+4. `/channel/permission/respond` read a missing `option_id` as a dismissal and
+   resolved the ACP request `{ cancelled: true }`.
+5. `approvalResponseFromReply` faithfully translated that cancellation into codex's
+   refusal token.
+
+Every step behaved as written. Nothing logged an error, and the wire payload was a
+*valid* refusal — so the §121.13 contract test passed on the way out.
+
+### Why two rounds of green tests missed it
+
+Each test sat on one side of the seam:
+
+- `codexApprovalSchemaContract.test.ts` starts from a choice id and checks the
+  payload's shape. It never asks whether a real turn produces that method, or whether
+  codex acted on the reply.
+- `codexAppServer.test.ts` calls `resolveAcpPermission({optionId:'allow'})` directly —
+  i.e. it begins *after* the point where the id had already gone missing.
+- `permission-popup.spec.ts` fabricates popup markup, so it cannot observe what the
+  real overlay would build from a real poll response.
+- `permission-popup-live.spec.ts` drives the real poll, but only with a legacy
+  Claude/Bash permission that has no options — the one case that still worked.
+
+The generalizable lesson: **a schema on each side of a boundary, each internally
+consistent, is not a contract.** The client schema was a second, silently narrower
+copy of the server's, and nothing compared them.
+
+### The fix
+
+1. **`api/projects.ts` declares `options`** — the defect. `.catch(undefined)` like
+   its sibling fields, so an unreadable option shape degrades to the legacy layout
+   instead of rejecting the whole poll (which would drop *every* pending permission
+   and strand the agent).
+2. **The respond route recovers a missing `option_id` from the pending request's own
+   options**, by kind (`recoverAcpOptionId`). `behavior` is required by
+   `PermissionRespondSchema`, so "no option id" never meant a dismissal — it only ever
+   meant a client that didn't get the options. Recovering from the agent's own list
+   keeps the fallback in the agent's vocabulary; cancelling is now reserved for an
+   agent that offers no option of the needed kind. This makes the inversion
+   unreachable even from a stale client bundle.
+
+### The guards, and what each is for
+
+| test | covers | catches |
+|---|---|---|
+| `src/permissionOptionsRoundTrip.test.ts` | server entry → client schema | a field the server sends that the client drops — **compares parsed key sets**, so it doesn't go stale the way a hand-listed field would |
+| `e2e/permission-popup-options.spec.ts` | poll → real overlay → respond body | the overlay falling back to the legacy layout; the wrong id being sent |
+| `src/routes/channelPermissionOptionRecovery.test.ts` | respond route → bridge reply | an allow resolving as a cancellation; recovery over-widening to allow-always or degenerating into always-allow |
+| `src/codexApprovalLive.test.ts` | overlay reply → real codex → **the command runs** | anything in between, including a codex upgrade that renames a token |
+
+All four were verified by reintroducing the bug: the round-trip test and all five
+e2e cases fail, with the round-trip failure naming the dropped field.
+
+### The live test is the one that ends the argument
+
+`src/codexApprovalLive.test.ts` spawns the real binary, runs a real turn, and asserts
+on **a marker file that only the approved command creates**. Positive and negative
+both, deliberately: an allow-only test passes against a drive that approves
+everything, and a deny-only test against one that approves nothing — and "always
+deny" is precisely the bug being fixed.
+
+Opt-in (`HOTSHEET_CODEX_LIVE=1` plus the binary) because it costs an LLM turn and
+~60 s:
+
+```
+HOTSHEET_CODEX_LIVE=1 npx vitest run src/codexApprovalLive.test.ts
+```
+
+It also settles a question §121.13 got wrong: a real 0.146.0 shell-command approval
+raises **`item/commandExecution/requestApproval`** (v2, vocabulary `accept`), *not*
+the v1 `execCommandApproval` that §121.13 assumed `npm install motion` had used. The
+v1 mapping is still right, and still worth keeping for an older daemon — but it was
+never the path the user was on. Measured directly:
+
+```
+{"decision":"approved"} → ERROR unknown variant `approved`, expected `accept`… → command NOT run
+{"decision":"accept"}   → command runs
+```
 
 A unit test could not have caught this: both sides of `expect(reply).toEqual({decision:'accept'})`
 were ours. The contract test also pins the **pre-fix payload as rejected**, so a
