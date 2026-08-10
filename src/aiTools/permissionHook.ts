@@ -196,5 +196,18 @@ export async function runPermissionHook(
     }
     await io.sleep(POLL_INTERVAL_MS);
   }
+  // HS-9618 — the hook has now made a final local decision, so its injected
+  // request must stop being advertised by the channel. Before this cleanup the
+  // hook denied at 2 minutes but a lone channel entry survived for 15 minutes;
+  // the cross-project popup poll later replayed those abandoned requests in a
+  // rapid burst as soon as another project's active popup closed.
+  //
+  // Best-effort preserves the existing failure policy: timeout still denies even
+  // if the channel disappears between the last poll and this cleanup request.
+  await io.fetchFn(`${base}/permission/cancel`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ request_id: requestId }),
+  }).catch(() => null);
   return emit('deny'); // timed out unanswered → fail-closed
 }

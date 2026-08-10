@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "msmz2hyd62msufn5",
+          "message": {
+            "text": "The shipped channel bundle preserves the next permission when canceling an abandoned request. This real-process test injects two requests over localhost HTTP, cancels the first by id, and asserts the second becomes the head, covering both the new endpoint and its request-scoped semantics.",
+            "markdown": "The shipped channel bundle preserves the next permission when canceling an abandoned request. This real-process test injects two requests over localhost HTTP, cancels the first by id, and asserts the second becomes the head, covering both the new endpoint and its request-scoped semantics."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/bundleBoot.test.ts"
+                },
+                "region": {
+                  "startLine": 196,
+                  "endLine": 220,
+                  "snippet": {
+                    "text": "  it('request-scoped cancel removes an abandoned permission without dropping the next one', async () => {\n    const httpDataDir = mkdtempSync(join(tmpdir(), 'hs-channel-permission-cancel-'));\n    const { child, port } = await bootChannelForHttp(httpDataDir);\n    const base = `http://127.0.0.1:${String(port)}`;\n    try {\n      for (const requestId of ['stale-a', 'live-b']) {\n        const injected = await fetch(`${base}/permission/inject`, {\n          method: 'POST', headers: { 'content-type': 'application/json' },\n          body: JSON.stringify({ request_id: requestId, tool_name: 'Bash', description: requestId, input_preview: 'echo ok' }),\n        });\n        expect(injected.status).toBe(200);\n      }\n      expect((await (await fetch(`${base}/permission`)).json() as { pending: { request_id: string } | null }).pending?.request_id).toBe('stale-a');\n\n      const cancelled = await fetch(`${base}/permission/cancel`, {\n        method: 'POST', headers: { 'content-type': 'application/json' },\n        body: JSON.stringify({ request_id: 'stale-a' }),\n      });\n      expect(cancelled.status).toBe(200);\n      expect((await (await fetch(`${base}/permission`)).json() as { pending: { request_id: string } | null }).pending?.request_id).toBe('live-b');\n    } finally {\n      child.kill('SIGKILL');\n      rmSync(httpDataDir, { recursive: true, force: true });\n    }\n  }, 40_000);"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "test-evidence"
+            ],
+            "ext-ai-tool-confidence": 0.98
+          },
+          "rank": 85,
+          "workItemUris": [
+            "HS-9618"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "27d9a454ec6a34e209699fed9fa164b4"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "b6dc67cc0580611550dcb3d68b2c710ec4df1d24",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

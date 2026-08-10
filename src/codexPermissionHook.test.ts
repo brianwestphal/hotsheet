@@ -104,6 +104,27 @@ describe('runPermissionHook with codexHookAdapter', () => {
     });
   });
 
+  it('cancels its injected request when the local timeout denies it', async () => {
+    let clock = 0;
+    let cancelBody = '';
+    const { io, out, fetches } = makeIO({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }, {
+      now: () => clock,
+      sleep: () => { clock += 5; return Promise.resolve(); },
+      fetchFn: ((url: string, init?: { body?: string }) => {
+        fetches.push(url);
+        if (url.includes('/permission/cancel')) cancelBody = init?.body ?? '';
+        return Promise.resolve(new Response(JSON.stringify({ decided: false, behavior: null }), { status: 200 }));
+      }) as unknown as typeof fetch,
+    });
+
+    expect(await runPermissionHook(io, codexHookAdapter(), 20)).toBe(0);
+    expect(fetches.at(-1)).toContain('/permission/cancel');
+    expect(JSON.parse(cancelBody)).toEqual({ request_id: 'req-1' });
+    expect(JSON.parse(out[0])).toEqual({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
+    });
+  });
+
   // HS-9506 — the contrast is the point, which is why this agy case lives beside the
   // codex ones: the SAME deny must exit 2 for agy and 0 for codex. codex reads any
   // non-zero exit as "the hook failed, proceed", so an agent that inherited agy's exit

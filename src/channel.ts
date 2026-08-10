@@ -81,7 +81,9 @@ import { getProjectSecret } from './secret-file.js';
 //   `HOTSHEET_DRIVE_SPAWNED=1` env the play/command drives export) so a one-shot
 //   run's own MCP child is excluded from the multi-connection warning count,
 //   leader preference, and "Disconnect all" cleanup.
-export const CHANNEL_VERSION = 20;
+// v21 (HS-9618) — hook timeouts cancel their own queued permission via
+// POST /permission/cancel so stale cross-project popups cannot replay.
+export const CHANNEL_VERSION = 21;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -230,6 +232,12 @@ const PermissionRespondBodySchema = z.object({
   behavior: z.enum(['allow', 'deny']),
 });
 
+// HS-9618 — a hook that reaches its own timeout has already denied locally. It
+// cancels only that injected request so an unrelated request queued behind it is
+// preserved. This endpoint intentionally does not record a decision or send an
+// MCP notification: there is no waiter after the hook returns.
+const PermissionCancelBodySchema = z.object({ request_id: z.string().min(1) });
+
 // HS-8567 — schema for `POST /permission/inject`. Mirrors the hand-rolled
 // type checks the route previously performed after a raw `as` cast.
 const PermissionInjectBodySchema = z.object({
@@ -340,6 +348,33 @@ const httpServer = createServer(async (req, res) => {
     const behavior = getDecision(id);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ decided: behavior !== null, behavior }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/permission/cancel') {
+    let body = '';
+    let bodySize = 0;
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      bodySize += chunk.length;
+      if (bodySize > 1_048_576) { res.writeHead(413); res.end('Payload too large'); return; }
+      body += String(chunk);
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(body); } catch (err) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Invalid JSON: ${String(err)}` }));
+      return;
+    }
+    const validated = PermissionCancelBodySchema.safeParse(parsed);
+    if (!validated.success) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: validated.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ') }));
+      return;
+    }
+    completePermission(validated.data.request_id);
+    void notifyMainServer();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 

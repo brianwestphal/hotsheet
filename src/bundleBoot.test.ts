@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'child_process';
-import { existsSync, mkdtempSync, rmSync, statSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -64,6 +64,32 @@ function ensureBundlesBuilt(): void {
 }
 
 interface JsonRpcMessage { id?: number; result?: unknown; error?: unknown }
+
+/** Boot the shipped channel bundle far enough to exercise its localhost HTTP
+ * surface while MCP stdio remains connected. */
+async function bootChannelForHttp(dataDir: string): Promise<{ child: ReturnType<typeof spawn>; port: number }> {
+  const child = spawn(process.execPath, [channelBundle, '--data-dir', dataDir], {
+    cwd: repoRoot,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  child.stdin.write(`${JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'permission-cancel-test', version: '0' } },
+  })}\n`);
+  const portFile = join(dataDir, 'channel-port');
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (existsSync(portFile)) {
+      const parsed: unknown = JSON.parse(readFileSync(portFile, 'utf8'));
+      if (typeof parsed === 'object' && parsed !== null && 'port' in parsed && typeof parsed.port === 'number') {
+        return { child, port: parsed.port };
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  child.kill('SIGKILL');
+  throw new Error('channel HTTP port did not become ready');
+}
 
 /** Spawn the bundled channel server, run the MCP handshake over stdio, and
  *  return the `initialize` + `tools/list` responses. Rejects (failing the test)
@@ -166,6 +192,32 @@ describe('bundled channel.js boots as an MCP server (HS-8706)', () => {
     expect(names).toContain('hotsheet_update_ticket');
     expect(names).toContain('hotsheet_create_ticket');
   });
+
+  it('request-scoped cancel removes an abandoned permission without dropping the next one', async () => {
+    const httpDataDir = mkdtempSync(join(tmpdir(), 'hs-channel-permission-cancel-'));
+    const { child, port } = await bootChannelForHttp(httpDataDir);
+    const base = `http://127.0.0.1:${String(port)}`;
+    try {
+      for (const requestId of ['stale-a', 'live-b']) {
+        const injected = await fetch(`${base}/permission/inject`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ request_id: requestId, tool_name: 'Bash', description: requestId, input_preview: 'echo ok' }),
+        });
+        expect(injected.status).toBe(200);
+      }
+      expect((await (await fetch(`${base}/permission`)).json() as { pending: { request_id: string } | null }).pending?.request_id).toBe('stale-a');
+
+      const cancelled = await fetch(`${base}/permission/cancel`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ request_id: 'stale-a' }),
+      });
+      expect(cancelled.status).toBe(200);
+      expect((await (await fetch(`${base}/permission`)).json() as { pending: { request_id: string } | null }).pending?.request_id).toBe('live-b');
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(httpDataDir, { recursive: true, force: true });
+    }
+  }, 40_000);
 });
 
 describe('bundled cli.js loads without crashing (HS-8706)', () => {

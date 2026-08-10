@@ -79,9 +79,10 @@ describe('runPermissionHook', () => {
   });
 
   it('FAIL-CLOSED (deny) when no answer arrives before the timeout', async () => {
-    const { io, out } = makeIo({ neverDecide: true });
+    const { io, out, urls } = makeIo({ neverDecide: true });
     expect(await runPermissionHook(io, antigravityHookAdapter(), 20)).toBe(2); // clock advances +5 per sleep → exits past 20
     expect(out.at(-1)).toBe(decisionJson('deny'));
+    expect(urls.at(-1)).toContain('/permission/cancel');
   });
 
   it('treats unparseable stdin as a bare tool (still gates)', async () => {

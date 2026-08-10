@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "msmz2hs01j9ozlt2",
+          "message": {
+            "text": "A hook timeout must cancel its own channel entry because the local deny is final. The previous 120-second hook timeout and 15-minute lone-entry TTL created a 13-minute stale window in which cross-project polling could replay already-handled Codex prompts; request-scoped cleanup closes that window without clearing unrelated queued permissions.",
+            "markdown": "A hook timeout must cancel its own channel entry because the local deny is final. The previous 120-second hook timeout and 15-minute lone-entry TTL created a 13-minute stale window in which cross-project polling could replay already-handled Codex prompts; request-scoped cleanup closes that window without clearing unrelated queued permissions."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/aiTools/permissionHook.ts"
+                },
+                "region": {
+                  "startLine": 199,
+                  "endLine": 212,
+                  "snippet": {
+                    "text": "  // HS-9618 — the hook has now made a final local decision, so its injected\n  // request must stop being advertised by the channel. Before this cleanup the\n  // hook denied at 2 minutes but a lone channel entry survived for 15 minutes;\n  // the cross-project popup poll later replayed those abandoned requests in a\n  // rapid burst as soon as another project's active popup closed.\n  //\n  // Best-effort preserves the existing failure policy: timeout still denies even\n  // if the channel disappears between the last poll and this cleanup request.\n  await io.fetchFn(`${base}/permission/cancel`, {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ request_id: requestId }),\n  }).catch(() => null);\n  return emit('deny'); // timed out unanswered → fail-closed"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ],
+            "ext-ai-tool-confidence": 0.98
+          },
+          "rank": 90,
+          "workItemUris": [
+            "HS-9618"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "d129a0c7f066d833b9dcefab14f24c1f"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "b6dc67cc0580611550dcb3d68b2c710ec4df1d24",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

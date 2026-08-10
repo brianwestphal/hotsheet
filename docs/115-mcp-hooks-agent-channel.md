@@ -111,7 +111,12 @@ Registered as the second `mcpHooksAgents.ts` descriptor (`aiTool: 'codex'`,
   own `hotsheet_*` control-plane MCP calls** (underscore-normalized ids,
   `mcp__hotsheet_channel__…`), and **exit 0 on every decision** — verified live:
   codex treats a non-zero hook exit as "hook failed, proceed", so a deny riding
-  exit 2 did NOT block while the same stdout JSON with exit 0 did.
+  exit 2 did NOT block while the same stdout JSON with exit 0 did. **HS-9618:**
+  when either hook reaches its 120-second local timeout, it now best-effort POSTs
+  `/permission/cancel` with its own request id before emitting the deny. This
+  removes only the abandoned queue entry; previously the hook stopped waiting
+  after 2 minutes while the channel advertised the stale request for up to 15
+  minutes, so several Codex projects could replay old popups in a rapid burst.
 
 ## 115.7 Remaining (not yet built)
 
