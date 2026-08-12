@@ -346,6 +346,52 @@ describe('terminalTileGrid — preview bg cascade (HS-8059)', () => {
   });
 });
 
+// HS-9625 — the Terminal Dashboard supplies `onTileActivate` so a double-click
+// navigates to the terminal in its project drawer instead of opening the in-grid
+// dedicated view. The drawer grid omits the hook and keeps the dedicated view.
+describe('terminalTileGrid — onTileActivate overrides the dedicated double-click (HS-9625)', () => {
+  it('dblclick calls onTileActivate with the tile entry and does NOT open a dedicated view', () => {
+    const activated: TileEntry[] = [];
+    const handle = mountTileGrid({
+      container: makeContainer(),
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+      onTileActivate: (entry) => { activated.push(entry); },
+    });
+    handle.rebuild([makeEntry('secret-A', 'live-1')]);
+
+    const tile = document.querySelector('.terminal-dashboard-tile');
+    tile!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+
+    expect(activated).toHaveLength(1);
+    expect(activated[0].id).toBe('live-1');
+    expect(activated[0].secret).toBe('secret-A');
+    // The dedicated (maximized) view is bypassed entirely.
+    expect(handle.isDedicatedOpen()).toBe(false);
+    expect(document.querySelector('.terminal-dashboard-dedicated')).toBeNull();
+    handle.dispose();
+  });
+
+  it('without onTileActivate (the drawer grid), dblclick still opens the dedicated view', () => {
+    const handle = mountTileGrid({
+      container: makeContainer(),
+      cssPrefix: 'terminal-dashboard',
+      centerSizeFrac: 0.7,
+      centerScope: 'viewport',
+      getColumnCount: () => 4,
+    });
+    handle.rebuild([makeEntry('secret-A', 'live-1')]);
+
+    const tile = document.querySelector('.terminal-dashboard-tile');
+    tile!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+
+    expect(handle.isDedicatedOpen()).toBe(true);
+    handle.dispose();
+  });
+});
+
 /**
  * HS-8288 — when a tile is bumped down (a competing checkout consumer
  * holds the live xterm — e.g. dedicated view, quit-confirm preview, the

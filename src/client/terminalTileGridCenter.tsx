@@ -77,6 +77,17 @@ export function onTileDblClick(ctx: TileGridContext, tile: InternalTile, e: Mous
     window.clearTimeout(pending);
     ctx.pendingSingleClickTimer.current = null;
   }
+  // HS-9625 — the Terminal Dashboard opts out of the in-grid dedicated (maximized)
+  // view: a double-click there navigates to the terminal in its project's footer
+  // drawer instead. When the callsite supplied `onTileActivate`, defer to it and
+  // skip the dedicated path entirely (for any tile state — the drawer surfaces the
+  // terminal whether alive, cold, or exited). The drawer grid omits the hook and
+  // keeps the dedicated view below.
+  const onActivate = ctx.opts.onTileActivate;
+  if (onActivate !== undefined) {
+    onActivate(tile.entry);
+    return;
+  }
   if (tile.state !== 'alive') {
     void spawnAndEnlarge(ctx, tile, 'dedicated');
     return;

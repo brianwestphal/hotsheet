@@ -98,32 +98,29 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
     expect(afterClick.inCentered, 'and it must be the zoomed tile that holds it').toBe(true);
   });
 
-  test('double-clicking a zoomed tile leaves the maximized terminal focused', async ({ page }) => {
+  // HS-9625 — double-clicking a tile no longer opens the in-dashboard dedicated
+  // view; it navigates to that terminal in its project drawer (§25.7.1). The
+  // dashboard exits, the drawer maximizes, the terminal's tab is selected and
+  // active, and keystrokes land in the drawer terminal.
+  test('double-clicking a tile navigates to the terminal in its maximized project drawer', async ({ page }) => {
     const tile = await openDashboard(page);
 
-    await tile.click();
-    await expect(tile).toHaveClass(/centered/, { timeout: 5000 });
-    await page.waitForTimeout(350);
-
     await tile.dblclick();
-    await expect(page.locator('.terminal-dashboard-dedicated')).toBeVisible({ timeout: 5000 });
 
-    // Wait past the uncenter transition AND its `CENTER_ANIMATION_MS + 80`
-    // fallback: pre-fix, focus worked for ~300 ms and THEN died, which is
-    // exactly what made this read as "often" loses focus.
-    await page.waitForTimeout(600);
+    // Left the dashboard, no in-dashboard dedicated view, drawer maximized.
+    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(0, { timeout: 8000 });
+    await expect(page.locator('.terminal-dashboard-dedicated')).toHaveCount(0);
+    await expect(page.locator('.app.drawer-expanded')).toHaveCount(1, { timeout: 8000 });
 
-    const info = await activeElementInfo(page);
-    expect(info.tag, 'focus must not have fallen back to the document body').not.toBe('body');
-    expect(info.className).toContain('xterm-helper-textarea');
-    expect(info.inDedicated, 'the maximized terminal should hold focus').toBe(true);
+    // The double-clicked terminal's drawer tab is the active one.
+    await expect(page.locator('.drawer-tab[data-drawer-tab="terminal:focus"]'))
+      .toHaveClass(/active/, { timeout: 8000 });
 
-    // And the behavior underneath the assertion: keystrokes actually land. The
-    // terminal runs `cat`, so the tty echoes what the PTY received — text on
-    // screen is proof the focus above is the useful kind. `.xterm-rows`, not
-    // `.xterm-screen`, whose textContent leads with an injected <style> block.
-    await page.keyboard.type('hs9484-typed');
-    await expect(page.locator('.terminal-dashboard-dedicated .xterm-rows'))
-      .toContainText('hs9484-typed', { timeout: 8000 });
+    // Keystrokes actually land in the drawer terminal: it runs `cat`, so the tty
+    // echoes what the PTY received — text on screen proves the terminal is the
+    // active, focused target after the navigation.
+    await page.keyboard.type('hs9625-typed');
+    await expect(page.locator('#drawer-terminal-panes .xterm-rows'))
+      .toContainText('hs9625-typed', { timeout: 8000 });
   });
 });

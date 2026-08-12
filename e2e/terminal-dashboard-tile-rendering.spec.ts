@@ -305,12 +305,19 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     // centered versions"). This pins that working behavior so a future
     // regression in the dedicated view's fit logic is caught alongside the
     // grid / centered ones.
+    //
+    // HS-9625 — the dashboard's double-click now navigates to the drawer instead
+    // of opening the dedicated view, so this control case exercises the dedicated
+    // view where it still lives: the §36 drawer-embedded tile grid (same shared
+    // fit code, `drawer-terminal-grid` cssPrefix).
     await page.setViewportSize({ width: 1600, height: 900 });
     await openDrawerAndWaitForDraw(page);
 
-    await page.locator('#terminal-dashboard-toggle').click();
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="draw"]').dblclick();
-    const dedicated = page.locator('.terminal-dashboard-dedicated[data-terminal-id="draw"]');
+    // Open the §36 drawer grid and double-click the tile → dedicated view.
+    await page.locator('#drawer-grid-toggle').click();
+    await expect(page.locator('#drawer-terminal-grid')).toBeVisible({ timeout: 5000 });
+    await page.locator('.drawer-terminal-grid-tile[data-terminal-id="draw"]').dblclick();
+    const dedicated = page.locator('.drawer-terminal-grid-dedicated[data-terminal-id="draw"]');
     await expect(dedicated).toBeVisible();
     await expect(dedicated.locator('.xterm-screen')).toContainText(/BOTTOM-KEYBAR/, { timeout: 8000 });
     await page.waitForTimeout(300);
@@ -319,7 +326,7 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     await testInfo.attach('dedicated-view.png', { body: screenshot, contentType: 'image/png' });
 
     const result = await dedicated.evaluate((paneEl: Element) => {
-      const pane: HTMLElement | null = paneEl.querySelector('.terminal-dashboard-dedicated-pane');
+      const pane: HTMLElement | null = paneEl.querySelector('.drawer-terminal-grid-dedicated-pane');
       const xtermScreen: HTMLElement | null = paneEl.querySelector('.xterm-screen');
       if (pane === null || xtermScreen === null) return { error: 'pane/xterm-screen missing' };
       const paneRect = pane.getBoundingClientRect();

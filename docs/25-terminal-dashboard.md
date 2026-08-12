@@ -2,7 +2,7 @@
 
 ## 25.1 Overview
 
-The **Terminal Dashboard** is a second top-level view for Hot Sheet (the first being the normal per-project ticket view). When active, the ticketing UI is hidden and the entire content area becomes a read-and-peek grid of every configured terminal across every registered project — all scaled down to fit, color-accurate, live. Click a tile to enlarge it in place; double-click to enter a dedicated full-viewport terminal view. The dashboard is an interaction shortcut on top of the existing embedded-terminal feature (see [22-terminal.md](22-terminal.md)) — it does not spawn, persist, or own any terminal state. Every terminal is the same `TerminalSession` that the normal drawer tabs attach to.
+The **Terminal Dashboard** is a second top-level view for Hot Sheet (the first being the normal per-project ticket view). When active, the ticketing UI is hidden and the entire content area becomes a read-and-peek grid of every configured terminal across every registered project — all scaled down to fit, color-accurate, live. Click a tile to enlarge it in place; **double-click to jump to that terminal in its project — Hot Sheet exits the dashboard, switches to the project's tab, maximizes the footer drawer (§22), and selects that terminal's tab** (HS-9625). Before HS-9625 a double-click opened an in-dashboard dedicated full-viewport view with a Back button (§25.8); that view is retained only for the §36 drawer-embedded tile grid now. The dashboard is an interaction shortcut on top of the existing embedded-terminal feature (see [22-terminal.md](22-terminal.md)) — it does not spawn, persist, or own any terminal state. Every terminal is the same `TerminalSession` that the normal drawer tabs attach to.
 
 **Core promises:**
 
@@ -139,7 +139,7 @@ When a terminal's bell fires (the server-side `bellPending` flag flips true via 
 
 **Clearing the outline.** "Viewing more closely" means one of these actions on the specific tile:
 - Click-to-center (§25.7) on that tile.
-- Double-click-to-enter-dedicated-view (§25.8) on that tile.
+- Double-click-to-navigate-to-the-terminal (§25.7.1) on that tile — the navigation activates the terminal's drawer tab, which clears its bell via the §24 / §22 path.
 - Exit the dashboard and subsequently activate that terminal's drawer tab in the normal ticket view (handled by the existing §24 / §22 activation path).
 
 Any of those actions fires the same `POST /api/terminal/clear-bell` that the drawer's `activateTerminal` fires today — the server-side `bellPending` flag drops, and the cross-project project-tab indicator on other Hot Sheet windows or the normal view updates via the existing bell-state long-poll.
@@ -163,7 +163,7 @@ While one tile is centered:
 - Clicking **outside the centered tile** (on the dim backdrop) returns the tile to its grid slot (reverse transform animation, ~200 ms). Clicking the **same centered tile** returns to the grid too, so users can toggle-zoom with a single click.
 - Clicking **a different tile** animates the current one back to its slot and zooms the new one in — the animations can overlap.
 - **Esc** collapses back to the grid (does _not_ exit dashboard mode; Esc on the bare grid exits the dashboard — see §25.3).
-- **Double-clicking** on either an already-centered tile or a still-in-grid tile enters the dedicated view (§25.8) directly; the center overlay is just a lightweight waypoint.
+- **Double-clicking** on either an already-centered tile or a still-in-grid tile **navigates to that terminal in its project drawer** (§25.7.1, HS-9625); the center overlay is just a lightweight waypoint. (Before HS-9625 the double-click opened the in-dashboard dedicated view, §25.8.)
 
 **Mouse selection is disabled in the centered tile (HS-8010).** The centered tile is rendered by applying `transform: scale()` to the same xterm root used in the grid; xterm.js reads its `cellWidth` from the natural-pixel layout and never updates it for the CSS transform, so a click-drag inside the centered tile lands at cells offset from the cursor by `1 - 1/scale`. Rather than ship a half-broken selection, the centered xterm is set `pointer-events: none; user-select: none;` and a small "Double-click to select text" chip is anchored to the top-right of the preview. Single-click on the xterm body therefore falls through to the tile-root click handler (which uncenters — same as backdrop click); double-click still routes to the dedicated view, which mounts a fresh xterm sized to fit the pane and selects fine. Keyboard input is unaffected — `term.focus()` puts focus on `.xterm-helper-textarea` programmatically and keyboard events ignore `pointer-events`. A future ticket may revisit this with a FitAddon-based centered tile (selection works) but the cost is moderate (second xterm instance + FLIP-vs-fit timing).
 
@@ -178,7 +178,24 @@ Covered by unit tests (call ordering, in `terminalTileGrid.test.ts`) and `e2e/te
 
 **Lazy / exited tile click.** See §25.9 — clicking a placeholder tile does not transition to the center overlay in v1; it spawns the PTY first and then lands in the centered overlay once the first history frame arrives. (This keeps the animation from firing against an empty pane.)
 
-## 25.8 Dedicated terminal view (double-click)
+## 25.7.1 Double-click → navigate to the terminal in its project drawer (HS-9625)
+
+Double-clicking a tile leaves the dashboard entirely and takes the user to that terminal **where it normally lives** — in its project's footer drawer (§22) — rather than the old in-dashboard dedicated view (§25.8). The maintainer's rationale: the dedicated view was a second, dashboard-only place to work a terminal full-screen, duplicating what the maximized drawer already does; routing there instead keeps one home for a live terminal.
+
+**Behavior.** On double-click the dashboard:
+1. Exits dashboard mode (`exitDashboard()`), same as a project-badge click (§25.3 rule 3).
+2. Switches to the tile's project tab (`switchProject`).
+3. Opens the footer drawer and **maximizes** it to full height (`setDrawerExpanded(true)`), and selects the double-clicked terminal's tab (`openDrawerTab('terminal:<id>')`, which activates the terminal — mounting its xterm + connecting on first activation and clearing any bell).
+
+Applies to any tile state: a live, cold, or exited tile all navigate to the drawer tab (the tab surfaces the terminal's current state); unlike the old dedicated path, a cold tile is **not** auto-restarted — navigating to a terminal is "show me it", not "start it".
+
+**Implementation.** The double-click is wired in the *shared* tile-grid module (`onTileDblClick` in `terminalTileGridCenter.tsx`), used by both the dashboard and the §36 drawer-embedded grid, so the dashboard-specific behavior rides an opt hook: `TileGridOptions.onTileActivate?(entry)`. When present (the dashboard's two `mountTileGrid` callsites in `terminalDashboardPaint.tsx`) the handler calls it and skips the dedicated path; when absent (the drawer grid) the dedicated view still opens. `terminalDashboardPaint.tsx::activateTileInProjectDrawer` runs the three steps.
+
+**Ordering against the per-project drawer-state restore.** `switchProject` fires `applyPerProjectDrawerState` (a fire-and-forget restore of the target project's saved `drawer_open` / `drawer_active_tab` / `drawer_expanded`). That restore captures its mutation epoch *before* its `/api/file-settings` fetch (HS-8443), so running the open/select/expand **after** `await switchProject` registers as an epoch advance and the restore yields rather than clobbering the navigation — the sanctioned `noteUserTabSwitch` path (HS-9274), mirroring `terminal.tsx::openTerminalRunningCommand` ("run in a new terminal"). The navigation `await`s `loadAndRenderTerminalTabs()` first so the target project's terminal tabs exist before the tab is selected. Pinned by unit tests in `terminalTileGrid.test.ts` (`onTileActivate overrides the dedicated double-click`).
+
+## 25.8 Dedicated terminal view (double-click, drawer grid only since HS-9625)
+
+> **HS-9625 — no longer reached from the dashboard.** The Terminal Dashboard's double-click now navigates to the project drawer (§25.7.1). This dedicated full-viewport view is retained for the §36 drawer-embedded tile grid, which still double-clicks into it. The mechanics below (fit / refit / PTY resize / theme gutter / Esc routing) still describe the shared dedicated view wherever it is entered. The dashboard's own dedicated-view chrome (the `onDedicatedBarMount` bars, the dedicated Esc routing in `terminalDashboard.tsx`, `dedicatedSearchHandle`) is now unreachable dead code — its removal is tracked as a follow-up.
 
 Double-clicking any tile opens a **dedicated terminal view** — the entire dashboard content area is replaced with one large pane showing just that terminal. This is functionally a full-screen single-terminal workspace, still inside dashboard mode.
 

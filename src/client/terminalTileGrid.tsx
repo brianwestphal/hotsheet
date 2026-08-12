@@ -163,6 +163,12 @@ export interface TileGridOptions {
    *  they wire their click handler directly — this hook only covers the
    *  flow-mode case. */
   onProjectBadgeClick?: (entry: TileEntry) => void;
+  /** HS-9625 — optional override for what a double-click on a tile does. When
+   *  provided (the Terminal Dashboard only, NOT the drawer grid), the grid calls
+   *  this with the tile's entry INSTEAD of entering its in-grid dedicated
+   *  (maximized) view — the dashboard uses it to navigate to that terminal in its
+   *  project's footer drawer. Absent (the drawer grid) keeps the dedicated view. */
+  onTileActivate?: (entry: TileEntry) => void;
   /** HS-9056 — when true (the Terminal Dashboard only, not the drawer grid),
    *  each tile's label row gets a right-aligned stats cluster: the project's
    *  open + up-next ticket counts (from `projectsByIdSignal`) and a spinner

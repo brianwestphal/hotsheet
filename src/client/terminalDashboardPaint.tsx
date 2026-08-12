@@ -92,6 +92,32 @@ function requireHooks(): PaintHooks {
   return hooks;
 }
 
+/**
+ * HS-9625 — double-clicking a dashboard tile navigates to that terminal in its
+ * project's footer drawer, instead of the old in-dashboard dedicated (maximized)
+ * view + Back button. Steps: exit the dashboard chrome, switch to the tile's
+ * project, then open + maximize the drawer and select the terminal's tab.
+ *
+ * Ordering: `switchProject` fires `applyPerProjectDrawerState` (a fire-and-forget
+ * per-project drawer-state restore) which captures its mutation epoch BEFORE its
+ * fetch. Running our open/tab/expand AFTER `await switchProject` therefore lands
+ * as an epoch advance, so that restore yields to us rather than clobbering the
+ * navigation — the sanctioned `noteUserTabSwitch` path (HS-9274), mirroring the
+ * "run in a new terminal" flow in `terminal.tsx::openTerminalRunningCommand`.
+ */
+async function activateTileInProjectDrawer(project: ProjectInfo, terminalId: string): Promise<void> {
+  requireHooks().exitDashboard();
+  await switchProject(project);
+  // Ensure the target project's terminal tabs are rendered before selecting one.
+  const { loadAndRenderTerminalTabs } = await import('./terminal.js');
+  await loadAndRenderTerminalTabs();
+  const { noteUserTabSwitch, openDrawerTab, setDrawerExpanded, saveDrawerState } = await import('./commandLog.js');
+  noteUserTabSwitch();
+  openDrawerTab(`terminal:${terminalId}`);
+  setDrawerExpanded(true);
+  void saveDrawerState();
+}
+
 // -----------------------------------------------------------------------------
 // Sizing
 // -----------------------------------------------------------------------------
@@ -354,6 +380,13 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
       requireHooks().exitDashboard();
       void switchProject(project);
     },
+    // HS-9625 — double-click routes to the terminal in its project drawer instead
+    // of the in-dashboard dedicated view.
+    onTileActivate: (entry) => {
+      const project = projectFor(entry);
+      if (project === null) return;
+      void activateTileInProjectDrawer(project, entry.id);
+    },
     onDedicatedBarMount: buildFlowDedicatedBarMount(projectFor),
   });
   // Sentinel "flow" key so the bell long-poll fan-out treats it uniformly.
@@ -449,6 +482,9 @@ function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: 
     onTileShrink: () => {
       if (dashboardState.centeredHandle === handle && !handle.isCentered()) dashboardState.centeredHandle = null;
     },
+    // HS-9625 — double-click routes to the terminal in this section's project
+    // drawer instead of the in-dashboard dedicated view.
+    onTileActivate: (entry) => { void activateTileInProjectDrawer(data.project, entry.id); },
     onDedicatedBarMount: buildSectionedDedicatedBarMount(data.project),
   });
   gridHandles.set(data.project.secret, handle);
