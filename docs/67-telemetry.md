@@ -694,9 +694,85 @@ sets only it. This lands codex's lifecycle events under `codex.*`, so the
 existing HS-9610 prefix-matching (`eventNameVariants`) recognizes them — the
 docs/68 timeline (maintainer decision: reuse the existing timeline, anchor on
 `codex.user_prompt`), the per-ticket attribution, and emitter labeling all now
-see codex. **Known gap (HS-9623):** codex events carry `conversation.id` but no
-`prompt.id`, which the timeline groups by — so recognition works but per-prompt
-grouping/drilldown needs `conversation.id` mapped to the prompt anchor.
+see codex. **The grouping half is HS-9623**, below.
+
+### 67.16.2 Dropping codex's internal-tracing noise at ingest (HS-9622)
+
+codex has **no per-signal OTLP routing** (§67.16: it exports via a single `-c`
+flag, not the per-signal exporter env vars Claude uses), so it POSTs its **entire**
+internal `tracing` stream to `/v1/logs`: a `codex.websocket_request` per HTTP
+request, a `codex.sse_event` per streamed chunk, a `codex.startup_phase` per
+process, plus the occasional record with no `event.name` attribute at all (a bare
+Rust source location like `event otel/src/metrics/client.rs:277`). None of it
+reaches a dashboard or the docs/68 timeline, and all of it bloats the JSONL event
+store.
+
+The maintainer's call (HS-9622): *route it the way Claude does, and drop what is
+truly not useful.* Claude's exporter simply never emits transport chatter — its
+`logs & events` category is a **curated** set of semantic records (`user_prompt`,
+`api_request`, `tool_result`, …). So the fix makes codex's **stored** events match
+that curation by dropping the noise at ingest, keyed to the plugin (§132):
+
+- **`AiToolPlugin.telemetryLogNoise`** (`TelemetryLogNoiseSpec`, declared on the
+  codex plugin) lists the always-noise event names (`codex.startup_phase`,
+  `codex.websocket_connect`, `codex.websocket_request`) and, for the highest-volume
+  case, a `keepOnlyKinds` rule: keep only `codex.sse_event` with
+  `event.kind='response.completed'` (the token-bearing turn-closer — the same
+  record `telemetryLogTokens` reads) and drop every per-chunk kind.
+- **`isNoiseLogEvent`** (`src/aiTools/logNoise.ts`) consults every registered
+  tool's spec, plus one **tool-agnostic** rule: a record with **no `event.name`
+  attribute** whose stored name is a bare source location (`<file>.<ext>:<line>`)
+  is internal tracing from any tool. `persistLogsPayload` drops matches before the
+  JSONL write and every rollup (they carry no tokens/prompt anyway), counting them
+  as `dropped`.
+
+A **drop list, not an allowlist**, so a future useful codex event survives by
+default. What is deliberately **kept**: `codex.user_prompt`, `codex.api_request`,
+the token-bearing `codex.sse_event`, and low-volume lifecycle markers
+(`conversation_starts`, `turn_ttft`) the timeline can render. This also disposes
+of the residual "codex logs land as `unknown`" noise HS-9609 left. Pinned by
+`logNoise.test.ts` + an ingest test in `otelWriters.test.ts`.
+
+### 67.16.3 Grouping codex events into prompts — synthetic per-turn ids (HS-9623)
+
+codex stamps **no `prompt.id`**, the key the docs/68 timeline groups by, so a
+codex project's recent-prompts list would be **empty** (the list requires a
+non-empty `prompt_id`). A codex **turn** — one `codex.user_prompt` through the
+following `response.completed` — is the analog of a Claude prompt (maintainer
+decision, HS-9623: option (a), synthesize a per-turn id), so Hot Sheet synthesizes
+one **at read time**:
+
+- **`AiToolPlugin.promptGrouping`** (`PromptGroupingSpec`, on the codex plugin)
+  declares *what identifies a prompt* for a tool that stamps none:
+  `threadAttr='conversation.id'`, `turnStartEvent='codex.user_prompt'`,
+  `turnIdPrefix='codex.turn'` — the per-tool prompt-lifecycle capability HS-9609
+  anticipated.
+- **`fillSyntheticPromptIds`** (`src/db/otelPromptGrouping.ts`) walks a store's
+  events in timestamp order and fills a synthetic `prompt_id`
+  (`codex.turn.<conversation.id>.<epochMs>`, URL-safe for the drilldown route) in
+  place: each `user_prompt` opens a turn; following events join the most recent
+  open turn for their own `conversation.id`, else the most recent turn overall —
+  the fallback that attaches a thread-less `codex.api_request` (which carries **no**
+  correlation id) by time order. Both read paths (`getRecentPrompts` list,
+  `getPromptTimelineFromJsonl` drilldown) call it, and the id is **deterministic**
+  from the turn-start event, so the list and the drilldown independently compute
+  the same id. It is a **no-op for Claude** (real `prompt_id` present) and for any
+  tool without a spec, so it is called unconditionally.
+
+**Why read time, not ingest:** `codex.api_request` carries no correlation id, so
+it can only be attached to a turn by time order *within the turn's window* — which
+needs every event of the turn visible at once. Ingest sees one record per POST
+batch and would need cross-batch state; a read pass over the day JSONL sees them
+all. **Single-project caveat** (documented, accepted on HS-9623): thread-less
+api_requests correlate by global time order, so two truly-concurrent turns could
+cross wires — bounded because codex telemetry routes to a per-project cluster (it
+always carries `hotsheet_project`), so a cluster is one project's stream.
+
+`getRecentPrompts` also folds a turn's **log-event tokens** (via `extractLogTokens`
+on the `response.completed`) into its aggregate, so a codex row shows real token
+counts (and its prompt text, which codex carries on `user_prompt`) instead of a
+blank row. **Known gap (HS-9624):** the ingest-time daily `prompt_count` still
+keys off the real `prompt_id`, so codex turns aren't counted there yet.
 
 ## 67.17 Cost that cannot be shown (HS-9605)
 

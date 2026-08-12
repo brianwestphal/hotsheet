@@ -83,6 +83,37 @@ export const codexPlugin: AiToolPlugin = {
   // cost NEVER (verified against 0.146.0 — zero `*.cost*` metrics exist). Absence
   // would read as "nobody checked".
   telemetryReportsCost: false,
+  // HS-9622 — codex has no per-signal OTLP routing, so it POSTs its whole internal
+  // `tracing` stream to `/v1/logs`: a `websocket_request` per HTTP request, a
+  // `sse_event` per streamed chunk, a `startup_phase` per process. None of it
+  // reaches the dashboard or the docs/68 timeline, and it bloats the JSONL event
+  // store. Drop it at ingest so codex's STORED events match Claude's curated
+  // `logs & events` set — i.e. the semantic records only. What is KEPT (not listed
+  // here): `codex.user_prompt`, `codex.api_request`, the token-bearing
+  // `codex.sse_event`/`response.completed`, and low-volume lifecycle markers
+  // (`conversation_starts`, `turn_ttft`) the timeline can render.
+  telemetryLogNoise: {
+    dropEventNames: [
+      'codex.startup_phase',
+      'codex.websocket_connect',
+      'codex.websocket_request',
+    ],
+    // The highest-volume noise: one `codex.sse_event` per streamed chunk. Only
+    // `response.completed` carries the turn's token totals and closes the turn
+    // (it is the SAME record `telemetryLogTokens` reads), so keep that kind alone.
+    keepOnlyKinds: {
+      'codex.sse_event': ['response.completed'],
+    },
+  },
+  // HS-9623 — codex stamps no `prompt.id`, so the docs/68 timeline synthesizes a
+  // per-turn id at read time: each `codex.user_prompt` opens a turn, and the
+  // following events (scoped by `conversation.id` where present) join it. A codex
+  // turn is the analog of a Claude prompt.
+  promptGrouping: {
+    threadAttr: 'conversation.id',
+    turnStartEvent: 'codex.user_prompt',
+    turnIdPrefix: 'codex.turn',
+  },
   tier: 'cli-agent',
   maturity: 'beta',
   transport: 'mcp-hooks',

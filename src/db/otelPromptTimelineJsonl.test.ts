@@ -94,4 +94,22 @@ describe('getPromptTimelineFromJsonl (HS-9278)', () => {
     expect(tl.entries).toHaveLength(2);
     expect(tl.entries[0].eventName).toBe('claude_code.user_prompt');
   });
+
+  // HS-9623 — codex stamps NO prompt_id, so the drilldown synthesizes a per-turn
+  // id (`codex.turn.<conversation.id>.<epochMs>`) and resolves it here. A codex
+  // event record carries a null prompt_id and its identity in the event_name.
+  it('resolves a synthesized codex turn id, grouping the turn’s events (HS-9623)', async () => {
+    const conv = 'aaaa-bbbb';
+    await ev('2026-06-01T10:00:00Z', '', 'codex.user_prompt', { 'conversation.id': conv, prompt: 'do the thing' });
+    await ev('2026-06-01T10:00:01Z', '', 'codex.api_request'); // no conversation.id — joins by time
+    await ev('2026-06-01T10:00:02Z', '', 'codex.sse_event', { 'conversation.id': conv, 'event.kind': 'response.completed' });
+    // A second turn — must NOT bleed into the first.
+    await ev('2026-06-01T10:00:10Z', '', 'codex.user_prompt', { 'conversation.id': conv, prompt: 'next' });
+
+    const turnId = `codex.turn.${conv}.${new Date('2026-06-01T10:00:00Z').getTime()}`;
+    const tl = await getPromptTimelineFromJsonl(dir, turnId);
+    expect(tl.entries.map(e => e.eventName)).toEqual(['codex.user_prompt', 'codex.api_request', 'codex.sse_event']);
+    expect(tl.firstTs).toBe('2026-06-01T10:00:00.000Z');
+    expect(tl.lastTs).toBe('2026-06-01T10:00:02.000Z');
+  });
 });

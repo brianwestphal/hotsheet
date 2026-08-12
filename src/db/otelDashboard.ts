@@ -22,6 +22,7 @@ import {
 import { centralTelemetryDataDir, getDataDir, getRollupDb, runWithTelemetryDb, telemetryClusterDataDir } from './connection.js';
 import { emitterForSignalName, resolveWindowEmitters } from './otelEmitter.js';
 import { readAllOtelJsonl } from './otelJsonlStore.js';
+import { fillSyntheticPromptIds } from './otelPromptGrouping.js';
 import { type CostOverTimePoint,
   eventNameMatchSql,
   getCostByModel,
@@ -198,6 +199,11 @@ export async function getPromptTimelineFromJsonl(clusterDir: string, promptId: s
       attributesJson: jobj(r, 'attributes_json'),
       statusCode: typeof r.status_code === 'string' ? r.status_code : null,
     }));
+
+  // HS-9623 — fill synthetic per-turn prompt ids for tools that stamp none
+  // (codex) so a `codex.turn.*` id resolves here exactly as it does in the
+  // recent-prompts list. No-op for Claude events (they carry a real prompt_id).
+  fillSyntheticPromptIds(eventRows);
 
   const eventMatches = eventRows
     .filter(r => r.prompt_id === promptId)

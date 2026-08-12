@@ -23,6 +23,7 @@
 // out (as `channelSlug.ts` was split out of `channel-config.ts`) rather than importing
 // across — see docs/132 §132.11.11.
 import type { AgentTransport } from '../agentBackendParse.js';
+import type { PromptGroupingSpec, TelemetryLogNoiseSpec } from './telemetryEventSpecs.js';
 import type { LogTokenSpec, TokenMetricMap } from './tokenMetrics.js';
 
 /**
@@ -145,6 +146,22 @@ export interface AiToolPlugin {
    * log-based token event.
    */
   readonly telemetryLogTokens?: LogTokenSpec;
+  /**
+   * HS-9622 — this tool's log events that are internal noise and should be
+   * dropped at ingest (see `TelemetryLogNoiseSpec`). Absent means every log event
+   * is kept. Codex declares it because it has no per-signal OTLP routing and
+   * floods the logs endpoint with transport chatter Claude's exporter never
+   * emits; dropping it makes codex's stored events match Claude's curated set.
+   */
+  readonly telemetryLogNoise?: TelemetryLogNoiseSpec;
+  /**
+   * HS-9623 — how this tool's log events cluster into "prompts" for the docs/68
+   * timeline when it does not stamp Claude's `prompt.id` (see `PromptGroupingSpec`).
+   * Absent means the tool stamps `prompt.id` itself (Claude) and needs no
+   * synthesis. Codex declares it: a codex turn is synthesized into a stable
+   * per-turn prompt id at read time.
+   */
+  readonly promptGrouping?: PromptGroupingSpec;
   /**
    * HS-9601 (docs/90 §90.5) — worker-pool support. **Absent means unsupported**,
    * which is the §132.9 pattern and is what `assertWorkerLaunchSupported` now

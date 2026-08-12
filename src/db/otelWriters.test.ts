@@ -684,6 +684,47 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(Number(roll.rows[0].cost_usd)).toBe(0); // codex reports no cost
       expect(roll.rows[0].emitters).toContain('codex');
     });
+
+    // HS-9622 — codex has no per-signal OTLP routing, so it floods the logs
+    // endpoint with internal tracing chatter. Those records are dropped at ingest
+    // (never reach the JSONL store), while the semantic events the dashboard +
+    // timeline render are kept.
+    it('drops codex internal-tracing noise at ingest but keeps the semantic events (HS-9622)', async () => {
+      const rec = (attrs: { name?: string; kind?: string }, field?: string): Record<string, unknown> => ({
+        timeUnixNano: '1700000000000000000',
+        ...(field !== undefined ? { eventName: field } : {}),
+        attributes: [
+          ...(attrs.name !== undefined ? [{ key: 'event.name', value: { stringValue: attrs.name } }] : []),
+          ...(attrs.kind !== undefined ? [{ key: 'event.kind', value: { stringValue: attrs.kind } }] : []),
+        ],
+      });
+      const payload = {
+        resourceLogs: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+          scopeLogs: [{ logRecords: [
+            // KEPT — codex's analogs of Claude's curated logs & events set.
+            rec({ name: 'codex.user_prompt' }),
+            rec({ name: 'codex.api_request' }),
+            rec({ name: 'codex.sse_event', kind: 'response.completed' }),
+            // DROPPED — internal transport/lifecycle.
+            rec({ name: 'codex.startup_phase' }),
+            rec({ name: 'codex.websocket_request' }),
+            // DROPPED — per-chunk streaming (only response.completed is kept).
+            rec({ name: 'codex.sse_event', kind: 'response.created' }),
+            // DROPPED — raw source-location tracing record with no event.name.
+            rec({}, 'event otel/src/metrics/client.rs:277'),
+          ] }],
+        }],
+      };
+      const result = await persistLogsPayload(payload, isKnownProject);
+      expect(result.inserted).toBe(3);
+      expect(result.dropped).toBe(4);
+
+      const stored = (await readAllJsonl('events')).map(r => r.event_name);
+      expect(stored.sort()).toEqual(['codex.api_request', 'codex.sse_event', 'codex.user_prompt']);
+      expect(stored).not.toContain('codex.startup_phase');
+      expect(stored).not.toContain('codex.websocket_request');
+    });
   });
 
   describe('persistTracesPayload', () => {

@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 
 import { costAvailabilityFor } from '../aiTools/costAvailability.js';
+import { extractLogTokens, type LogTokenResult } from '../aiTools/logTokens.js';
 import { listPlugins } from '../aiTools/registry.js';
 import { getAllProjects } from '../projects.js';
 import { maxOf, minOf } from '../utils/largeArray.js';
@@ -8,6 +9,7 @@ import { centralTelemetryDataDir, currentTelemetryClusterDir, getRollupDb, getTe
 import { resolveWindowEmitters } from './otelEmitter.js';
 import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.js';
 import { clearOtelJsonl, listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
+import { fillSyntheticPromptIds } from './otelPromptGrouping.js';
 import { serverLocalDay } from './otelRollupIngest.js';
 
 /**
@@ -662,6 +664,12 @@ export async function getRecentPrompts(
 
   const scoped = projectSecret === null ? events : events.filter(e => e.project_secret === projectSecret);
 
+  // HS-9623 — synthesize a per-turn prompt_id for tools that stamp none (codex),
+  // so their turns cluster into rows like Claude's prompt_id-keyed events. Scoped
+  // first so a thread-less codex api_request correlates within one project only.
+  // No-op for Claude (its events carry a real prompt_id).
+  fillSyntheticPromptIds(scoped);
+
   // Newest-N user_prompt events with a prompt_id (ts DESC).
   const recent = scoped
     .filter(e => isClaudeCodeEvent(evName(e), 'user_prompt') && evPromptId(e) !== '')
@@ -684,6 +692,12 @@ export async function getRecentPrompts(
     const all = byPrompt.get(pid) ?? [];
     const apis = all.filter(e => isClaudeCodeEvent(evName(e), 'api_request'));
     const toolCount = all.filter(e => isClaudeCodeEvent(evName(e), 'tool_result')).length;
+    // HS-9623 — a tool may carry a turn's tokens on a LOG event rather than on
+    // api_request (codex: `codex.sse_event`/`response.completed`). Fold those into
+    // the same aggregate so a codex turn shows real token counts instead of a
+    // blank row. extractLogTokens matches only the declaring tool's event, so this
+    // never double-counts a Claude prompt (Claude has no telemetryLogTokens).
+    const logTokens = all.map(e => extractLogTokens(evAttrs(e))).filter((t): t is LogTokenResult => t !== null);
 
     // Per-prompt api aggregates — null (not 0) when the prompt has no api_request
     // events, matching the old LEFT JOIN (distinguishes "no data" from zero).
@@ -692,7 +706,7 @@ export async function getRecentPrompts(
     let outputTokens: number | null = null;
     let totalTokens: number | null = null;
     let apiModel: string | null = null;
-    if (apis.length > 0) {
+    if (apis.length > 0 || logTokens.length > 0) {
       costUsd = 0; inputTokens = 0; outputTokens = 0; totalTokens = 0;
       for (const e of apis) {
         const a = evAttrs(e);
@@ -707,6 +721,15 @@ export async function getRecentPrompts(
           ?? 0;
         const m = typeof a.model === 'string' ? a.model : null;
         if (m !== null && (apiModel === null || m > apiModel)) apiModel = m; // MAX(model)
+      }
+      for (const t of logTokens) {
+        inputTokens += t.input_tokens;
+        outputTokens += t.output_tokens;
+        // The four disjoint columns sum to a valid total (reasoning is a breakdown
+        // of output, never added); cost stays whatever api_request contributed
+        // (0 for codex — it reports no cost).
+        totalTokens += t.input_tokens + t.output_tokens + t.cache_read_tokens + t.cache_creation_tokens;
+        if (apiModel === null && t.model !== '(unknown)') apiModel = t.model;
       }
     }
 

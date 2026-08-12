@@ -162,7 +162,21 @@ The full feature decomposes into the following implementation tickets:
 | HS-8477 | Client | `promptDrilldown.tsx` — inline `<details>`-shaped waterfall panel above the span tree with bar-to-row scroll-link + `BETA` badging in Settings + drilldown |
 | HS-8478 | Polish | Spans-first source for `getToolLatencyHistogram` (§67.10.5) with events-fallback when no spans present |
 
-## 68.9 References
+## 68.9 Non-Claude tools: synthetic prompt grouping (HS-9623)
+
+This doc's timeline groups by `prompt.id`, which Claude Code stamps on every
+`user_prompt` / `api_request` / `tool_result`. **Codex stamps none** — so without
+help a codex project's recent-prompts list is empty (the list requires a non-empty
+`prompt_id`). A codex **turn** (one `codex.user_prompt` through the following
+`response.completed`) is the analog of a Claude prompt, and Hot Sheet synthesizes a
+stable per-turn `prompt_id` at read time so the **same** list + drilldown surfaces
+work unchanged for codex. The mechanism (the `AiToolPlugin.promptGrouping`
+capability + `fillSyntheticPromptIds`, why read-time rather than ingest, and the
+single-project correlation caveat) is documented in
+[67-telemetry.md](67-telemetry.md) **§67.16.3**; the companion ingest-side noise
+drop that keeps a codex turn's event list clean is **§67.16.2**.
+
+## 68.10 References
 
 - [67-telemetry.md](67-telemetry.md) §67.3 (spawn-env), §67.6 (otel_spans schema), §67.9 (Settings UI), §67.10.3 (per-prompt drilldown), §67.10.4 (trace waterfall — this is the doc).
 - [Claude Code agent SDK observability](https://code.claude.com/docs/en/agent-sdk/observability.md) — upstream beta-trace surface.

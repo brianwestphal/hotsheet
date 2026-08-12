@@ -483,6 +483,43 @@ describe('otel rollup queries (HS-8148 / §67.10.2)', () => {
       expect(row.durationMs).toBe(5000);    // last event (t2) − first event (t0)
     });
 
+    // HS-9623 — codex stamps no prompt_id, so a codex turn must be synthesized
+    // into a row (it would otherwise never appear — the list requires a prompt_id).
+    // Its tokens ride on the response.completed LOG event, not api_request, and
+    // its prompt text comes from the user_prompt — the row must show both.
+    it('groups a codex turn into a row with its prompt text + log-event tokens (HS-9623)', async () => {
+      const conv = 'conv-xyz';
+      const insert = async (ts: Date, eventName: string, attrs: Record<string, unknown>): Promise<void> => {
+        await appendOtelJsonl(telemetryClusterDataDir(getDataDir()), 'events', ts, {
+          ts: ts.toISOString(), project_secret: SECRET_A, session_id: 'session-1',
+          prompt_id: null, event_name: eventName, attributes_json: attrs, body_json: {},
+        });
+      };
+      const t0 = new Date('2026-07-01T10:00:00Z');
+      const t1 = new Date('2026-07-01T10:00:01Z');
+      const t2 = new Date('2026-07-01T10:00:03Z'); // +3s
+      await insert(t0, 'codex.user_prompt', { 'conversation.id': conv, prompt: 'refactor the parser' });
+      await insert(t1, 'codex.api_request', {}); // codex api_request carries no tokens
+      await insert(t2, 'codex.sse_event', {
+        // ingest flattens OTLP attributes, so event.name/kind live in attributes_json
+        'event.name': 'codex.sse_event', 'event.kind': 'response.completed',
+        'conversation.id': conv,
+        input_token_count: '14769', output_token_count: '5', cached_token_count: 11008,
+        cache_write_token_count: 0, reasoning_token_count: 0, model: 'gpt-5.6-sol',
+      });
+
+      const [row] = await getRecentPrompts(SECRET_A, 10);
+      expect(row.promptId).toBe(`codex.turn.${conv}.${t0.getTime()}`);
+      expect(row.promptText).toBe('refactor the parser');
+      expect(row.model).toBe('gpt-5.6-sol');           // from the log-token event
+      // disjoint total = (14769−11008) + 5 + 11008 + 0 = 14774
+      expect(row.totalTokens).toBe(14774);
+      expect(row.inputTokens).toBe(3761);
+      expect(row.outputTokens).toBe(5);
+      expect(row.costUsd).toBe(0);                      // codex reports no cost
+      expect(row.durationMs).toBe(3000);                // t2 − t0
+    });
+
     it('leaves aggregates null when a prompt has only the user_prompt event', async () => {
       await insertPromptEvent({ ts: new Date('2026-05-20T10:00:00Z'), projectSecret: SECRET_A, promptId: 'pB', model: 'opus-4' });
       const [row] = await getRecentPrompts(SECRET_A, 10);

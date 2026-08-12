@@ -1,3 +1,4 @@
+import { isNoiseLogEvent } from '../aiTools/logNoise.js';
 import { extractLogTokens } from '../aiTools/logTokens.js';
 import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
@@ -514,6 +515,16 @@ export async function persistLogsPayload(
           const eventName = typeof attrs['event.name'] === 'string' ? attrs['event.name']
             : typeof rR.eventName === 'string' ? rR.eventName
             : 'log';
+          // HS-9622 — drop a tool's internal-tracing noise before it reaches the
+          // JSONL store or any rollup. Codex has no per-signal OTLP routing, so it
+          // POSTs its whole `tracing` stream here (a websocket_request per HTTP
+          // request, an sse_event per streamed chunk); those carry no dashboard or
+          // timeline value. The kept records are codex's analogs of Claude's
+          // curated `logs & events` set. Registry-driven (§132) — see `logNoise.ts`.
+          if (isNoiseLogEvent(eventName, attrs, typeof attrs['event.name'] === 'string')) {
+            dropped++;
+            continue;
+          }
           const promptId = typeof attrs['prompt.id'] === 'string'
             ? attrs['prompt.id']
             : null;
