@@ -286,9 +286,18 @@ Tracked as **HS-9566**. Three things make that goal tractable now in a way it wa
    `[fatal]` report, a stderr tail, and a named exit cause. The 2026-08-03 death left none of that
    and its cause is permanently unrecoverable — which is why prevention work then would have been
    guesswork.
-2. **The memory machinery is instrumented but unvalidated.** docs/128 §128.5's ceiling work
-   (HS-9553/9554/9555) has never run through a long session; HS-9562 is the soak check, and
-   `evictHeadroom` is the field that decides whether the ceiling is right.
+2. **The memory machinery is instrumented and now validated (HS-9562, 2026-08-10).** docs/128
+   §128.5's ceiling work (HS-9553/9554/9555) ran through a **76.5 h** uninterrupted session (pid
+   52034, `2026-08-07T02:19Z` → `2026-08-10T06:49Z`, stopped only for an intentional upgrade) with
+   `evictHeadroom` **0** throughout and no watchdog FATAL — `evictHeadroom` is the field that decides
+   whether the ceiling is right, and it held. **Evidence standard for any future re-soak = ~24 h
+   uninterrupted (HS-9617 decision, maintainer 2026-08-12, option B), not 48 h.** The reasoning: the
+   original 48 h single-run bar reset four times on the maintainer's *live* dev instance (ordinary
+   `--replace` relaunches — see HS-9617), so it competed with normal work and with HS-9571/HS-9608;
+   24 h clears the shortest observed pre-fix death interval (~24 h) while staying reachable. That
+   HS-9562 then happened to clear even the old 48 h bar was luck, not a reason to keep it — the
+   go-forward requirement is 24 h with `evictHeadroom` 0 and `externalMb` plateauing rather than
+   ratcheting.
 3. **The pressure scenario the maintainer named is specifically docs/131's** — the machine, not the
    process, being short of memory. That path exists and reports the kernel's own verdict, but like
    the ceiling it has not been validated over a long session under real pressure.
