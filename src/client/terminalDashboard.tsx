@@ -29,6 +29,7 @@ import {
   paintDashboardSections,
   refreshSnapPointIndicators,
 } from './terminalDashboardPaint.js';
+import { restoreScrollTop } from './terminalDashboardScroll.js';
 import {
   _resetSliderStateForTesting,
   bindSizeSliderInput,
@@ -199,6 +200,13 @@ export function isDashboardActive(): boolean {
 
 export function exitDashboard(): void {
   if (!dashboardState.active) return;
+  // HS-9627 — remember where the user was scrolled BEFORE the root is cleared
+  // + hidden below, so the next enter can restore it best-effort. This is the
+  // single teardown path for every switch-away (toggle button, project-tab
+  // click, cross-project stats), so one capture here covers them all.
+  if (dashboardState.rootElement !== null) {
+    dashboardState.savedScrollTop = dashboardState.rootElement.scrollTop;
+  }
   dashboardState.active = false;
   // HS-8451 — back to the active project's view, so restore its name.
   setAppTitleFromActiveProject();
@@ -308,7 +316,11 @@ function enterDashboard(): void {
   if (dashboardState.sizeSlider !== null) syncSliderElementValue(dashboardState.sizeSlider);
   if (dashboardState.rootElement !== null) {
     dashboardState.rootElement.style.display = '';
-    void renderDashboardGrid(dashboardState.rootElement);
+    // HS-9627 — this is the switch-back paint, so restore the remembered
+    // scroll position once tiles are laid out. Mid-session refreshes
+    // (`refreshDashboardGrid`) deliberately don't, so a new-terminal / hide
+    // repaint doesn't yank the user back to the exit-time offset.
+    void renderDashboardGrid(dashboardState.rootElement, { restoreScroll: true });
   }
   dashboardState.resizeHandler = (): void => {
     if (dashboardState.resizeRaf !== null) return;
@@ -414,7 +426,7 @@ function enterDashboard(): void {
   applyHideButtonBadge(dashboardState.hideButton, countHiddenAcrossAllProjects(DASHBOARD_SCOPE));
 }
 
-async function renderDashboardGrid(root: HTMLElement): Promise<void> {
+async function renderDashboardGrid(root: HTMLElement, opts?: { restoreScroll?: boolean }): Promise<void> {
   root.replaceChildren(toElement(<div className="terminal-dashboard-loading">Loading terminals…</div>));
   // HS-7662 — await both fetches in parallel. The layout-mode load is
   // typically resolved by initTerminalDashboard's eager call, so this is
@@ -432,6 +444,20 @@ async function renderDashboardGrid(root: HTMLElement): Promise<void> {
   if (!dashboardState.active) return; // user exited during fetch
   dashboardState.lastSectionData = sections;
   paintDashboardSections(root, sections);
+  // HS-9627 — restore the remembered scroll offset after the tiles are laid
+  // out. `paintDashboardSections` sizes tiles synchronously AND schedules a
+  // defensive `applyAllSizing()` in a rAF; deferring our restore to a rAF
+  // queued right after that one means we read `scrollHeight` once heights have
+  // settled, so the clamp lands against the final content height. The
+  // happy-dom test path (no rAF layout) falls back to a synchronous restore.
+  if (opts?.restoreScroll === true) {
+    const applyScroll = (): void => {
+      if (!dashboardState.active) return; // user exited again before the frame
+      restoreScrollTop(root, dashboardState.savedScrollTop);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyScroll);
+    else applyScroll();
+  }
   // HS-7970 — refresh the grouping selector NOW that `dashboardState.lastSectionData` is
   // populated. `enterDashboard` ran `refreshDashboardGroupingSelect()` synchronously
   // before this fetch resolved, when `dashboardState.lastSectionData` was still empty —

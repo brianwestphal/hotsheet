@@ -43,6 +43,8 @@ The dashboard can be dismissed four ways — each route closes the dashboard and
 
 There is no "lingering dashboard" state — every exit path fully dismisses it.
 
+**Scroll position is remembered across a switch-away / switch-back (HS-9627).** Because every exit path fully tears down the scroll container (`#terminal-dashboard-root` is cleared + hidden), its `scrollTop` naturally resets to 0. To avoid dumping the user back at the top each time they glance at their tickets and return, `exitDashboard` captures the container's `scrollTop` before tearing it down, and the next enter-paint reapplies it once the tiles are laid out (after the paint's sizing rAF, so the target clamps against the final content height). This is **best-effort**: the remembered offset is clamped to the currently-scrollable range (`src/client/terminalDashboardScroll.ts::clampScrollTop`), so if the terminal count shrank or the window was resized in the interim, we land at the new bottom rather than overscrolling. The restore only fires on the enter path — mid-session repaints (`refreshDashboardGrid`, new-terminal / hide-toggle) deliberately don't reapply it, so they don't yank a scrolled-down user back to the exit-time offset.
+
 ## 25.4 Layout: per-project sections in a scrollable column
 
 The dashboard content area is a single vertically-scrolling flex column. For every registered project (in the same left-to-right order as the project-tab strip):
@@ -378,6 +380,7 @@ Server-side, no new endpoints or config keys are needed — all attach / clear-b
   - Click / double-click handlers → center overlay + dedicated view components.
   - Per-tile `TerminalInstance` management (mount xterm at 80×60, open WS, render history).
   - Bell subscription via `subscribeToBellState` (from `bellPoll.tsx`, §24) to paint / clear the per-tile `.has-bell` outline.
+- **`src/client/terminalDashboardScroll.ts`** (HS-9627) — pure scroll save/restore helpers (`clampScrollTop`, `restoreScrollTop`) used by the shell to remember + reapply the container's `scrollTop` across a switch-away / switch-back (see §25.4). No DOM ownership beyond the single element passed in; unit-tested in `terminalDashboardScroll.test.ts`, real-flow-tested in `e2e/terminal-dashboard-scroll-restore.spec.ts`.
 - **`src/client/terminal.tsx`** — unchanged. The dashboard instantiates its own `TerminalInstance`s; it shares the transport helpers (`connect`, `replayHistoryToTerm`, `doFit` for dedicated view) but does not reuse drawer-tab instances.
 - **`src/client/projectTabs.tsx`** — gains an "on click handler" hook so clicking a project tab while the dashboard is open exits the dashboard **before** activating the clicked project.
 - **`src/client/styles.scss`** — new `.terminal-dashboard`, `.terminal-dashboard-section`, `.terminal-dashboard-tile`, `.terminal-dashboard-tile .preview`, `.terminal-dashboard-tile .label`, `.terminal-dashboard-tile.has-bell`, `.terminal-dashboard-center-overlay`, `.terminal-dashboard-dedicated`, and a bounce keyframe reusing the easing curve of the existing drawer-tab bell shake.

@@ -103,6 +103,12 @@ export interface DashboardState {
    *  list isn't otherwise polled here). Set on `enterDashboard`, cleared on
    *  `exitDashboard`. */
   statsRefreshTimer: ReturnType<typeof setInterval> | null;
+  /** HS-9627 — last-captured `scrollTop` of the dashboard scroll container,
+   *  saved on `exitDashboard` and reapplied (best-effort, clamped) after the
+   *  next enter-paint. `null` until the first switch-away, so the very first
+   *  open lands at the top. Survives the `_reset*`-less enter/exit cycle
+   *  because it lives here, not in a per-render closure. */
+  savedScrollTop: number | null;
 }
 
 export function freshDashboardState(): DashboardState {
@@ -123,6 +129,7 @@ export function freshDashboardState(): DashboardState {
     groupingSelect: null,
     lastSectionData: [],
     hiddenChangeUnsubscribe: null,
+    savedScrollTop: null,
   };
 }
 
