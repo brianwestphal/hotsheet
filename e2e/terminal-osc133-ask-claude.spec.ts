@@ -96,9 +96,13 @@ test.describe('OSC 133 Phase 3 Ask Claude (HS-7332)', () => {
       }
     } catch { /* first run */ }
     await destroyAllFixtureTerminals(request);
-    await request.patch('/api/settings', {
+    // HS-9637 — shell integration is OFF by default (HS-9188) AND is a LOCAL file
+    // setting (HS-9170), read via the resolved file layer. It must be enabled via
+    // `/api/file-settings/layer` (local); a `/api/settings` (DB) write is invisible
+    // to `getSettings` for a non-plugin key, so the gutter glyphs never render.
+    await request.patch('/api/file-settings/layer', {
       headers,
-      data: { shell_integration_ui: true },
+      data: { layer: 'local', settings: { shell_integration_ui: true } },
     });
   });
 

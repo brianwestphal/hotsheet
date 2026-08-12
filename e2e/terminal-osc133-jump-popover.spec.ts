@@ -111,9 +111,14 @@ test.describe('OSC 133 Phase 2 jumps + popover (HS-7328)', () => {
     // Reset shell_integration_ui to true so each test starts from the same
     // baseline — the Settings-toggle test below flips it off and would leak
     // false into the next run otherwise.
-    await request.patch('/api/settings', {
+    // HS-9637 — it's a LOCAL file setting (HS-9170), OFF by default (HS-9188). Write
+    // the LOCAL layer (local wins) so it (a) actually reaches the client's resolved
+    // file settings — a `/api/settings` DB write is invisible for a non-plugin key,
+    // so the gutter never rendered — and (b) clears any local=false the disable test
+    // left behind.
+    await request.patch('/api/file-settings/layer', {
       headers,
-      data: { shell_integration_ui: true },
+      data: { layer: 'local', settings: { shell_integration_ui: true } },
     });
   });
 
