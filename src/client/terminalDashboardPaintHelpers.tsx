@@ -4,26 +4,23 @@
  * functions (`paintDashboardSections`, `paintSectionedLayout`,
  * `paintFlowLayout`, `buildSectionEl`, `mountSectionGrid`, etc.) stay
  * in the main file for now because they're tightly coupled to
- * `dashboardState`'s `gridHandles` map + `centeredHandle` /
- * `dedicatedSearchHandle` / `lastSectionData` slots. Splitting those
- * requires either a shared state-holder module or paint-context
- * parameter threading — a separate phase.
+ * `dashboardState`'s `gridHandles` map + `centeredHandle` / `lastSectionData`
+ * slots. Splitting those requires either a shared state-holder module or
+ * paint-context parameter threading — a separate phase.
  *
  * What lives here is bounded:
+ * - `buildSectionProjectLookup` / `resolveTileEntryProject` — (secret → project) lookup.
  * - `flattenSectionsToTiles` — pure list flattener.
- * - `fillDedicatedLabel` — pure DOM mutator.
- * - `attachDedicatedBarSearch` — pure: `SearchAddon` + widget mount.
+ *
+ * HS-9626 — `fillDedicatedLabel` + `attachDedicatedBarSearch` (the dashboard
+ * dedicated-view top-bar label + HS-8341 search widget) were removed with the
+ * dashboard's dedicated view (HS-9625 routes a double-click to the drawer now).
  */
 
-import { SearchAddon } from '@xterm/addon-search';
-import type { Terminal } from '@xterm/xterm';
-
 import { DASHBOARD_SCOPE, filterVisible as filterVisibleEntries } from './dashboardHiddenTerminals.js';
-import { toElement } from './dom.js';
 import type { ProjectInfo } from './state.js';
 import type { ProjectSectionData } from './terminalDashboardState.js';
 import { toTileEntry } from './terminalDashboardTiles.js';
-import { mountTerminalSearch, type TerminalSearchHandle } from './terminalSearch.js';
 import { type TileEntry } from './terminalTileGrid.js';
 
 export interface FlowTile {
@@ -88,47 +85,3 @@ export function flattenSectionsToTiles(sections: ProjectSectionData[]): FlowTile
   return flat;
 }
 
-/** Populate the dedicated-view top-bar label with the
- *  `{project name} › {terminal label}` breadcrumb. Replaces any existing
- *  children — safe to call multiple times. Used by both the sectioned-
- *  mode and flow-mode dedicated-bar mount callbacks. */
-export function fillDedicatedLabel(label: HTMLElement, project: ProjectInfo, terminalLabel: string): void {
-  label.replaceChildren();
-  label.appendChild(toElement(
-    <span className="terminal-dashboard-dedicated-project">{project.name}</span>
-  ));
-  label.appendChild(toElement(
-    <span className="terminal-dashboard-dedicated-sep">{'›'}</span>
-  ));
-  label.appendChild(toElement(
-    <span className="terminal-dashboard-dedicated-terminal">{terminalLabel}</span>
-  ));
-}
-
-/** HS-8341 — attach a terminal-search widget to a dedicated-view top bar.
- *  Both the flow-mode and sectioned-mode dedicated-bar mount callbacks
- *  share this two-step setup (load a SearchAddon onto the live xterm, then
- *  mount the widget and append its root into the bar). Returns the handle
- *  + a disposer that removes the widget root from the bar AND disposes the
- *  handle. The widget is right-aligned via the
- *  `.terminal-dashboard-dedicated-bar > .terminal-search-box` CSS rule.
- *  Pre-fix the widget mounted into a `#terminal-dashboard-search-slot` in
- *  the app-header, which was always occluded by the fixed-position
- *  `.terminal-dashboard-dedicated` overlay. Exported for unit tests. */
-export function attachDedicatedBarSearch(
-  bar: HTMLElement,
-  term: Terminal,
-  placeholderLabel: string,
-): { handle: TerminalSearchHandle; dispose: () => void } {
-  const search = new SearchAddon();
-  term.loadAddon(search);
-  const handle = mountTerminalSearch(term, search, { placeholder: `Search ${placeholderLabel}` });
-  bar.appendChild(handle.root);
-  return {
-    handle,
-    dispose: () => {
-      try { handle.dispose(); } catch { /* ignore */ }
-      handle.root.remove();
-    },
-  };
-}

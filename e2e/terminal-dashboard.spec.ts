@@ -282,164 +282,14 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
   });
 
-  // HS-6836: double-click enters the dedicated full-viewport view.
-  test('double-clicking a live tile opens the dedicated view with a Back button', async ({ page }) => {
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ home: '/home/user',
-          configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
-          dynamic: [],
-        }),
-      });
-    });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').dblclick();
-    const dedicated = page.locator('.terminal-dashboard-dedicated[data-terminal-id="live"]');
-    await expect(dedicated).toBeVisible();
-    await expect(dedicated.locator('.terminal-dashboard-dedicated-back')).toBeVisible();
-    await expect(dedicated.locator('.terminal-dashboard-dedicated-terminal')).toHaveText('Live');
-  });
-
-  test('Back button dismisses the dedicated view, keeping the dashboard active', async ({ page }) => {
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ home: '/home/user',
-          configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
-          dynamic: [],
-        }),
-      });
-    });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').dblclick();
-    await expect(page.locator('.terminal-dashboard-dedicated')).toBeVisible();
-
-    await page.locator('.terminal-dashboard-dedicated-back').click();
-    await expect(page.locator('.terminal-dashboard-dedicated')).toHaveCount(0);
-    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
-  });
-
-  // HS-7195: the tile-size slider (§25.4) only controls grid-tile dims; it's
-  // irrelevant in the dedicated full-viewport view and was bleeding into the
-  // header while the dedicated view was active. Hidden on enter, restored on
-  // exit back to the grid.
-  test('tile-size slider is hidden while the dedicated view is open (HS-7195)', async ({ page }) => {
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ home: '/home/user',
-          configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
-          dynamic: [],
-        }),
-      });
-    });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-
-    // Baseline: slider visible in the grid view.
-    await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
-
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').dblclick();
-    await expect(page.locator('.terminal-dashboard-dedicated')).toBeVisible();
-    // Dedicated view up → slider hidden.
-    await expect(page.locator('#terminal-dashboard-sizer')).toBeHidden();
-
-    await page.locator('.terminal-dashboard-dedicated-back').click();
-    await expect(page.locator('.terminal-dashboard-dedicated')).toHaveCount(0);
-    // Back in grid → slider visible again.
-    await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
-  });
-
-  test('Esc dismisses the dedicated view first, not the whole dashboard', async ({ page }) => {
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ home: '/home/user',
-          configured: [{ id: 'live', name: 'Live', command: 'echo', lazy: false, bellPending: false, state: 'alive' }],
-          dynamic: [],
-        }),
-      });
-    });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="live"]').dblclick();
-    await expect(page.locator('.terminal-dashboard-dedicated')).toBeVisible();
-
-    // HS-8419 — `centerTile` / `enterDedicatedView` auto-focus the xterm
-    // helper textarea (`queueMicrotask(() => { term.focus(); })` in
-    // `terminalTileGridCenter.tsx`). Per HS-8011 plain Esc inside a focused
-    // terminal must reach the running program; Opt/Alt+Esc is the explicit
-    // dashboard-control escape hatch documented in §25.8 and implemented
-    // via `shouldEscapeBypassHotsheet(target, altKey)`.
-    await page.keyboard.press('Alt+Escape');
-    await expect(page.locator('.terminal-dashboard-dedicated')).toHaveCount(0);
-    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
-  });
-
-  // HS-7602: when the dashboard has enough tiles to scroll and the user
-  // double-clicks one near the bottom, the dedicated overlay must cover the
-  // visible viewport, not anchor to the top of the scrolled-up content. The
-  // earlier `position: absolute; inset: 0` rule scrolled with the dashboard's
-  // overflow container, so the overlay rendered above the viewport while the
-  // grid stayed visible underneath.
-  test('dedicated view covers the visible viewport even when the dashboard is scrolled (HS-7602)', async ({ page }) => {
-    const configured = Array.from({ length: 30 }, (_, i) => ({
-      id: `t${i}`,
-      name: `T${i}`,
-      command: 'echo',
-      lazy: false,
-      bellPending: false,
-      state: 'alive' as const,
-    }));
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ home: '/home/user', configured, dynamic: [] }),
-      });
-    });
-    await page.setViewportSize({ width: 800, height: 600 });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-
-    const dashboard = page.locator('#terminal-dashboard-root');
-    await expect(dashboard).toBeVisible();
-    // Wait for tiles to render, then scroll the dashboard so the last tile
-    // sits below the visible viewport before we double-click one near the
-    // bottom of the scrolled content.
-    await expect(page.locator('.terminal-dashboard-tile[data-terminal-id="t29"]')).toBeAttached();
-    const scrollTop = await dashboard.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-      return el.scrollTop;
-    });
-    expect(scrollTop).toBeGreaterThan(0);
-
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="t29"]').dblclick();
-    const dedicated = page.locator('.terminal-dashboard-dedicated[data-terminal-id="t29"]');
-    await expect(dedicated).toBeVisible();
-
-    // Bug repro: with `position: absolute; inset: 0` inside the scrolled
-    // dashboard, this rect would have a negative `top`. The fix uses
-    // `position: fixed; inset: 0` so the rect lines up with the viewport.
-    const rect = await dedicated.evaluate((el) => el.getBoundingClientRect());
-    expect(rect.top).toBe(0);
-    expect(rect.left).toBe(0);
-    expect(rect.width).toBeGreaterThan(0);
-    expect(rect.height).toBeGreaterThan(0);
-  });
+  // HS-9626 — the dashboard's in-dashboard dedicated (maximized) view was
+  // removed: a double-click now navigates to the terminal in its project drawer
+  // (HS-9625), covered by `terminal-dashboard-focus.spec.ts` +
+  // `dashboard-cold-tile-dblclick.spec.ts`. The five tests that lived here
+  // (open dedicated + Back button, Back dismiss, slider-hidden-while-dedicated,
+  // Esc-dismisses-dedicated-first, dedicated-covers-viewport-when-scrolled) all
+  // asserted that removed view; the dedicated view's own rendering is now
+  // exercised on the §36 drawer grid in `terminal-dashboard-tile-rendering.spec.ts`.
 
   // HS-6837 + HS-8046: a pending bell on a tile's project/terminal arrives
   // via subscribeToBellState (the cross-project long-poll in §24). Pre-
@@ -567,26 +417,10 @@ test.describe('Terminal dashboard foundation (HS-6832)', () => {
     await expect(tile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
   });
 
-  test('double-clicking a placeholder tile spawns + opens dedicated view', async ({ page }) => {
-    await page.route('**/api/terminal/list*', async route => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ home: '/home/user',
-          configured: [
-            { id: 'cold', name: 'Cold', command: 'echo', lazy: true, bellPending: false, state: 'not_spawned', exitCode: null },
-          ],
-          dynamic: [],
-        }),
-      });
-    });
-    await page.goto('/');
-    await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
-    await page.locator('#terminal-dashboard-toggle').click();
-
-    await page.locator('.terminal-dashboard-tile[data-terminal-id="cold"]').dblclick();
-    await expect(page.locator('.terminal-dashboard-dedicated[data-terminal-id="cold"]')).toBeVisible({ timeout: 5000 });
-  });
+  // HS-9626 — the "double-click a placeholder tile spawns + opens dedicated
+  // view" test was removed: a dashboard double-click now navigates to the
+  // project drawer and does NOT spawn a cold tile (HS-9625). The new cold-tile
+  // navigation behavior is covered in `dashboard-cold-tile-dblclick.spec.ts`.
 
   // HS-6865 + HS-6931: the tile's xterm root must have explicit width +
   // height (or xterm's absolutely-positioned viewport collapses — HS-6865)

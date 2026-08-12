@@ -25,7 +25,6 @@
 
 import type { ProjectInfo } from './state.js';
 import type { SnapPoint } from './terminalDashboardSizing.js';
-import type { TerminalSearchHandle } from './terminalSearch.js';
 import type { TileGridHandle } from './terminalTileGrid.js';
 
 export type TerminalSessionState = 'alive' | 'exited' | 'not_spawned';
@@ -78,13 +77,6 @@ export interface DashboardState {
    *  a centered tile? When the user clicks a tile in section B while
    *  section A has one centered, we uncenter A first via `onTileEnlarge`. */
   centeredHandle: TileGridHandle | null;
-  /** HS-8341 — search widget mounted directly into the dedicated view's
-   *  top toolbar (`.terminal-dashboard-dedicated-bar`) while a dedicated
-   *  view is open. Pre-HS-8341 the widget mounted into a slot in the app
-   *  header — but the dedicated overlay is `position: fixed; z-index: 600`
-   *  and covers the header, so the slot was never visible. Disposed via
-   *  the `onDedicatedBarMount` return-value disposer pattern. */
-  dedicatedSearchHandle: TerminalSearchHandle | null;
   active: boolean;
   toggleButton: HTMLButtonElement | null;
   rootElement: HTMLElement | null;
@@ -116,7 +108,6 @@ export interface DashboardState {
 export function freshDashboardState(): DashboardState {
   return {
     centeredHandle: null,
-    dedicatedSearchHandle: null,
     active: false,
     toggleButton: null,
     rootElement: null,

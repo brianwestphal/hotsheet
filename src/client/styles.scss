@@ -1564,142 +1564,15 @@ body.scrollbars-always-visible .project-tabs-inner.has-overflow {
     box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 3px var(--accent, #3b82f6);
   }
 }
-.terminal-dashboard-dedicated-pane:has(.xterm.focus) {
-  box-shadow: 0 0 0 3px var(--accent, #3b82f6);
-  border-radius: var(--radius);
-}
-
 @keyframes terminal-dashboard-tile-bell-bounce {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.08); }
 }
 
-// HS-6836: dedicated view covers the dashboard content area. The project-tab
-// strip stays above (part of the app header), but the grid + tiles are
-// hidden beneath this overlay.
-.terminal-dashboard-dedicated {
-  // HS-7602: pin to the visible viewport, not the dashboard's scrolled
-  // content. The dashboard root is `position: relative; overflow-y: auto`,
-  // so an absolutely-positioned `inset: 0` overlay scrolls along with the
-  // content — meaning if the user had scrolled down before double-clicking
-  // a tile, the dedicated view rendered at the top of the scrolled-up area
-  // (above the viewport) and the dashboard remained scrollable underneath.
-  // `position: fixed; inset: 0` covers the visible viewport unconditionally
-  // and stays above the dashboard regardless of scroll. Safe because
-  // `body.terminal-dashboard-active` hides every other surface, so the
-  // dashboard occupies the full viewport whenever this overlay can mount.
-  // z-index bumped above the centered tile (z-index: 500) so that a
-  // dedicated view opened from a centered tile lands on top.
-  position: fixed;
-  inset: 0;
-  background: var(--bg);
-  z-index: 600;
-  display: flex;
-  flex-direction: column;
-}
-
-.terminal-dashboard-dedicated-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.terminal-dashboard-dedicated-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 4px 10px;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
-
-  &:hover { background: var(--bg-hover); }
-}
-
-.terminal-dashboard-dedicated-label {
-  display: inline-flex;
-  gap: 8px;
-  align-items: baseline;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.terminal-dashboard-dedicated-sep {
-  color: var(--text-muted);
-  opacity: 0.6;
-}
-
-.terminal-dashboard-dedicated-terminal {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.terminal-dashboard-dedicated-body {
-  flex: 1;
-  // HS-7098: symmetric padding on all four sides so the xterm pane reads as
-  // a visible terminal window rather than bleeding into the bar / viewport
-  // edges. The old `8px 12px 12px` landed different values on top vs sides
-  // vs bottom and the top was especially tight against the back-bar border,
-  // which is what the user originally flagged as "uneven margins + no bottom
-  // margin". A follow-up pass on the same ticket surfaced the real culprit:
-  // the xterm was opening directly inside this padded body, and FitAddon
-  // reads `getComputedStyle(parent).height / width` which with the app-wide
-  // `box-sizing: border-box` reset returns the border-box dimension (padding
-  // included) — fit then over-counted rows by `padding * 2 / cellHeight` and
-  // the bottom content got clipped off-screen. The xterm now opens inside an
-  // inner `-pane` wrapper (see below) that has no padding so fit reads the
-  // real available space.
-  padding: 16px;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  // Flex so the inner `-pane` can take the full content box.
-  display: flex;
-}
-
-.terminal-dashboard-dedicated-pane {
-  // HS-7098: the xterm's direct parent. No padding — FitAddon reads this
-  // element's computed width / height to decide cols × rows, and any padding
-  // here would push fit off the real pane geometry (see `-body` comment).
-  //
-  // The pane fills the body's content box (`flex: 1`) so fit sees the full
-  // available space, but it is ALSO a flex container that centers its xterm
-  // child. Rationale (HS-7098 follow-up): FitAddon picks integer cols × rows
-  // and xterm then inline-sizes `.xterm-screen` to `cols * cellW × rows *
-  // cellH` — which is necessarily ≤ the pane, leaving up to one cell of slop
-  // on the right / bottom. The outer `.xterm` root is a block-level wrapper
-  // that fills the pane horizontally, so that slop shows through as an
-  // "implied right margin" outside `.xterm-screen` but inside `.xterm`. By
-  // flex-centering here AND shrinking `.xterm` to its content width (see the
-  // `> .xterm` rule below), the slop becomes symmetric left/right padding
-  // and the frame around the rendered terminal reads as even.
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.terminal-dashboard-dedicated-pane > .xterm {
-  // HS-7098: shrink `.xterm` to its content (`.xterm-screen`) width so the
-  // flex centering above visibly centers the terminal rendering inside the
-  // pane. Without this, `.xterm` is block-level and fills the pane — the
-  // terminal content sits left-aligned with a gap on the right, which is
-  // what the user screenshotted as "outer element is a bit wider than the
-  // inner element". `.xterm-viewport` / `.xterm-helpers` are absolutely
-  // positioned, so they don't contribute to `.xterm`'s intrinsic width —
-  // only `.xterm-screen` (inline width set by xterm to `cols * cellW`) does.
-  flex: 0 0 auto;
-}
+// HS-9626 — the dashboard's in-dashboard dedicated (maximized) view was removed
+// (a double-click navigates to the project drawer now, HS-9625), so its
+// `.terminal-dashboard-dedicated*` styles were deleted. The §36 drawer grid keeps
+// its own dedicated view, styled independently under `.drawer-terminal-grid-dedicated*`.
 
 .terminal-dashboard-tile-label {
   font-size: 12px;
@@ -9391,21 +9264,6 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 
     &:hover { color: var(--text); background: var(--bg-hover); }
   }
-}
-
-// HS-7331 — dashboard dedicated-view search slot lives in the app header
-// where the tile-size slider sits in grid view. Same expandable widget,
-// just a different mount point — shown by `enterDedicatedView` (the slot's
-// `display:none` inline is replaced by `display:''` when the dedicated
-// view mounts its xterm) and hidden again by `exitDedicatedView`.
-// HS-8341 — the dedicated view's top toolbar lays out as a flex row. Push
-// the search widget to the right edge so it visually anchors opposite the
-// Back button + breadcrumb label on the left. Pre-HS-8341 the widget
-// mounted into a `#terminal-dashboard-search-slot` div in the app-header,
-// which was always occluded by the fixed-position overlay covering the
-// header.
-.terminal-dashboard-dedicated-bar > .terminal-search-box {
-  margin-left: auto;
 }
 
 // HS-7267 — OSC 133 shell-integration gutter glyphs. Rendered as a small

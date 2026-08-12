@@ -9,12 +9,10 @@
  *      button (NOT Esc, because HS-7393 made Esc a plain blur).
  *   2. Cmd+F routing: focus in the drawer xterm → press Cmd+F → assert the
  *      terminal search input takes focus, not the app-header #search-input.
- *   3. Dedicated view flow: open the dashboard, double-click a tile to enter
- *      the dedicated view, assert the app-header search slot is visible and
- *      the sizer is hidden, run a search, then Back-button out and assert
- *      the slot is hidden again and the sizer is restored.
- *   4. Grid-view regression: the app-header slot must stay hidden while in
- *      grid view (sizer visible instead).
+ *   3. (removed, HS-9626) the dashboard dedicated-view search flow — the
+ *      dashboard no longer has a dedicated view (HS-9625 routes a double-click
+ *      to the project drawer instead).
+ *   4. History flows: recent-query walk (HS-7427) + related drawer-search cases.
  *
  * Fixture `terminal-search-fruits.sh` prints a deterministic four-line block
  * (`apple / banana / apple / apple`) so "apple" has exactly three matches,
@@ -203,58 +201,11 @@ test.describe('Terminal search widget (HS-7363)', () => {
     await expect(searchBox).toHaveClass(/is-open/);
   });
 
-  // 3. Dedicated view flow — HS-8341 mounts the search widget directly into
-  // `.terminal-dashboard-dedicated-bar` (right-aligned by the
-  // `margin-left:auto` rule). Pre-HS-8341 it mounted into a
-  // `#terminal-dashboard-search-slot` slot in the app header, which was
-  // always occluded by the fixed-position dedicated overlay. The dashboard
-  // grid view's sizer remains the visible control while no dedicated view
-  // is up; entering the dedicated view hides the sizer (no slot to toggle
-  // anymore — the widget appears inside the overlay's own bar).
-  test('dedicated view mounts the search widget into the dedicated bar; Back restores the sizer (HS-8341)', async ({ page }, testInfo) => {
-    await openDrawerAndWaitForFruits(page, testInfo);
-
-    // Enter the dashboard. Grid view: sizer visible.
-    await page.locator('#terminal-dashboard-toggle').click();
-    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
-    await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
-
-    // Double-click the fruits tile to enter the dedicated view.
-    const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="fruits"]');
-    await expect(tile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
-    await tile.dblclick();
-
-    // Dedicated overlay is up; the sizer hides and the search widget appears
-    // inside the dedicated bar (HS-8341).
-    const overlay = page.locator('.terminal-dashboard-dedicated');
-    await expect(overlay).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('#terminal-dashboard-sizer')).toBeHidden();
-    const bar = overlay.locator('.terminal-dashboard-dedicated-bar');
-    const searchBox = bar.locator('.terminal-search-box');
-    await expect(searchBox).toBeVisible();
-
-    // Open the widget + search.
-    await searchBox.locator('.terminal-search-toggle').click();
-    await expect(searchBox).toHaveClass(/is-open/);
-    const input = searchBox.locator('.terminal-search-input');
-    await expect(input).toBeFocused();
-
-    // Wait for the history replay to populate the dedicated xterm, then
-    // assert the same three-match count we saw in the drawer.
-    await expect(overlay.locator('.xterm-screen')).toContainText('banana', { timeout: 8000 });
-    await input.fill('apple');
-    await expect(searchBox.locator('.terminal-search-count')).toHaveText('1/3', { timeout: 3000 });
-
-    // Exit via the Back button. Overlay (and its inline search widget)
-    // tears down; the sizer comes back. The drawer-terminal widget still
-    // exists on the page outside the overlay — it's the dedicated-bar one
-    // that's gone, scoped to the now-removed `bar` locator.
-    await overlay.locator('.terminal-dashboard-dedicated-back').click();
-    await expect(overlay).toHaveCount(0, { timeout: 3000 });
-    await expect(bar).toHaveCount(0);
-    await expect(page.locator('#terminal-dashboard-sizer')).toBeVisible();
-    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
-  });
+  // 3. HS-9626 — the dashboard dedicated-view search-widget flow (HS-8341) was
+  // removed: the dashboard no longer has an in-dashboard dedicated view (a
+  // double-click navigates to the project drawer, HS-9625), so there is no
+  // `.terminal-dashboard-dedicated-bar` to mount a search widget into. Terminal
+  // search is still covered in the drawer flows below and the §34 unit tests.
 
   // 4. HS-7427 — recent-query history: ArrowUp walks back through three
   // distinct submitted queries in MRU order; ArrowDown returns to the draft.
@@ -397,56 +348,9 @@ test.describe('Terminal search widget (HS-7363)', () => {
     ).toBeGreaterThanOrEqual(160);
   });
 
-  // 8. HS-7526 — Esc while focused in the dedicated-view search field should
-  // blur the input and return focus to the terminal, NOT exit the dedicated
-  // view. The capture-phase Esc handler in terminalDashboard.tsx used to
-  // `exitDedicatedView()` on any Esc regardless of focus target, which meant
-  // users typing in the search lost their whole dedicated-view context when
-  // they just wanted to leave the input.
-  test('dedicated view: Esc in search blurs input + focuses terminal (HS-7526)', async ({ page }, testInfo) => {
-    await openDrawerAndWaitForFruits(page, testInfo);
-
-    // Enter the dashboard and double-click the fruits tile to get into the
-    // dedicated view.
-    await page.locator('#terminal-dashboard-toggle').click();
-    const tile = page.locator('.terminal-dashboard-tile[data-terminal-id="fruits"]');
-    await expect(tile).toHaveClass(/terminal-dashboard-tile-alive/, { timeout: 5000 });
-    await tile.dblclick();
-
-    const overlay = page.locator('.terminal-dashboard-dedicated');
-    await expect(overlay).toBeVisible({ timeout: 5000 });
-
-    // Open the search widget inside the dedicated bar (HS-8341) and type
-    // a query.
-    const searchBox = overlay.locator('.terminal-dashboard-dedicated-bar .terminal-search-box');
-    await searchBox.locator('.terminal-search-toggle').click();
-    const input = searchBox.locator('.terminal-search-input');
-    await expect(input).toBeFocused();
-    await input.fill('apple');
-
-    // Press Escape from the focused search input.
-    await input.press('Escape');
-
-    // Dedicated view must still be up — the user was typing a search query,
-    // not trying to exit.
-    await expect(overlay).toBeVisible();
-    // Input has blurred but its value is preserved (HS-7393 semantics).
-    await expect(input).not.toBeFocused();
-    await expect(input).toHaveValue('apple');
-    // Widget stays open (HS-7393): × button is the only close path.
-    await expect(searchBox).toHaveClass(/is-open/);
-    // xterm helper textarea in the dedicated view now has focus so the
-    // terminal is the next-keypress target.
-    const helperTextarea = overlay.locator('.xterm-helper-textarea');
-    await expect(helperTextarea).toBeFocused();
-
-    // A second Esc (now that the input is blurred) should exit the dedicated
-    // view — this is the pre-existing behavior and must not regress.
-    // HS-8419 — after the first Esc the xterm helper textarea has focus, so
-    // the second plain Esc goes to the PTY per HS-8011. Use Opt/Alt+Esc to
-    // reach the dashboard Esc handler (§25.8 escape hatch).
-    await page.keyboard.press('Alt+Escape');
-    await expect(overlay).toHaveCount(0, { timeout: 3000 });
-    await expect(page.locator('body.terminal-dashboard-active')).toHaveCount(1);
-  });
+  // 8. (removed, HS-9626) the HS-7526 "Esc in the dedicated-view search field
+  // blurs the input instead of exiting" test — the dashboard no longer has a
+  // dedicated view or its search field (HS-9625 routes a double-click to the
+  // project drawer). The §36 drawer grid keeps its own dedicated view + Esc
+  // handling, tested separately.
 });

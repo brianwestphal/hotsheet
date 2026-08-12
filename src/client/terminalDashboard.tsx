@@ -29,7 +29,6 @@ import {
   paintDashboardSections,
   refreshSnapPointIndicators,
 } from './terminalDashboardPaint.js';
-import { attachDedicatedBarSearch } from './terminalDashboardPaintHelpers.js';
 import {
   _resetSliderStateForTesting,
   bindSizeSliderInput,
@@ -64,12 +63,6 @@ import { pickInheritedCwd, tileEntryLabel } from './terminalDashboardTiles.js';
  * - The slider snap-point ticks.
  * - The cross-project bell long-poll subscription, fanned out to each
  *   per-project grid handle as a filtered pendingIds set.
- * - The dedicated-view search widget integration via the shared module's
- *   `onDedicatedBarMount` hook — the widget is now appended directly to
- *   the dedicated bar (HS-8341), right-aligned via a CSS rule on
- *   `.terminal-dashboard-dedicated-bar > .terminal-search-box`. Pre-fix
- *   it mounted into a `#terminal-dashboard-search-slot` slot in the
- *   app-header, which was always occluded by the fixed-position overlay.
  * - Cross-section centered-tile coordination (only one tile across all
  *   project sections is centered at a time).
  * - The right-click context menu (Close Tab + Rename for dynamic
@@ -86,11 +79,6 @@ const BODY_CLASS = 'terminal-dashboard-active';
 // their `from './terminalDashboard.js'` shape.
 export type { ProjectSectionData, TerminalListEntry, TerminalSessionState } from './terminalDashboardState.js';
 
-// HS-8395 Phase 3a — `attachDedicatedBarSearch` lives in
-// `terminalDashboardPaintHelpers.tsx`. Re-exported here so the existing
-// HS-8341 DOM-level test file keeps its `from './terminalDashboard.js'`
-// import shape unchanged.
-export { attachDedicatedBarSearch };
 
 function refreshDashboardGroupingSelect(): void {
   if (dashboardState.groupingSelect === null) return;
@@ -113,38 +101,14 @@ function handleDashboardEscape(e: KeyboardEvent): void {
   if (!dashboardState.active) return;
   if (e.key !== 'Escape') return;
   // HS-8011 — when a terminal is focused, plain Esc must reach the running
-  // program; Opt+Esc still exits dedicated → centered → dashboard.
+  // program; Opt+Esc still exits centered → dashboard.
   if (shouldEscapeBypassHotsheet(e.target, e.altKey)) return;
   // HS-7661 — let the hide-terminal dialog consume Esc when open.
   if (document.querySelector('.hide-terminal-dialog-overlay') !== null) return;
-  // Dedicated view active in any handle?
-  for (const handle of gridHandles.values()) {
-    if (handle.isDedicatedOpen()) {
-      // HS-7526 — if focus is in the search input, blur it instead of
-      // exiting; after blurring, focus the dedicated xterm so a SECOND Esc
-      // lands on the terminal-side keypress target and exits the view
-      // normally. See docs/25-terminal-dashboard.md §25.8.
-      // HS-8341 — the widget moved from the app-header slot into the
-      // dedicated bar itself; recover it via the `dedicatedSearchHandle`
-      // state slot (set by `buildFlowDedicatedBarMount` /
-      // `buildSectionedDedicatedBarMount`) rather than a fixed DOM id.
-      const activeEl = document.activeElement as HTMLElement | null;
-      const searchRoot = dashboardState.dedicatedSearchHandle?.root ?? null;
-      const inSearch = activeEl !== null && searchRoot !== null && searchRoot.contains(activeEl)
-        && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
-      if (inSearch) {
-        e.preventDefault();
-        e.stopPropagation();
-        activeEl.blur();
-        handle.focusDedicatedTerm();
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      handle.exitDedicatedView();
-      return;
-    }
-  }
+  // HS-9626 — the dashboard has no in-dashboard dedicated view anymore
+  // (a double-click navigates to the project drawer, HS-9625), so Esc routes
+  // centered → bare-grid → exit only. The §36 drawer grid keeps its own
+  // dedicated view + its own Esc handling.
   if (dashboardState.centeredHandle !== null) {
     e.preventDefault();
     e.stopPropagation();
@@ -224,8 +188,8 @@ export function initTerminalDashboard(): void {
     });
   }
 
-  // Esc routing: dedicated → centered → bare-grid → exit. Capture phase so
-  // we beat xterm's helper-textarea Escape handler.
+  // Esc routing: centered → bare-grid → exit. Capture phase so we beat
+  // xterm's helper-textarea Escape handler.
   document.addEventListener('keydown', handleDashboardEscape, true);
 }
 
@@ -306,16 +270,6 @@ function teardownAllHandles(): void {
   for (const handle of gridHandles.values()) handle.dispose();
   gridHandles.clear();
   dashboardState.centeredHandle = null;
-  // HS-8341 — the dedicated bar's search widget is owned by the per-bar
-  // disposer returned from `buildFlowDedicatedBarMount` /
-  // `buildSectionedDedicatedBarMount`; when each tile-grid handle is
-  // disposed above, its `exitDedicatedView` fires the disposer which
-  // removes the widget. Clear the reference defensively in case a handle
-  // had been torn down out of band.
-  if (dashboardState.dedicatedSearchHandle !== null) {
-    try { dashboardState.dedicatedSearchHandle.dispose(); } catch { /* ignore */ }
-    dashboardState.dedicatedSearchHandle = null;
-  }
 }
 
 function enterDashboard(): void {

@@ -18,26 +18,25 @@
  * Functions owned here:
  * - `applyAllSizing` / `applyAllSizingIfActive` — gridHandles iteration.
  * - `refreshSnapPointIndicators` — HS-7271 slider snap-point ticks.
- * - `setFlowChromeVisibility` — chrome show/hide for the flow-mode dedicated view.
  * - `paintDashboardSections` — top-level paint dispatcher (sectioned vs flow).
  * - `paintSectionedLayout` / `paintFlowLayout` — the two layout paths.
  * - `buildSectionEl` / `mountSectionGrid` / `renderProjectSection` — sectioned-mode building blocks.
- * - `buildFlowDedicatedBarMount` / `buildSectionedDedicatedBarMount` — dedicated-view top-bar callbacks.
  * - `FLOW_HANDLE_KEY` — sentinel key for the single flow-mode handle in `gridHandles`.
+ *
+ * HS-9626 — the in-dashboard dedicated (maximized) view is gone (a double-click
+ * now navigates to the project drawer, HS-9625), so the dedicated-bar mount
+ * builders + `setFlowChromeVisibility` that only served it were removed.
  */
 
-import type { Terminal } from '@xterm/xterm';
 import type { SafeHtml } from 'kerfjs';
 
 import { DASHBOARD_SCOPE, filterVisible as filterVisibleEntriesScoped } from './dashboardHiddenTerminals.js';
 import { toElement } from './dom.js';
 import { switchProject } from './projectTabs.js';
 import type { ProjectInfo } from './state.js';
-import { getLayoutMode, setLayoutToggleVisible } from './terminalDashboardLayout.js';
+import { getLayoutMode } from './terminalDashboardLayout.js';
 import {
-  attachDedicatedBarSearch,
   buildSectionProjectLookup,
-  fillDedicatedLabel,
   flattenSectionsToTiles,
   resolveTileEntryProject,
 } from './terminalDashboardPaintHelpers.js';
@@ -179,18 +178,6 @@ export function refreshSnapPointIndicators(): void {
 }
 
 // -----------------------------------------------------------------------------
-// Chrome visibility (flow-mode dedicated view)
-// -----------------------------------------------------------------------------
-
-export function setFlowChromeVisibility(visible: boolean): void {
-  const display = visible ? '' : 'none';
-  if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = display;
-  setLayoutToggleVisible(visible);
-  if (dashboardState.hideButton !== null) dashboardState.hideButton.style.display = display;
-  if (dashboardState.groupingSelect !== null) dashboardState.groupingSelect.style.display = display;
-}
-
-// -----------------------------------------------------------------------------
 // Paint dispatcher + layout-mode paths
 // -----------------------------------------------------------------------------
 
@@ -280,35 +267,6 @@ function paintSectionedLayout(root: HTMLElement, sections: ProjectSectionData[])
   }
 }
 
-/** HS-8104 — extracted from `paintFlowLayout` to keep it readable. The
- *  callback hides flow-grid chrome on enter, mounts a search widget into
- *  the dedicated toolbar, and the returned cleanup restores the chrome on
- *  exit (only when the dashboard is still active — `exitDashboard` will
- *  tear things down separately). */
-function buildFlowDedicatedBarMount(
-  projectFor: (entry: TileEntry) => ProjectInfo | null,
-): (bar: HTMLElement, entry: TileEntry, term: Terminal) => () => void {
-  return (bar, entry, term) => {
-    setFlowChromeVisibility(false);
-    const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
-    const project = projectFor(entry);
-    if (label !== null && project !== null) fillDedicatedLabel(label, project, entry.label);
-    const { handle: handleLocal, dispose: disposeSearch } = attachDedicatedBarSearch(bar, term, entry.label);
-    dashboardState.dedicatedSearchHandle = handleLocal;
-    return () => {
-      disposeSearch();
-      dashboardState.dedicatedSearchHandle = null;
-      if (dashboardState.active) {
-        setFlowChromeVisibility(true);
-        // HS-7826 — restore the grouping selector if it should be visible
-        // (>1 grouping). refreshDashboardGroupingSelect handles the count
-        // check; setFlowChromeVisibility above unconditionally shows it.
-        requireHooks().refreshDashboardGroupingSelect();
-      }
-    };
-  };
-}
-
 /** HS-7662 — flow layout: one grid container, one tile-grid handle, flat
  *  list of tiles in registered-project order. Empty projects (zero
  *  terminals OR every terminal hidden) are dropped entirely (per user
@@ -387,7 +345,6 @@ function paintFlowLayout(root: HTMLElement, sections: ProjectSectionData[]): voi
       if (project === null) return;
       void activateTileInProjectDrawer(project, entry.id);
     },
-    onDedicatedBarMount: buildFlowDedicatedBarMount(projectFor),
   });
   // Sentinel "flow" key so the bell long-poll fan-out treats it uniformly.
   // The bell-poll subscription iterates per-secret, but in flow mode every
@@ -433,31 +390,6 @@ function buildSectionEl(data: ProjectSectionData): HTMLElement {
   );
 }
 
-/** HS-8104 — extracted from `renderProjectSection`. Sectioned-mode dedicated-
- *  bar mount; structurally similar to flow-mode's variant but flips two chrome
- *  surfaces (sizer + grouping) instead of four. */
-function buildSectionedDedicatedBarMount(
-  project: ProjectInfo,
-): (bar: HTMLElement, entry: TileEntry, term: Terminal) => () => void {
-  return (bar, entry, term) => {
-    if (dashboardState.sizerContainer !== null) dashboardState.sizerContainer.style.display = 'none';
-    // HS-7826 — also hide the grouping selector while the dedicated view is
-    // open; it shares the toolbar real estate with the sizer.
-    if (dashboardState.groupingSelect !== null) dashboardState.groupingSelect.style.display = 'none';
-    const label = bar.querySelector<HTMLElement>('.terminal-dashboard-dedicated-label');
-    if (label !== null) fillDedicatedLabel(label, project, entry.label);
-    const { handle: handleLocal, dispose: disposeSearch } = attachDedicatedBarSearch(bar, term, entry.label);
-    dashboardState.dedicatedSearchHandle = handleLocal;
-    return () => {
-      disposeSearch();
-      dashboardState.dedicatedSearchHandle = null;
-      if (dashboardState.sizerContainer !== null && dashboardState.active) dashboardState.sizerContainer.style.display = '';
-      // HS-7826 — restore the grouping selector visibility (count-aware).
-      if (dashboardState.active) requireHooks().refreshDashboardGroupingSelect();
-    };
-  };
-}
-
 function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: TerminalListEntry[]): void {
   const handle = mountTileGrid({
     container: grid,
@@ -485,7 +417,6 @@ function mountSectionGrid(grid: HTMLElement, data: ProjectSectionData, visible: 
     // HS-9625 — double-click routes to the terminal in this section's project
     // drawer instead of the in-dashboard dedicated view.
     onTileActivate: (entry) => { void activateTileInProjectDrawer(data.project, entry.id); },
-    onDedicatedBarMount: buildSectionedDedicatedBarMount(data.project),
   });
   gridHandles.set(data.project.secret, handle);
   handle.rebuild(visible.map(toTileEntry(data.project.secret)));
