@@ -1046,6 +1046,27 @@ build, so suspends identified by `pmset` correlation):
 
 - [ ] Append the per-lever numbers to this section, dated, with the build. A number without a build is not a baseline.
 
+### 19.8 Results
+
+**Run 1 — 2026-08-12, pid 86406 (dev/tsx, HEAD `ce8d0916`), ~4 min to ~25 min uptime, 10 projects registered.**
+Boot `2026-08-12T01:01:52Z`; postdates HS-9567 (wake path live) and the docs/128/131 memory work. HS-9562's 48 h soak had already **completed** (76 h run, closed clean 2026-08-10), so the soak-vs-stress conflict that blocked this ticket for a week no longer applied and §19.3 was safe to run against the live instance.
+
+Machine note (confirms docs/131 §131): at the start of the run `kern.memorystatus_vm_pressure_level` read **1 (normal)** with only **39 MB** free of 32 GB and 1.9 GB swap in use — the kernel counts inactive/purgeable pages as reclaimable, which is exactly why `os.freemem()` is not the pressure signal.
+
+| lever | result | key numbers |
+|---|---|---|
+| **19.2 baseline** | clean (fresh boot) | evict Headroom/Churn/Idle/Cap **all 0**, open 11, ceiling 8192 MB, used 24%, externalMb 139/1887/1887; blocks n=21 p50/p90/p99/max **141/204/389/389 ms**, 0 suspends |
+| **19.3 cluster churn** | **pass** — churn stayed 0 | 3 aggressive passes touching all 10 projects' data **and** telemetry clusters. Open clusters held at **11**, externalMb plateaued at ~1886, usedPct flat at 24. **`evictChurn` = 0**; evictIdle +1, evictTelemetry +1, **evictCap 0**. |
+| **19.5 CPU pressure** | **pass** — no failure signal | 10× `yes > /dev/null` for 80 s, loadavg → 8.5+. Worst event-loop block **444 ms** (p50/p90/p99 **150/266/444**) — ~135× under the 60 s watchdog threshold, indistinguishable from baseline. Largest block was CPU-**bound** (cpuMs 574 / 444 ms, ratio 1.29 = own threadpool work), **not** starvation. evictChurn/cap unchanged. |
+
+**Reading of 19.3:** on the real 10-project set the cluster **cap was never forced** — 10 project clusters + the pinned default fit under the cap, and most projects have no telemetry data on disk so their telemetry clusters never materialize (open count stayed 11 even after touching 20 distinct cluster keys). So this run exercises the *churn-stays-low* claim but only weakly exercises the `evictCap` path. To stress `evictCap` specifically you need more live clusters than the cap — an isolated `--test` instance with the cluster cap lowered, or a machine with >10 projects. Filed as HS-9619.
+
+**Reading of 19.5:** the failure signal — "any block approaching 60 s with CPU proportional to the gap" — did **not** appear. This is the lever that would falsify the HS-9566 finding that external load cannot push the server into a watchdog SIGKILL; it did not falsify it. p99 of ~444 ms against a 60 s threshold is the same ~2 orders of magnitude of margin HS-9566 measured.
+
+**19.4 memory pressure — NOT RUN (needs root).** `memory_pressure -l critical` requires `sudo` to touch `kern.memorystatus_vm_pressure_level`; without it the tool runs but cannot flip the level (verified: level stayed 1 during a non-root `-l warn` run). The canonical bounded method is `sudo memory_pressure -l critical -s 60`, run by hand in the window. A raw large-allocator alternative was deliberately declined against the live instance: at 39 MB free, dirtying enough to flip the kernel to critical risks jetsam killing the Hot Sheet server itself (its ~2 GB of PGLite WASM heaps make it a prime target), which would corrupt the test.
+
+**19.6 sleep / wake — NOT RUN (needs a self-wake or a person at the machine).** `pmset sleepnow` needs no root, but with no scheduled wake the Mac stays asleep until someone wakes it, and scheduling a self-wake (`pmset schedule wake` / `pmset relative wake`) needs `sudo`. This is the lever that matters most: pid 86406 is a post-HS-9567 process, so it is the **first generation on which the wake listeners can fire at all** — §19.6 is a first exercise of the HS-8726 post-wake stagger, not a re-test. Hands-off recipe: `sudo pmset relative wake 100 && pmset sleepnow`, then after wake grep the freeze log for a `server-wake` entry (or a heartbeat gap whose `cpuMs`/`durationMs` < 0.05) and check for a post-wake burst of cluster opens/evictions (the HS-9553 stampede).
+
 ---
 
 ## Automated Coverage Summary
