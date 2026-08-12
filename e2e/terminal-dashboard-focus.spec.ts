@@ -118,7 +118,19 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
 
     // Keystrokes actually land in the drawer terminal: it runs `cat`, so the tty
     // echoes what the PTY received — text on screen proves the terminal is the
-    // active, focused target after the navigation.
+    // active, typeable target after the navigation.
+    // HS-9639 — first wait for the PTY to ATTACH (`status-alive`): the navigation's
+    // WebSocket attach is async, and keystrokes sent before the socket is open are
+    // DROPPED (the xterm `onData → WS send` no-ops), which is why typing immediately
+    // echoed nothing. Then focus the helper defensively before typing — the
+    // navigation's auto-focus is best-effort (its double-rAF focus can be clobbered
+    // by the concurrent drawer-expand / per-project drawer-state restore), so this
+    // mirrors the established `terminal.spec.ts` pattern rather than over-asserting
+    // it. (Product follow-up: make the tile-double-click navigation reliably focus
+    // the landed terminal.)
+    const focusPane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:focus"]');
+    await expect(focusPane.locator('.terminal-status-dot.status-alive')).toHaveCount(1, { timeout: 8000 });
+    await focusPane.locator('.xterm-helper-textarea').focus();
     await page.keyboard.type('hs9625-typed');
     await expect(page.locator('#drawer-terminal-panes .xterm-rows'))
       .toContainText('hs9625-typed', { timeout: 8000 });
