@@ -640,6 +640,50 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         `SELECT DISTINCT id FROM otel_daily_seen WHERE project_secret=$1 AND kind='emitter'`, [KNOWN_SECRET]);
       expect(seen.rows.map(x => x.id)).toContain('codex');
     });
+
+    // HS-9622 — a codex sse_event/response.completed inside an open ticket work
+    // window attributes its tokens to that ticket (time-window path, like Claude's
+    // api_request), with cost 0 (codex reports none) and emitter codex.
+    it('attributes codex log-event tokens to the open ticket (HS-9622)', async () => {
+      const clusterDb = await getDbForDir(telemetryClusterDataDir(tempDir));
+      const eventTs = new Date(1700000000000); // == timeUnixNano below (ms)
+      await clusterDb.query(
+        `INSERT INTO ticket_work_intervals (project_secret, ticket_number, started_at, ended_at) VALUES ($1,$2,$3,$4)`,
+        [KNOWN_SECRET, 'HS-9999', new Date(eventTs.getTime() - 60_000), null],
+      );
+      const payload = {
+        resourceLogs: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+          scopeLogs: [{ logRecords: [{
+            timeUnixNano: '1700000000000000000',
+            eventName: 'event otel/src/events/session_telemetry.rs:927',
+            attributes: [
+              { key: 'event.name', value: { stringValue: 'codex.sse_event' } },
+              { key: 'event.kind', value: { stringValue: 'response.completed' } },
+              { key: 'input_token_count', value: { stringValue: '14769' } },
+              { key: 'output_token_count', value: { stringValue: '5' } },
+              { key: 'cached_token_count', value: { intValue: 11008 } },
+              { key: 'cache_write_token_count', value: { intValue: 0 } },
+              { key: 'reasoning_token_count', value: { intValue: 0 } },
+              { key: 'model', value: { stringValue: 'gpt-5.6-sol' } },
+            ],
+          }] }],
+        }],
+      };
+      const result = await persistLogsPayload(payload, isKnownProject);
+      expect(result.inserted).toBe(1);
+
+      const mainDb = await getDb();
+      const roll = await mainDb.query<{ cost_usd: string; total_tokens: string; emitters: string[] | null }>(
+        `SELECT cost_usd, total_tokens, emitters FROM otel_rollup_ticket WHERE project_secret=$1 AND ticket_number='HS-9999'`,
+        [KNOWN_SECRET],
+      );
+      expect(roll.rows).toHaveLength(1);
+      // disjoint total = (14769−11008) + 5 + 11008 + 0 = 14774 (true turn total)
+      expect(Number(roll.rows[0].total_tokens)).toBe(14774);
+      expect(Number(roll.rows[0].cost_usd)).toBe(0); // codex reports no cost
+      expect(roll.rows[0].emitters).toContain('codex');
+    });
   });
 
   describe('persistTracesPayload', () => {

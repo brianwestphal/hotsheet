@@ -6,6 +6,7 @@ import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
   addLogTokensToDailyRollup,
   attributeApiRequestToTicket,
+  attributeLogTokensToTicket,
   attributeUserPromptToTicket,
   dataPointValue,
   eventNameMatches,
@@ -578,6 +579,13 @@ export async function persistLogsPayload(
               await addLogTokensToDailyRollup(mainDb, resCtx.projectSecret, ts, logTokens.model, logTokens);
             } catch (err) {
               console.debug('[otel] log-token rollup update failed:', err);
+            }
+            // HS-9622 — also attribute the turn's tokens to the open ticket at
+            // `ts` (time-window path), mirroring Claude's api_request attribution.
+            try {
+              await attributeLogTokensToTicket(db, mainDb, resCtx.projectSecret, ts, logTokens, logTokens.model, logTokens.tool);
+            } catch (err) {
+              console.debug('[otel] log-token per-ticket attribution failed:', err);
             }
           }
           // HS-9602 — same attribution on the LOG side: a tool that emits only

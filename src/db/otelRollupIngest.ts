@@ -453,10 +453,33 @@ export async function attributeApiRequestToTicket(
   const ticket = await ticketForInstant(clusterDb, secret, ts);
   if (ticket === null) return;
 
-  const cost = apiRequestCost(attrs);
-  const tokens = apiRequestTokens(attrs);
-  const model = strOr(attrs['model'], '(unknown)');
+  await addTicketCostTokens(
+    mainDb, secret, ticket,
+    apiRequestCost(attrs), apiRequestTokens(attrs), strOr(attrs['model'], '(unknown)'), emitter,
+  );
 
+  // HS-9243 — widen this prompt's duration span for the ticket.
+  await widenTicketPromptSpan(mainDb, secret, ticket, promptId, ts);
+}
+
+/**
+ * Read-modify-write one (cost, tokens, model, emitter) contribution into a
+ * ticket's `otel_rollup_ticket` row: adds to the running cost + token totals,
+ * merges the per-model breakdown, and accumulates the distinct emitter set.
+ * Single-process sequential ingest, so the read-modify-write has no race.
+ * Shared by the `api_request` (Claude, cost + tokens on the event) and the
+ * `codex.sse_event` log-token (HS-9622, tokens only — codex reports no cost)
+ * attribution paths.
+ */
+async function addTicketCostTokens(
+  mainDb: PGlite,
+  secret: string,
+  ticket: string,
+  cost: number,
+  tokens: number,
+  model: string,
+  emitter?: string,
+): Promise<void> {
   const existing = await mainDb.query<{
     cost_usd: string | number;
     total_tokens: string | number;
@@ -493,9 +516,32 @@ export async function attributeApiRequestToTicket(
        updated_at      = NOW()`,
     [secret, ticket, prevCost + cost, prevTokens + tokens, JSON.stringify(breakdown), emitters],
   );
+}
 
-  // HS-9243 — widen this prompt's duration span for the ticket.
-  await widenTicketPromptSpan(mainDb, secret, ticket, promptId, ts);
+/**
+ * HS-9622 — attribute a codex log-token event's tokens to the open ticket at
+ * `ts` (the same time-window path `attributeApiRequestToTicket` uses). Cost is
+ * 0 — codex reports none, so per-ticket cost stays unavailable while its token
+ * total accrues. `total` is the disjoint sum (input + output + cache_read +
+ * cache_creation), i.e. the true turn total; `reasoning_output_tokens` is a
+ * breakdown of output and is NOT added. No-op for the central store or when no
+ * ticket window covers `ts`. Best-effort — the caller swallows a DB error.
+ */
+export async function attributeLogTokensToTicket(
+  clusterDb: PGlite,
+  mainDb: PGlite,
+  secret: string | null,
+  ts: Date,
+  counts: DisjointTokenCounts,
+  model: string,
+  emitter: string,
+): Promise<void> {
+  if (secret === null || secret === '') return;
+  const ticket = await ticketForInstant(clusterDb, secret, ts);
+  if (ticket === null) return;
+  const total = counts.input_tokens + counts.output_tokens
+    + counts.cache_read_tokens + counts.cache_creation_tokens;
+  await addTicketCostTokens(mainDb, secret, ticket, 0, total, model, emitter);
 }
 
 /**
