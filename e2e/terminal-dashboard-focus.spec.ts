@@ -126,12 +126,11 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
     // HS-9639 — first wait for the PTY to ATTACH (`status-alive`): the navigation's
     // WebSocket attach is async, and keystrokes sent before the socket is open are
     // DROPPED (the xterm `onData → WS send` no-ops), which is why typing immediately
-    // echoed nothing. Then focus the helper defensively before typing — the
-    // navigation's auto-focus is best-effort (its double-rAF focus can be clobbered
-    // by the concurrent drawer-expand / per-project drawer-state restore), so this
-    // mirrors the established `terminal.spec.ts` pattern rather than over-asserting
-    // it. (Product follow-up: make the tile-double-click navigation reliably focus
-    // the landed terminal.)
+    // echoed nothing. HS-9641 made the navigation re-assert focus after the
+    // drawer-expand relayout — reliable when this test runs alone — but in the shared
+    // e2e worker, timing after the sibling zoom test intermittently loses the race, so
+    // focus the helper defensively before typing rather than asserting auto-focus
+    // strictly (the meaningful check is that keystrokes reach the terminal).
     const focusPane = page.locator('.drawer-terminal-pane[data-drawer-panel="terminal:focus"]');
     await expect(focusPane.locator('.terminal-status-dot.status-alive')).toHaveCount(1, { timeout: 8000 });
     await focusPane.locator('.xterm-helper-textarea').focus();

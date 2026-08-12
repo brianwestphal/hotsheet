@@ -115,6 +115,13 @@ async function activateTileInProjectDrawer(project: ProjectInfo, terminalId: str
   openDrawerTab(`terminal:${terminalId}`);
   setDrawerExpanded(true);
   void saveDrawerState();
+  // HS-9641 — land the user IN the terminal, focused + ready to type. `openDrawerTab`
+  // → `activateTerminal` already focuses (double-rAF), but `setDrawerExpanded`'s
+  // relayout fits the xterm on a LATER frame and drops that focus. Re-assert focus
+  // once more in a double-rAF — scheduled after this frame's relayout so the terminal
+  // is the final focus target. Cheap + idempotent (no-op if already focused).
+  const { focusTerminal } = await import('./terminal.js');
+  requestAnimationFrame(() => requestAnimationFrame(() => focusTerminal(terminalId)));
 }
 
 // -----------------------------------------------------------------------------

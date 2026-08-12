@@ -413,6 +413,15 @@ export function activateTerminal(id: string): void {
   });
 }
 
+/** HS-9641 — focus a terminal's xterm WITHOUT the mount/fit work `activateTerminal`
+ *  does. Used by the dashboard tile-double-click navigation to re-assert focus on
+ *  the landed terminal AFTER its drawer-expand relayout settles (that relayout's
+ *  fit lands after `activateTerminal`'s own focus and drops it). No-op when the
+ *  terminal isn't mounted. */
+export function focusTerminal(id: string): void {
+  instances.get(id)?.term?.focus();
+}
+
 /** Drawer visibility flipped off — stop sending resizes etc. */
 export function deactivateAllTerminals(): void {
   for (const inst of instances.values()) {
