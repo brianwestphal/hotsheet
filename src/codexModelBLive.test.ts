@@ -13,6 +13,17 @@
  * loaded thread is discoverable but NOT resumable (`no rollout found`), which is why
  * the drive must adopt a discovered thread without depending on `thread/resume`.
  *
+ * HS-9435 extends it further along the drive-protocol contract (still cost-free, no
+ * LLM turn): it asserts the daemon's REAL `initialize` + `thread/start` responses
+ * still parse through the PRODUCTION mapping functions (`threadIdFromResponse`,
+ * `rolloutPathFromThreadPayload`) — the `codexAppServerMapping.test.ts` unit tests
+ * only prove those parsers handle HAND-AUTHORED shapes; this proves they handle the
+ * shape codex actually emits, catching a `thread/start` result reshape before the
+ * drive silently fails to learn its thread id / rollout path. (The turn lifecycle —
+ * `turn/start` → approval/elicitation → done — is a REAL-turn concern, covered by
+ * the opt-in `src/codexApprovalLive.test.ts` and the schema-contract test
+ * `src/codexApprovalSchemaContract.test.ts`; it is not reproducible cost-free.)
+ *
  * Cost-free + side-effect-bounded: it only runs when the daemon socket ALREADY
  * exists (it never starts one, and never runs an LLM turn — the turn fan-out is
  * codex's own multi-client feature, separately verified by hand). It creates a
@@ -24,7 +35,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { loadedThreadIdsFromResponse, pickThreadForCwd, threadReadEntry } from './codexAppServerMapping.js';
+import { loadedThreadIdsFromResponse, pickThreadForCwd, rolloutPathFromThreadPayload, threadIdFromResponse, threadReadEntry } from './codexAppServerMapping.js';
 import { codexDaemonSocketPath, type CodexTransport,connectCodexDaemon } from './codexDaemonTransport.js';
 
 const daemonUp = existsSync(codexDaemonSocketPath());
@@ -81,7 +92,10 @@ describe.skipIf(!daemonUp)('model-B live discovery against the real codex daemon
     const c = client(transport);
     onMsg = c.onMsg;
 
-    await c.req('initialize', { clientInfo: { name: 'hs-modelb-live', version: '0' } });
+    // HS-9435 — the drive's handshake: `initialize` must succeed (no error) before
+    // any thread method is valid. A protocol/version drift would surface here first.
+    const initRes = await c.req('initialize', { clientInfo: { name: 'hs-modelb-live', version: '0' } });
+    expect(initRes.error).toBeUndefined();
     c.note('initialized', {});
 
     const cwd = mkdtempSync(join(tmpdir(), 'hs-mb-live-'));
@@ -93,6 +107,9 @@ describe.skipIf(!daemonUp)('model-B live discovery against the real codex daemon
       const threadId = ((started.result as { thread?: { id?: string } } | undefined)?.thread)?.id ?? null;
       createdThreadId = threadId;
       expect(threadId).toBeTruthy();
+      // HS-9435 — the PRODUCTION parser must extract that same id from the REAL
+      // response (the unit test only proves it handles hand-authored shapes).
+      expect(threadIdFromResponse(started.result)).toBe(threadId);
 
       // Simulate the drive's discovery (the real Phase-1 sequence).
       const loaded = loadedThreadIdsFromResponse((await c.req('thread/loaded/list', {})).result);
@@ -114,6 +131,9 @@ describe.skipIf(!daemonUp)('model-B live discovery against the real codex daemon
       // off-screen thread. Pin both facts so a codex change in either direction shows up.
       const reported = ((started.result as { thread?: { path?: string } } | undefined)?.thread)?.path ?? null;
       expect(reported).toBeTruthy(); // the daemon names a rollout path…
+      // HS-9435 — and the PRODUCTION rollout parser must extract that same path from
+      // the REAL response (a reshape here would break the §123 attach-gating).
+      expect(rolloutPathFromThreadPayload(started.result)).toBe(reported);
       expect(existsSync(reported as string)).toBe(false); // …before the file exists
       const resumed = await c.req('thread/resume', { threadId, config: undefined });
       expect(resumed.error).toBeTruthy();
