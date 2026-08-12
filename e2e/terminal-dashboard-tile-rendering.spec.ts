@@ -311,6 +311,22 @@ test.describe('Terminal dashboard tile content rendering (HS-7097)', () => {
     // view where it still lives: the §36 drawer-embedded tile grid (same shared
     // fit code, `drawer-terminal-grid` cssPrefix).
     await page.setViewportSize({ width: 1600, height: 900 });
+    // HS-9638 — the §36 drawer grid toggle (`#drawer-grid-toggle`) is DISABLED
+    // until the project has ≥2 terminals ("add a second terminal to enable").
+    // HS-9625/9626 moved this dedicated-view control case onto the drawer grid,
+    // so add a second (lazy) terminal purely to enable the toggle — the assertion
+    // below is still on the 'draw' tile.
+    await page.request.patch('/api/file-settings', {
+      headers,
+      data: {
+        terminal_enabled: 'true',
+        drawer_open: 'false',
+        terminals: [
+          { id: 'draw', name: 'Draw', command: `/usr/bin/env python3 ${DRAW_SCRIPT}`, lazy: false },
+          { id: 'draw2', name: 'Draw2', command: '/usr/bin/env bash', lazy: true },
+        ],
+      },
+    });
     await openDrawerAndWaitForDraw(page);
 
     // Open the §36 drawer grid and double-click the tile → dedicated view.
