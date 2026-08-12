@@ -17,11 +17,23 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
     const readTool = async (): Promise<string | undefined> => (await readSettings()).ai_tool;
     const readFlag = async (): Promise<boolean | undefined> => (await readSettings()).antigravity_interactive_permissions;
 
+    // HS-9517 (docs/133) — Antigravity is an `unreleased` integration, hidden from
+    // the AI-tool dropdown behind the `dev_unreleased_ai_tools` dev gate + per-tool
+    // enablement. Turn on the dev gate here so its enable checkbox is even listed;
+    // the enablement itself is ticked in the UI below (that path mutates live
+    // `state.settings`, so it survives the tool-switch churn this test does — an
+    // API-only enable was silently lost on the second `selectOption`).
+    const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
+    const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+    await request.patch('/api/file-settings/layer', { headers, data: { layer: 'local', settings: { dev_unreleased_ai_tools: true } } });
+
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 
     await page.locator('#settings-btn').click();
     await expect(page.locator('#settings-overlay')).toBeVisible();
+    // Enable Antigravity so the picker offers it (the dev gate above listed the box).
+    await page.locator('#ai-tool-enabled-antigravity').check();
 
     // HS-9497 — the row is now RENDERED from the tool's plugin `preferences` declaration
     // rather than server-rendered and toggled with `display:none`, so for a non-selected
@@ -63,5 +75,8 @@ test.describe('Antigravity interactive-permissions setting (HS-9328)', () => {
     await page.locator('#settings-pref-antigravity_interactive_permissions').uncheck();
     await expect.poll(readFlag, { timeout: 5000 }).toBe(false);
     await page.locator('#ai-tool-select').selectOption('auto');
+    // Undo the HS-9517 enablement so the shared server returns to Claude-only.
+    await page.locator('#ai-tool-enabled-antigravity').uncheck();
+    await request.patch('/api/file-settings/layer', { headers, data: { layer: 'local', settings: { dev_unreleased_ai_tools: false } } });
   });
 });

@@ -18,6 +18,23 @@ interface Device {
   enrolledAt: string; expiresAt: string; revoked: boolean; revokedAt?: string;
 }
 
+// HS-9517/HS-9524 (docs/124) — the Remote Access (Settings → "Remote Access") tab
+// is gated behind the `dev_remote_access` In-Development feature (`data-dev-feature`
+// on the tab button). Enable it (local layer) before the tests open Settings, else
+// the tab is `hidden` and the click times out. Reset afterward so the shared
+// server's project returns to the default (gate off) for other specs.
+test.beforeEach(async ({ request }) => {
+  const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
+  const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+  await request.patch('/api/file-settings/layer', { headers, data: { layer: 'local', settings: { dev_remote_access: true } } });
+});
+
+test.afterEach(async ({ request }) => {
+  const projects = await (await request.get('/api/projects')).json() as { secret: string }[];
+  const headers = { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projects[0]?.secret ?? '' };
+  await request.patch('/api/file-settings/layer', { headers, data: { layer: 'local', settings: { dev_remote_access: false } } }).catch(() => undefined);
+});
+
 test('Remote Access tab: add a device → .p12 downloads + lists → revoke shows the chip (HS-9024)', async ({ page }) => {
   const devices: Device[] = [];
 

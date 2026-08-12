@@ -76,6 +76,7 @@ test.describe('Command editor agent label (HS-9406)', () => {
     // Reset the shared server's project so later specs aren't affected.
     await request.patch('/api/file-settings', { headers: secretHeaders(mainSecret), data: { ai_tool: '' } }).catch(() => undefined);
     await request.patch('/api/settings', { headers: secretHeaders(mainSecret), data: { custom_commands: '[]' } }).catch(() => undefined);
+    await request.patch('/api/settings', { headers: secretHeaders(mainSecret), data: { 'ai_tool_enabled:codex': 'false' } }).catch(() => undefined);
   });
 
   test('follows the AI-tool dropdown without a reload', async ({ page }) => {
@@ -88,6 +89,9 @@ test.describe('Command editor agent label (HS-9406)', () => {
 
     // Switch the tool and re-open the editor WITHOUT reloading the page.
     await page.locator('.settings-tab[data-tab="general"]').click();
+    // HS-9517 (docs/133) — Codex ships BETA + default-OFF, so enable it (in the UI,
+    // which mutates live state) before the picker will offer it.
+    await page.locator('#ai-tool-enabled-codex').check();
     await page.locator('#ai-tool-select').selectOption('codex');
     await page.locator('.settings-tab[data-tab="commands"]').click();
     await expect(page.locator('.cmd-outline-add-btn')).toBeVisible({ timeout: 5000 });
