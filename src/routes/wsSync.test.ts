@@ -12,7 +12,7 @@ vi.mock('../projects.js', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import { emitEvent, eventBus } from '../sync/eventBus.js';
+import { DEFAULT_RING_CAPACITY, emitEvent, eventBus } from '../sync/eventBus.js';
 // eslint-disable-next-line import/first
 import { authenticateSync, wireSyncWebSocket } from './wsSync.js';
 
@@ -142,6 +142,42 @@ describe('wireSyncWebSocket roundtrip (real http.Server)', () => {
     const { ws, next } = openWs(`?project=${FAKE_SECRET}&since=${e1.seq}`);
     const replayed = await next((d) => (d as { type?: string }).type === 'ticket-deleted' && (d as { id?: number }).id === 102);
     expect(replayed.seq).toBe(e2.seq);
+    await new Promise<void>((resolve) => { ws.on('close', () => resolve()); ws.close(); });
+  });
+
+  // HS-9437 — the two-client case the manual §7 plan calls for: one project
+  // event must fan out to EVERY connected client, not just one (the pre-HS-9261
+  // drain bug where the first poller stole the update). At the WS layer this is
+  // the sink fan-out; `ticketEvents.test.ts` separately proves a real mutation
+  // ROUTE emits into the bus, so together they cover "client A mutates → client
+  // B receives".
+  it('fans a single event out to BOTH connected clients (two-client delivery)', async () => {
+    const a = openWs();
+    const b = openWs();
+    await a.next((d) => (d as { type?: string }).type === 'connected');
+    await b.next((d) => (d as { type?: string }).type === 'connected');
+    expect(eventBus.sinkCount(FAKE_SECRET)).toBe(2);
+
+    const emitted = emitEvent(FAKE_SECRET, { type: 'ticket-deleted', id: 777 });
+    const isEvt = (d: unknown): boolean => (d as { type?: string }).type === 'ticket-deleted' && (d as { id?: number }).id === 777;
+    const [ra, rb] = await Promise.all([a.next(isEvt), b.next(isEvt)]);
+    expect(ra.seq).toBe(emitted.seq);
+    expect(rb.seq).toBe(emitted.seq); // both clients saw the SAME event/seq
+    a.ws.close();
+    b.ws.close();
+  });
+
+  // HS-9437 — a client reconnecting with a `?since` older than the retained ring
+  // gets a `resync` directive (full-refetch signal) instead of a partial replay.
+  // Force eviction by emitting past the ring capacity, then reconnect at since=1.
+  it('directs a too-far-behind ?since client to resync', async () => {
+    for (let i = 0; i < DEFAULT_RING_CAPACITY + 5; i++) {
+      emitEvent(FAKE_SECRET, { type: 'ticket-deleted', id: 900_000 + i });
+    }
+    // since=1 is now older than the oldest retained event → server must resync.
+    const { ws, next } = openWs(`?project=${FAKE_SECRET}&since=1`);
+    const frame = await next((d) => (d as { type?: string }).type === 'resync');
+    expect(frame.type).toBe('resync');
     await new Promise<void>((resolve) => { ws.on('close', () => resolve()); ws.close(); });
   });
 });

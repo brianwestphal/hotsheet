@@ -126,11 +126,11 @@ This document lists features that require manual verification before each releas
 ## 2. Platform-Specific (Run on Each Target OS)
 
 ### Server-only launch modes (`--server`, HS-9163)
-*(CLI parsing is unit-tested in `src/cli/args.test.ts`; these verify the real launch behavior the parser composes.)*
-- [ ] `hotsheet --server localhost`: the server starts on `127.0.0.1` and **no browser opens** (prints "Server-only mode (--server localhost)…"). Opening `http://localhost:<port>` in a browser manually still works.
-- [ ] `hotsheet --server remote-access`: with a project CA configured (see [97-self-hosting-mtls.md](97-self-hosting-mtls.md)), the server binds `0.0.0.0`, prints the "🔒 Mutual TLS REQUIRED" notice, and **no browser opens**. A second device with an enrolled client cert can reach `https://<host>:<port>`; without a client cert the connection is refused.
+*(CLI parsing is unit-tested in `src/cli/args.test.ts`; the real spawned-launch behavior for `--server localhost` and the no-CA `--server remote-access` failure is now automated in `src/cli.testMode.e2e.test.ts` (HS-9437). The remaining items need a second device / a real CA and stay manual.)*
+- [x] `hotsheet --server localhost`: the server starts on `127.0.0.1` and **no browser opens** (prints "Server-only mode (--server localhost)…"). Opening `http://localhost:<port>` in a browser manually still works. — **AUTOMATED** (`cli.testMode.e2e.test.ts`: asserts loopback reachability, the server-only line, `http://` scheme, and the absence of the mTLS notice).
+- [ ] `hotsheet --server remote-access`: with a project CA configured (see [97-self-hosting-mtls.md](97-self-hosting-mtls.md)), the server binds `0.0.0.0`, prints the "🔒 Mutual TLS REQUIRED" notice, and **no browser opens**. A second device with an enrolled client cert can reach `https://<host>:<port>`; without a client cert the connection is refused. *(Success path needs a real keychain/CA + a second device — manual.)*
 - [ ] `hotsheet --server remote-access --bind 192.168.1.10`: the explicit `--bind` overrides the `0.0.0.0` default (server reachable only on that interface).
-- [ ] `hotsheet --server remote-access` with **no CA / keychain available**: startup fails with a clear error (the exposed-bind mTLS requirement, HS-9019), not a silent insecure listen.
+- [x] `hotsheet --server remote-access` with **no CA / keychain available**: startup fails with a clear error (the exposed-bind mTLS requirement, HS-9019), not a silent insecure listen. — **AUTOMATED** (`cli.testMode.e2e.test.ts`: temp HOME ⇒ no keychain ⇒ asserts exit code 1 + the "cannot start mTLS on the exposed bind" / "See HS-9019." stderr).
 
 ### Reveal in Finder / File Manager
 - [ ] macOS: "Show in Finder" on an attachment opens Finder with file selected
@@ -163,6 +163,8 @@ This document lists features that require manual verification before each releas
 ---
 
 ## 3. Claude Channel
+
+*(Server-side protocol — the trigger → busy(heartbeat) → done round-trip — is now automated (HS-9437): the done-flag lifecycle (a new trigger clears a previously-set flag; status consumes it once) in `src/routes/api.test.ts`, and the busy-heartbeat ingestion + report against a real spawned server in `src/channelProtocol.e2e.test.ts`. The play button, busy indicator, and permission-popup RENDERING below stay manual / browser-e2e.)*
 
 ### Play Button
 - [ ] Green play button appears in sidebar when channel is enabled
@@ -324,9 +326,9 @@ The listener behavior (accepts a CA-signed client, rejects no-cert / foreign-CA)
 
 ### WebSocket live sync (`/ws/sync`, HS-8981) — multi-client
 
-The transport (connect / reconnect / fallback / classification) is unit-tested (`src/client/wsSync.test.ts`); these cover the real browser round-trip.
+The transport (connect / reconnect / fallback / classification) is unit-tested (`src/client/wsSync.test.ts`); the server-side two-client delivery is now automated (HS-9437): a real mutation on one client reaching a second connected client + `?since` catch-up in `src/wsSyncMultiClient.e2e.test.ts` (spawned server), and the fan-out + `resync`-on-eviction directives in `src/routes/wsSync.test.ts`. The items below cover the real BROWSER round-trip (DOM refresh, the fallback banner) that those server-level tests don't.
 
-- [ ] Open the same project in two browser tabs/windows. Create / edit / delete a ticket in tab A → it appears in tab B within a moment **without a manual reload**.
+- [x] Open the same project in two browser tabs/windows. Create / edit / delete a ticket in tab A → it appears in tab B within a moment **without a manual reload**. — **server-side AUTOMATED** (`wsSyncMultiClient.e2e.test.ts`: client-A mutation → client-B `/ws/sync` frame + `?since` replay); the browser DOM update stays a manual/visual check.
 - [ ] In DevTools (tab B) Network panel, confirm the live update arrives over the `/ws/sync` WebSocket frame (the data-refresh that follows is expected until HS-8984 lands the no-refetch reducer).
 - [ ] Stop the server (or block the WS) while a tab is open: after ~2 quick drops, the amber "Live updates unavailable — falling back to polling" banner appears and ticket changes still sync via the long-poll.
 - [ ] Restart the server / restore the WS: the banner clears and live push resumes.
@@ -1091,6 +1093,7 @@ For reference, here's what IS covered by automated tests (no manual check needed
 - Plugin UI extensions: toolbar, detail_top/bottom, context_menu, status_bar, sidebar
 - Codex drive surface gating (HS-9390, `e2e/codex-drive-gating.spec.ts`): toggle off hides play + prompt buttons while shell buttons stay, Experimental checkbox reflects + re-enables live, non-codex projects unaffected
 - **Local-only LIVE agent tests** (skip when the tool/daemon isn't present, so CI skips them; run automatically on a dev machine with the tool installed): codex model-B discovery against the REAL app-server daemon — fresh `thread/start` → `thread/loaded/list`+`thread/read` → discovered by cwd, plus (HS-9438) its reported rollout absent from disk and `thread/resume` on it erroring `no rollout found` (`src/codexModelBLive.test.ts`, HS-9431/9438, cost-free); OpenCode ACP `initialize` handshake against the REAL `opencode acp` binary asserting ACP protocol v1 (`src/acp/opencodeAcpLive.test.ts`, HS-9432, cost-free). Pattern for the remaining agent live tests (agy/gemini) is HS-9432.
+- **Server-side channel + sync + CLI-startup protocols (HS-9437)** — the automatable server halves of the partly-manual §2/§3/§7 items: (a) Claude Channel protocol round-trip — the done-flag lifecycle (trigger clears a set flag; status consumes once) in `src/routes/api.test.ts` + the busy-heartbeat ingest/report against a real spawned server in `src/channelProtocol.e2e.test.ts`; (b) `/ws/sync` multi-client — fan-out + `resync`-on-eviction in `src/routes/wsSync.test.ts` and end-to-end client-A-mutates → client-B-receives + `?since` replay against a spawned server in `src/wsSyncMultiClient.e2e.test.ts`; (c) CLI `--server localhost` (loopback, http, server-only line, no mTLS notice) + `--server remote-access` no-keychain HS-9019 fail-fast (exit 1) in `src/cli.testMode.e2e.test.ts`. The popup/DOM rendering, the fallback banner, and the remote-access success path (needs a CA + second device) stay manual.
 - Backup create + preview data
 - Settings dialog: tabs, category list, checkbox persistence
 - Terminal command resolution branches (unit tests in `src/terminals/resolveCommand.test.ts`)

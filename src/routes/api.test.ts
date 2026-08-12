@@ -2016,6 +2016,56 @@ describe('POST /api/channel/trigger', () => {
   });
 });
 
+// HS-9437 — the trigger → busy(heartbeat) → done protocol round-trip, driven
+// through the REAL channel route handlers (the POPUP rendering stays a manual /
+// e2e concern; this is the server-side protocol the manual §3 plan covers).
+// The individual endpoints have coverage, but the done-flag LIFECYCLE across a
+// full flow — a new trigger CLEARING a previously-set done flag, and status
+// consuming it once — was never asserted end-to-end.
+describe('Claude Channel protocol round-trip (HS-9437)', () => {
+  async function status(): Promise<ChannelStatusResponse> {
+    return await (await app.request('/api/channel/status')).json() as ChannelStatusResponse;
+  }
+
+  it('done-flag lifecycle: trigger clears, done sets, status consumes once', async () => {
+    const channelConfig = await import('../channel-config.js');
+    vi.mocked(channelConfig.triggerChannel).mockResolvedValue(true);
+
+    // A trigger resets any stale done flag first, so status reads false.
+    await app.request('/api/channel/trigger', post({ message: 'start' }));
+    expect((await status()).done).toBe(false);
+
+    // The agent signals done → the flag is set, and the FIRST status read
+    // consumes it (true once, then false).
+    await app.request('/api/channel/done', { method: 'POST' });
+    expect((await status()).done).toBe(true);
+    expect((await status()).done).toBe(false);
+
+    // The gap this test exists for: set done again, then a NEW trigger must
+    // clear it, so the next status reads false without a status read having
+    // consumed it. Pre-HS-9437 this transition was unverified.
+    await app.request('/api/channel/done', { method: 'POST' });
+    await app.request('/api/channel/trigger', post({ message: 'again' }));
+    expect((await status()).done).toBe(false);
+  });
+
+  // The busy POSITIVE path (heartbeat matched to a registered project →
+  // heartbeat-status reports busy) needs a real project registry, which this
+  // mocked harness (sync/markdown stubbed, so registerExistingProject can't
+  // resolve sync state) can't provide. It's covered end-to-end against a real
+  // spawned server in `src/channelProtocol.e2e.test.ts` (HS-9437). Here we cover
+  // the route's guard branches, which need no registration.
+  it('heartbeat returns ok:false for a malformed body or an unmatched secret', async () => {
+    // Invalid `state` enum → schema rejects → ok:false (the `!parsed.success` branch).
+    const bad = await app.request('/api/channel/heartbeat', post({ state: 'exploded' }));
+    expect(await bad.json() as OkResponse).toMatchObject({ ok: false });
+
+    // Well-formed but no project matches the secret (none registered here) → ok:false.
+    const unmatched = await app.request('/api/channel/heartbeat', post({ secret: 'no-such-secret', state: 'busy' }));
+    expect(await unmatched.json() as OkResponse).toMatchObject({ ok: false });
+  });
+});
+
 describe('GET /api/channel/permission', () => {
   it('returns pending permission data when channel port is available', async () => {
     const channelConfig = await import('../channel-config.js');

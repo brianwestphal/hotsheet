@@ -20,7 +20,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { canRunServerSpawnTests, waitForServerReady } from './spawnTestServer.js';
+import { canRunServerSpawnTests, pickRandomPort, waitForExit, waitForServerReady } from './spawnTestServer.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -107,5 +107,68 @@ describe.skipIf(!canRunServerSpawnTests)('--test isolated instance e2e (HS-8921)
     const pageHtml = await pageRes.text();
     expect(pageHtml).toContain('test-instance-badge');
     expect(pageHtml).toContain(`TEST :${TEST_PORT}`);
+  });
+});
+
+// HS-9437 / HS-9163 — server-only launch modes (manual §2 "Server-only launch
+// modes"). Same spawn pattern as above; `--server` forces `--no-open` and picks
+// the bind (loopback for `localhost`, `0.0.0.0` for `remote-access`).
+describe.skipIf(!canRunServerSpawnTests)('--server startup modes e2e (HS-9163) (skipped: no tsx child-spawn here, or inside a Hot Sheet terminal)', () => {
+  const tsxBin = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
+
+  function spawnCli(extraArgs: string[]): { child: ChildProcess; buffered: () => string } {
+    const home = mkdtempSync(join(tmpdir(), 'hs-server-mode-home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'hs-server-mode-cwd-'));
+    cleanupDirs.push(home, cwd);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      PLUGINS_ENABLED: 'false',
+      TSX_TSCONFIG_PATH: join(REPO_ROOT, 'tsconfig.json'),
+    };
+    delete env.HOTSHEET_HOME;
+    // Guarantee the remote-access no-CA failure path is reachable: a temp HOME
+    // has no OS keychain, and with no passphrase the CA cannot be persisted.
+    delete env.HOTSHEET_CA_PASSPHRASE;
+    const child = spawn(tsxBin, [join(REPO_ROOT, 'src', 'cli.ts'), ...extraArgs], {
+      cwd, env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    proc = child;
+    let buf = '';
+    const onChunk = (c: Buffer | string): void => { buf += c.toString(); };
+    child.stdout.on('data', onChunk);
+    child.stderr.on('data', onChunk);
+    return { child, buffered: () => buf };
+  }
+
+  it('--server localhost: binds loopback (http), prints the server-only line, NO mTLS notice', async () => {
+    const port = pickRandomPort();
+    const { buffered } = spawnCli(['--server', 'localhost', '--port', String(port), '--strict-port']);
+
+    // Reachable on loopback.
+    await waitForServerReady(port, 40_000);
+    const deadline = Date.now() + 20_000;
+    while (!buffered().includes('Server-only mode (--server localhost)') && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const out = buffered();
+    expect(out).toContain('Server-only mode (--server localhost)');
+    // Loopback ⇒ plain http, and none of the exposed-bind mTLS chrome.
+    expect(out).toContain(`http://localhost:${port}`);
+    expect(out).not.toContain('Mutual TLS REQUIRED');
+    expect(out).not.toContain('cannot start mTLS');
+  });
+
+  it('--server remote-access with no keychain/passphrase: fails fast with the HS-9019 error (exit 1)', async () => {
+    const port = pickRandomPort();
+    const { child, buffered } = spawnCli(['--server', 'remote-access', '--port', String(port), '--strict-port']);
+
+    // The exposed bind requires mTLS; with no CA persistable, startup aborts.
+    const { code } = await waitForExit(child, 40_000);
+    expect(code).toBe(1);
+    const out = buffered();
+    expect(out).toContain('cannot start mTLS on the exposed bind');
+    expect(out).toContain('See HS-9019.');
   });
 });
