@@ -497,8 +497,12 @@ step_rc_tag_and_push() {
 
   info "Creating RC tag ${BOLD}${rc_tag}${RESET}..."
 
-  # Create annotated tag with release notes
-  echo -e "$notes" | git tag -a "$rc_tag" -F -
+  # Create annotated tag with release notes. `--cleanup=verbatim` is REQUIRED:
+  # git tag defaults to `--cleanup=strip`, which drops every `#`-leading line as
+  # a comment — silently deleting the `##`/`###` markdown headings gitgist emits.
+  # The GitHub Release body is built from the tag message, so a stripped heading
+  # is a lost section label in the published notes (HS-9628).
+  echo -e "$notes" | git tag -a "$rc_tag" --cleanup=verbatim -F -
 
   info "Pushing commit and RC tag to origin..."
   git push
@@ -540,8 +544,12 @@ step_beta_tag_and_push() {
 
   info "Creating beta tag ${BOLD}${beta_tag}${RESET}..."
 
-  # Annotated tag with release notes
-  echo -e "$notes" | git tag -a "$beta_tag" -F -
+  # Annotated tag with release notes. `--cleanup=verbatim` is REQUIRED: git tag
+  # defaults to `--cleanup=strip`, which drops every `#`-leading line as a
+  # comment — silently deleting the `##`/`###` markdown headings gitgist emits.
+  # The GitHub Release body is built from the tag message, so a stripped heading
+  # is a lost section label in the published notes (HS-9628).
+  echo -e "$notes" | git tag -a "$beta_tag" --cleanup=verbatim -F -
 
   info "Pushing beta tag to origin..."
   git push origin "$beta_tag"

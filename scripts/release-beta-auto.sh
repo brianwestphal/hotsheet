@@ -297,8 +297,13 @@ tag_and_push() {
   fi
 
   info "Creating tag ${BOLD}${BETA_TAG}${RESET} with the drafted release notes..."
-  # Annotated tag, notes as the message.
-  echo -e "$NOTES" | git tag -a "$BETA_TAG" -F - || { error "git tag -a failed."; exit 3; }
+  # Annotated tag, notes as the message. `--cleanup=verbatim` is REQUIRED: git
+  # tag defaults to `--cleanup=strip`, which drops every line beginning with `#`
+  # as a comment — silently deleting the `##`/`###` markdown headings gitgist
+  # emits (and any hand-drafted ones). The GitHub Release body is built from
+  # `git tag -l --format='%(contents)'`, so a stripped heading is a lost section
+  # label in the published notes (HS-9628).
+  echo -e "$NOTES" | git tag -a "$BETA_TAG" --cleanup=verbatim -F - || { error "git tag -a failed."; exit 3; }
 
   info "Pushing tag to origin..."
   git push origin "$BETA_TAG" || {
