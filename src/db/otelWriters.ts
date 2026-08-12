@@ -4,6 +4,7 @@ import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
 import { emitterForSignalName } from './otelEmitter.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
+import { syntheticTurnIdForEvent } from './otelPromptGrouping.js';
 import {
   addLogTokensToDailyRollup,
   attributeApiRequestToTicket,
@@ -535,6 +536,15 @@ export async function persistLogsPayload(
           // record attribute when the resource didn't carry one.
           const sessionId = resCtx.sessionId ??
             (typeof attrs['session.id'] === 'string' ? attrs['session.id'] : null);
+          // HS-9624 — the distinct-prompt count keys off `prompt_id`, which codex
+          // never stamps, so its turns went uncounted. A turn-START event (codex
+          // `user_prompt`) is self-identifying, so compute the SAME synthetic
+          // per-turn id the read-time timeline uses (`syntheticTurnIdForEvent`) and
+          // count THAT. Only used for the distinct-turn marks below; the stored
+          // `prompt_id` column stays null (read-time synthesis fills it). A real
+          // `prompt_id` (Claude) always wins; non-turn-start codex events resolve
+          // to null and simply don't mark (one turn = one user_prompt = one id).
+          const effectivePromptId = promptId ?? syntheticTurnIdForEvent(eventName, attrs, ts, sessionId);
           // HS-9233 — strip the nested `attributes` array (already flattened into
           // `attributes_json`); the `<!-- hotsheet:ticket=… -->` marker lives in
           // the record BODY, not attributes, so the per-ticket marker LIKE is
@@ -574,7 +584,7 @@ export async function persistLogsPayload(
           // for the heatmap's distinct-prompt-count measure. Best-effort.
           if (eventNameMatches(eventName, 'user_prompt')) {
             try {
-              await markHourlySeenPrompt(mainDb, resCtx.projectSecret, ts, promptId);
+              await markHourlySeenPrompt(mainDb, resCtx.projectSecret, ts, effectivePromptId);
             } catch (err) {
               console.debug('[otel] hourly-seen prompt update failed:', err);
             }
@@ -613,8 +623,11 @@ export async function persistLogsPayload(
           // derive an exact daily distinct `prompt_count` without scanning raw. Any
           // event carrying a `prompt_id` counts (mirrors getWindowTotals, which
           // counts distinct prompt_id across ALL event names, not just user_prompt).
+          // HS-9624 — `effectivePromptId` is the real id for Claude and the
+          // synthetic turn id for a codex `user_prompt` (null for other codex
+          // events, which don't mark — one turn is counted once, at its start).
           try {
-            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'prompt', promptId);
+            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'prompt', effectivePromptId);
           } catch (err) {
             console.debug('[otel] daily-seen prompt update failed:', err);
           }

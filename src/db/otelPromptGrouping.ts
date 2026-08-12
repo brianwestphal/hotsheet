@@ -46,6 +46,43 @@ function attrsOf(e: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
+ * The synthetic id for a turn-START record: `<prefix>.<anchor>.<epochMs>`, where
+ * `anchor` is the thread id (`conversation.id`), falling back to the session id,
+ * then a constant — the `epochMs` tail keeps successive turns distinct even under
+ * the fallback. Derivable from a SINGLE record, which is what lets both the
+ * read-time synthesis and the ingest-time distinct-turn count (HS-9624) compute
+ * the SAME id for a turn. `ts.getTime()` and `new Date(ts.toISOString()).getTime()`
+ * agree to the ms (ingest truncates nanos to ms before storing), so the two paths
+ * cannot diverge.
+ */
+function turnStartId(g: Pick<Grouper, 'threadAttr' | 'turnIdPrefix'>, attrs: Record<string, unknown>, ts: Date, sessionId: string): string {
+  const thread = typeof attrs[g.threadAttr] === 'string' ? attrs[g.threadAttr] as string : '';
+  const anchor = thread !== '' ? thread : (sessionId !== '' ? sessionId : 'session');
+  const ms = ts.getTime();
+  return `${g.turnIdPrefix}.${anchor}.${Number.isFinite(ms) ? String(ms) : '0'}`;
+}
+
+/**
+ * The synthetic per-turn prompt id for a turn-START event (codex `user_prompt`),
+ * or `null` when the event is not any registered tool's turn-start. Unlike a
+ * mid-turn event (a codex `api_request` carries no correlation id), a turn-start
+ * is self-identifying, so INGEST can compute the same id the read-time synthesis
+ * would — used by HS-9624 to mark the turn in the daily/hourly distinct-prompt set
+ * so codex turns are counted like Claude prompts.
+ */
+export function syntheticTurnIdForEvent(
+  eventName: string,
+  attrs: Record<string, unknown>,
+  ts: Date,
+  sessionId: string | null,
+): string | null {
+  for (const g of groupers()) {
+    if (eventName === g.turnStartEvent) return turnStartId(g, attrs, ts, sessionId ?? '');
+  }
+  return null;
+}
+
+/**
  * Fill in a synthetic `prompt_id` (IN PLACE) on every event that lacks a real one
  * but belongs to a tool with a `promptGrouping` spec. Events that already carry a
  * `prompt_id` (Claude) and events from tools without a spec are left untouched, so
@@ -83,13 +120,11 @@ export function fillSyntheticPromptIds(events: Record<string, unknown>[]): void 
     const g = specs.find(s => name.startsWith(s.prefix));
     if (g === undefined) continue;
 
-    const thread = typeof attrsOf(e)[g.threadAttr] === 'string' ? attrsOf(e)[g.threadAttr] as string : '';
+    const attrs = attrsOf(e);
+    const thread = typeof attrs[g.threadAttr] === 'string' ? attrs[g.threadAttr] as string : '';
     if (name === g.turnStartEvent) {
-      // A turn-start with no thread id falls back to session, then a constant, so
-      // the epoch-ms tail still keeps successive turns distinct.
-      const anchor = thread !== '' ? thread : (str(e, 'session_id') || 'session');
-      const ms = new Date(str(e, 'ts')).getTime();
-      const id = `${g.turnIdPrefix}.${anchor}.${Number.isFinite(ms) ? String(ms) : '0'}`;
+      // Same id the ingest-time distinct-turn count computes — see `turnStartId`.
+      const id = turnStartId(g, attrs, new Date(str(e, 'ts')), str(e, 'session_id'));
       if (thread !== '') lastTurnByThread.set(thread, id);
       lastTurnGlobal = id;
       e.prompt_id = id;

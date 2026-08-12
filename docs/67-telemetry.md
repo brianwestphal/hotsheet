@@ -771,8 +771,21 @@ always carries `hotsheet_project`), so a cluster is one project's stream.
 `getRecentPrompts` also folds a turn's **log-event tokens** (via `extractLogTokens`
 on the `response.completed`) into its aggregate, so a codex row shows real token
 counts (and its prompt text, which codex carries on `user_prompt`) instead of a
-blank row. **Known gap (HS-9624):** the ingest-time daily `prompt_count` still
-keys off the real `prompt_id`, so codex turns aren't counted there yet.
+blank row.
+
+**The daily distinct-prompt count too (HS-9624).** The dashboard's `prompt_count`
+is a COUNT over the ingest-time `otel_daily_seen` (kind=`prompt`) dedup set, keyed
+off `prompt_id` — which codex never stamps, so its turns went uncounted even after
+they appeared in the timeline. Read-time synthesis can't reach a rollup maintained
+at ingest. The fix works at ingest **for the turn-START event only**: a codex
+`user_prompt` is *self-identifying* (it carries `conversation.id`), so
+`syntheticTurnIdForEvent` (the shared half of `fillSyntheticPromptIds`, so the two
+paths compute the **same** id) derives `codex.turn.<conversation.id>.<epochMs>`
+from that single record with no cross-batch state, and `persistLogsPayload` marks
+THAT in `otel_daily_seen` + `otel_hourly_seen`. codex's mid-turn events (whose
+turn can only be found by read-time correlation) don't mark — correct, since one
+turn is counted once, at its start (one `user_prompt` = one distinct id). A real
+`prompt_id` always wins, so Claude is unchanged.
 
 ## 67.17 Cost that cannot be shown (HS-9605)
 

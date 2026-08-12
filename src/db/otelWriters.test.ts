@@ -725,6 +725,46 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       expect(stored).not.toContain('codex.startup_phase');
       expect(stored).not.toContain('codex.websocket_request');
     });
+
+    // HS-9624 — codex stamps no prompt_id, so its turns went uncounted in the
+    // daily distinct-prompt set. A codex `user_prompt` now marks the SAME synthetic
+    // turn id the timeline uses (one distinct id per turn); its mid-turn events
+    // don't mark, so two turns count as two.
+    it('marks codex turns in the daily distinct-prompt set via the synthetic turn id (HS-9624)', async () => {
+      const codexEvent = (name: string, conv: string, tsNano: string, kind?: string): Record<string, unknown> => ({
+        timeUnixNano: tsNano,
+        eventName: 'event otel/…/session_telemetry.rs:1', // Rust location; identity is the attribute
+        attributes: [
+          { key: 'event.name', value: { stringValue: name } },
+          { key: 'conversation.id', value: { stringValue: conv } },
+          ...(kind !== undefined ? [{ key: 'event.kind', value: { stringValue: kind } }] : []),
+        ],
+      });
+      const conv = 'conv-daily';
+      const payload = {
+        resourceLogs: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+          scopeLogs: [{ logRecords: [
+            codexEvent('codex.user_prompt', conv, '1700000000000000000'),          // turn 1 start
+            codexEvent('codex.sse_event', conv, '1700000002000000000', 'response.completed'), // turn 1 (no mark)
+            codexEvent('codex.user_prompt', conv, '1700000010000000000'),          // turn 2 start
+          ] }],
+        }],
+      };
+      await persistLogsPayload(payload, isKnownProject);
+
+      const mainDb = await getDb();
+      const seen = await mainDb.query<{ id: string }>(
+        `SELECT id FROM otel_daily_seen WHERE project_secret=$1 AND kind='prompt' ORDER BY id`,
+        [KNOWN_SECRET],
+      );
+      // Two distinct turns → two synthetic ids; the sse_event did NOT add a third.
+      expect(seen.rows).toHaveLength(2);
+      expect(seen.rows.map(r => r.id)).toEqual([
+        `codex.turn.${conv}.${new Date(1700000000000).getTime()}`,
+        `codex.turn.${conv}.${new Date(1700000010000).getTime()}`,
+      ]);
+    });
   });
 
   describe('persistTracesPayload', () => {

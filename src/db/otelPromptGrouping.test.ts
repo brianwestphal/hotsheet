@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { fillSyntheticPromptIds } from './otelPromptGrouping.js';
+import { fillSyntheticPromptIds, syntheticTurnIdForEvent } from './otelPromptGrouping.js';
 
 /** A codex JSONL event record shaped like `persistLogsPayload` writes. */
 function ev(name: string, ts: string, attrs: Record<string, unknown> = {}): Record<string, unknown> {
@@ -75,6 +75,37 @@ describe('fillSyntheticPromptIds (codex turns, HS-9623)', () => {
     ];
     fillSyntheticPromptIds(claude);
     expect(claude.map(e => e.prompt_id)).toEqual(['real-uuid', 'real-uuid']);
+  });
+
+  // HS-9624 — the ingest-time distinct-turn count computes the turn id from a
+  // SINGLE user_prompt record; it MUST equal the read-time id or the daily count
+  // and the timeline would disagree.
+  it('syntheticTurnIdForEvent matches the read-time id for the same turn-start', () => {
+    const ts = new Date('2026-08-12T00:00:00.000Z');
+    const attrs = { 'conversation.id': CONV, prompt: 'x' };
+    const ingestId = syntheticTurnIdForEvent('codex.user_prompt', attrs, ts, 's1');
+
+    const events = [ev('codex.user_prompt', ts.toISOString(), attrs)];
+    fillSyntheticPromptIds(events);
+    expect(ingestId).toBe(events[0].prompt_id);
+    expect(ingestId).toBe(`codex.turn.${CONV}.${ts.getTime()}`);
+  });
+
+  it('syntheticTurnIdForEvent returns null for a non-turn-start (and for Claude)', () => {
+    const ts = new Date('2026-08-12T00:00:00.000Z');
+    // codex mid-turn events are not self-identifying → null (they only get an id
+    // at read time, by time-order correlation).
+    expect(syntheticTurnIdForEvent('codex.api_request', {}, ts, 's1')).toBeNull();
+    expect(syntheticTurnIdForEvent('codex.sse_event', { 'conversation.id': CONV }, ts, 's1')).toBeNull();
+    // Claude's user_prompt is not a registered grouping turn-start (it stamps a
+    // real prompt_id), so no synthesis.
+    expect(syntheticTurnIdForEvent('user_prompt', {}, ts, 's1')).toBeNull();
+  });
+
+  it('falls back to session id then a constant when the turn-start has no thread', () => {
+    const ts = new Date('2026-08-12T00:00:00.000Z');
+    expect(syntheticTurnIdForEvent('codex.user_prompt', {}, ts, 'sess-9')).toBe(`codex.turn.sess-9.${ts.getTime()}`);
+    expect(syntheticTurnIdForEvent('codex.user_prompt', {}, ts, null)).toBe(`codex.turn.session.${ts.getTime()}`);
   });
 
   it('keeps concurrent threads separate for thread-tagged events', () => {
