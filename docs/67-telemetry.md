@@ -941,6 +941,34 @@ excludes. Its `FILTER` clauses are now generated from `tokenRollupSources()`,
 the same routing table, so the agreement is structural. Pinned by matching
 tests on both paths using the same real turn.
 
+**HS-9611 — the same hazard in two more places, closed.** Two `claude_code.*`
+metric-name literals had survived the HS-9604/HS-9610 sweep:
+
+- **`backfillDailySeenForDir`'s SESSION-count query** filtered
+  `metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')` — the
+  distinct `session.id` set for `otel_daily_seen`. Same `DELETE`-and-recompute
+  rewrite-history shape: a rebuild would drop session rows live ingest recorded
+  for any non-Claude tool that stamps `session.id` on a rollup metric. Now keyed
+  off **`allRollupMetricNames()`** (`otelRollupIngest.ts`), which derives from the
+  SAME `tokenRollupSources()` + `COST_METRIC` that `isRollupMetric` does — so the
+  list the SQL `metric_name = ANY(...)` uses and the per-datapoint gate live
+  ingest marks with cannot diverge. The daily-rollup query's own WHERE-clause
+  universe was refactored to the same helper (one derivation, not two).
+- **The `_debug` token-`type` breakdown** (`getTelemetryDebugInfo`) grouped
+  `claude_code.token.usage` points by their `type` attribute. Lower stakes (a
+  diagnostic, visibly Claude-shaped rather than silently wrong), but now scans
+  **`byTypeAttributeMetricNames()`** — exactly the metrics that carry a `type`
+  attribute — so a metric-per-counter tool (codex) correctly contributes nothing
+  instead of the reader wondering why it reads empty.
+
+Both were low-priority (neither produces a wrong *user-facing* number today — and
+codex emits no metrics at all, HS-9621, so nothing populates these paths yet), but
+filed and fixed so the sweep is complete. The `COST_METRIC` literal that remains
+is correct: Claude is still the only tool that reports cost (§67.17). Registry
+derivation is pinned by `allRollupMetricNames` / `byTypeAttributeMetricNames` unit
+tests that assert codex's non-`ignore` counters are included and its inclusive
+parents are not.
+
 ### 67.18.4 `reasoning_output_tokens` is a BREAKDOWN, not a fifth column (HS-9607)
 
 It is a subset of `output_tokens` (4778/4778), so the "column or fold into

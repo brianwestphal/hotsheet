@@ -3,7 +3,7 @@ import { type PGlite } from '@electric-sql/pglite';
 import { listPlugins } from '../aiTools/registry.js';
 import type { DisjointTokenCounts } from '../aiTools/tokenMetrics.js';
 import { latencyBucketIndex } from './otelHistogram.js';
-import { breakdownColumnForDatapoint, isTokenRollupMetric, tokenColumnForDatapoint } from './otelTokenRouting.js';
+import { breakdownColumnForDatapoint, isTokenRollupMetric, tokenColumnForDatapoint, tokenRollupSources } from './otelTokenRouting.js';
 import type { MetricAggregation } from './otelWriters.js';
 
 /**
@@ -71,6 +71,26 @@ const COST_METRIC = 'claude_code.cost.usage';
  */
 export function isRollupMetric(metricName: string): boolean {
   return metricName === COST_METRIC || isTokenRollupMetric(metricName);
+}
+
+/**
+ * Every metric NAME the daily rollup tracks — the cost metric plus every
+ * registered tool's non-`ignore` token counters.
+ *
+ * HS-9611 — for the SQL `metric_name = ANY(...)` reads/backfill that need a
+ * concrete list rather than the per-datapoint `isRollupMetric` gate (e.g. the
+ * `otel_daily_seen` SESSION-count backfill). Derived from the SAME
+ * `tokenRollupSources` (+ `COST_METRIC`) that `isRollupMetric` is, so the list
+ * and the predicate cannot diverge — which is exactly the invariant that keeps a
+ * DELETE-and-recompute backfill from rewriting history for a non-Claude tool.
+ */
+export function allRollupMetricNames(): string[] {
+  const names = new Set<string>([COST_METRIC]);
+  const src = tokenRollupSources();
+  for (const key of Object.keys(src) as (keyof typeof src)[]) {
+    for (const n of [...src[key].names, ...src[key].typedMetrics]) names.add(n);
+  }
+  return [...names];
 }
 
 /**

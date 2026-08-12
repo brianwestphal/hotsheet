@@ -53,6 +53,30 @@ export function isTokenRollupMetric(metricName: string): boolean {
 }
 
 /**
+ * Metric NAMES whose token column comes from a `type` ATTRIBUTE (Claude Code's
+ * `claude_code.token.usage` shape), across every registered tool.
+ *
+ * HS-9611 — the `_debug` token-type breakdown groups points by their `type`
+ * attribute, so it must scan exactly these. A metric-per-counter tool (codex)
+ * has no `type` attribute and correctly contributes nothing here. Registry-derived
+ * so no tool's metric name is hard-coded — the same reason `tokenRollupSources`
+ * exists.
+ */
+export function byTypeAttributeMetricNames(): string[] {
+  const names = new Set<string>();
+  const maps = [
+    GEN_AI_TOKEN_METRICS,
+    ...listPlugins().map(p => p.telemetryTokenMetrics).filter((m): m is TokenMetricMap => m !== undefined),
+  ];
+  for (const map of maps) {
+    for (const [name, routing] of Object.entries(map)) {
+      if (routing === 'by-type-attribute') names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/**
  * The column a datapoint's value belongs in, or `null` for a recognized metric
  * whose datapoint carries no usable column (an unknown `type` attribute).
  *

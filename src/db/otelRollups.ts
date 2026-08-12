@@ -11,6 +11,7 @@ import { HISTOGRAM_BUCKET_COUNT, percentileFromBuckets } from './otelHistogram.j
 import { clearOtelJsonl, listOtelJsonlDays, readAllOtelJsonl, readOtelJsonlDay } from './otelJsonlStore.js';
 import { fillSyntheticPromptIds } from './otelPromptGrouping.js';
 import { serverLocalDay } from './otelRollupIngest.js';
+import { byTypeAttributeMetricNames } from './otelTokenRouting.js';
 
 /**
  * HS-8148 — rollup queries for the footer drawer Telemetry tab (§67.10.2).
@@ -436,9 +437,14 @@ export async function getTelemetryDebugInfo(projectSecret: string | null, timezo
   // tokenTypes — token.usage metric points grouped by `type` (NULL → '(none)'),
   // summing asDouble ?? asInt ?? 0; points DESC. Deliberately NOT excluding
   // cumulative-monotonic rows — _debug shows what's actually stored.
+  // HS-9611 — group by `type` over the metrics that actually CARRY a `type`
+  // attribute, derived from the registry (`byTypeAttributeMetricNames`) rather
+  // than the hard-coded `claude_code.token.usage`. A metric-per-counter tool
+  // (codex) has no `type` attribute and correctly contributes nothing.
   const allMetrics = await readAllOtelJsonl(clusterDir, 'metrics');
+  const typeAttrMetrics = new Set(byTypeAttributeMetricNames());
   const tokenMetrics = (projectSecret === null ? allMetrics : allMetrics.filter(m => m.project_secret === projectSecret))
-    .filter(m => m.metric_name === 'claude_code.token.usage');
+    .filter(m => typeof m.metric_name === 'string' && typeAttrMetrics.has(m.metric_name));
   const byType = new Map<string, { points: number; tokens: number }>();
   for (const m of tokenMetrics) {
     const t = typeof evAttrs(m).type === 'string' ? evAttrs(m).type as string : '(none)';

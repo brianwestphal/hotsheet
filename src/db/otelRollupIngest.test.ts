@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../test-helpers.js';
 import { getDb } from './connection.js';
 import {
+  allRollupMetricNames,
   attributeApiRequestToTicket,
   attributeUserPromptToTicket,
   dataPointValue,
@@ -40,6 +41,28 @@ describe('otelRollupIngest pure helpers (HS-9233)', () => {
     expect(isRollupMetric('claude_code.token.usage')).toBe(true);
     expect(isRollupMetric('claude_code.lines_of_code.count')).toBe(false);
     expect(isRollupMetric('whatever')).toBe(false);
+  });
+
+  // HS-9611 — the SQL `metric_name = ANY(...)` reads/backfill must key off this
+  // list, which is derived from the SAME source as `isRollupMetric` so a
+  // DELETE-and-recompute backfill can't rewrite history for a non-Claude tool.
+  it('allRollupMetricNames agrees with isRollupMetric and is registry-derived, not hard-coded', () => {
+    const names = allRollupMetricNames();
+    // Every name it lists is a rollup metric (the invariant the two share).
+    for (const n of names) expect(isRollupMetric(n)).toBe(true);
+    // The cost metric + Claude's token metric are present.
+    expect(names).toContain('claude_code.cost.usage');
+    expect(names).toContain('claude_code.token.usage');
+    // Regression guard against re-hard-coding the two Claude literals: codex's
+    // NON-ignored token counters are included…
+    expect(names).toContain('codex.turn.token_usage.non_cached_input_tokens');
+    expect(names).toContain('codex.turn.token_usage.cached_input_tokens');
+    expect(names.length).toBeGreaterThan(2);
+    // …and its inclusive-parent / derived counters (routed 'ignore') are NOT,
+    // matching isRollupMetric — including them would double-count on a rebuild.
+    expect(names).not.toContain('codex.turn.token_usage.input_tokens');
+    expect(names).not.toContain('codex.turn.token_usage.total_tokens');
+    expect(names).not.toContain('codex.usage.total_tokens');
   });
 
   it('isCumulativeMonotonic is true only for a cumulative monotonic counter', () => {

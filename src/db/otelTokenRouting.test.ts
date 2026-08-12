@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   breakdownColumnForDatapoint,
+  byTypeAttributeMetricNames,
   isTokenRollupMetric,
   tokenColumnForDatapoint,
   tokenColumnFromTypeAttribute,
@@ -17,6 +18,29 @@ import {
 
 const CLAUDE_TOKENS = 'claude_code.token.usage';
 const CX = 'codex.turn.token_usage.';
+
+// HS-9611 — the `_debug` token-type breakdown scans only metrics that carry a
+// `type` attribute, derived from the registry rather than a hard-coded name.
+describe('byTypeAttributeMetricNames (HS-9611)', () => {
+  it('includes Claude Code’s type-attribute metric', () => {
+    expect(byTypeAttributeMetricNames()).toContain(CLAUDE_TOKENS);
+  });
+
+  it('excludes codex’s per-counter metrics (no `type` attribute — metric-per-counter shape)', () => {
+    const names = byTypeAttributeMetricNames();
+    expect(names).not.toContain(`${CX}non_cached_input_tokens`);
+    expect(names).not.toContain(`${CX}input_tokens`);
+    expect(names).not.toContain(`${CX}output_tokens`);
+  });
+
+  it('every returned name actually routes by-type-attribute', () => {
+    // A name here whose datapoint has no `type` would produce an empty breakdown,
+    // so the set must be exactly the by-type-attribute metrics.
+    for (const name of byTypeAttributeMetricNames()) {
+      expect(tokenColumnForDatapoint(name, { type: 'input' })).toBe('input_tokens');
+    }
+  });
+});
 
 describe('Claude — one metric split by its `type` attribute', () => {
   it('routes each of the four disjoint buckets', () => {

@@ -64,6 +64,7 @@ import { readProjectList } from '../project-list.js';
 import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
 import { computeTicketRollupFromRaw } from './otelDashboard.js';
 import { latencyBucketIndex } from './otelHistogram.js';
+import { allRollupMetricNames } from './otelRollupIngest.js';
 import { eventNameMatchSql } from './otelRollups.js';
 import { tokenRollupSources } from './otelTokenRouting.js';
 
@@ -240,10 +241,8 @@ export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz:
   // $1 tz, $2 cost metric, then 3 params per token column.
   const params: unknown[] = [tz, COST_METRIC];
   const sums: string[] = [];
-  const rollupMetricNames = new Set<string>([COST_METRIC]);
   for (const col of cols) {
     const { names, typedMetrics, types } = src[col];
-    for (const n of [...names, ...typedMetrics]) rollupMetricNames.add(n);
     const i = params.length;
     params.push(names, typedMetrics, types);
     sums.push(
@@ -252,7 +251,10 @@ export async function backfillDailyForDir(clusterDb: PGlite, mainDb: PGlite, tz:
     );
   }
   const metricsParam = params.length + 1;
-  params.push([...rollupMetricNames]);
+  // HS-9611 — the WHERE-clause metric universe is the SAME shared list the
+  // session-count backfill now uses (and that live ingest's `isRollupMetric`
+  // gates on), rather than a second inline derivation.
+  params.push(allRollupMetricNames());
 
   // Per (secret, server-local day, model, query.source): cost + split-by-type
   // token sums + datapoint_count, mirroring the reads' metric handling exactly.
@@ -706,13 +708,20 @@ export async function backfillDailySeenForDir(clusterDb: PGlite, mainDb: PGlite,
      WHERE prompt_id IS NOT NULL AND prompt_id <> ''`,
     [tz],
   );
+  // HS-9611 — the session-id set must key off the SAME metric universe live
+  // ingest marks (`isRollupMetric`), not two Claude-shaped literals. Pre-fix a
+  // rebuild would DELETE-and-recompute using only Claude's names, dropping any
+  // session rows live ingest recorded for a non-Claude tool that reports
+  // session-bearing rollup metrics — the rewrite-history hazard the daily-rollup
+  // query already guards against via the registry. `allRollupMetricNames()`
+  // shares `tokenRollupSources` with `isRollupMetric`, so they cannot diverge.
   const sessions = await clusterDb.query<Record<string, unknown>>(
     `SELECT DISTINCT COALESCE(project_secret, '') AS secret, (ts AT TIME ZONE $1)::date AS day, attributes_json->>'session.id' AS id
      FROM otel_metrics
-     WHERE metric_name IN ('claude_code.cost.usage', 'claude_code.token.usage')
+     WHERE metric_name = ANY($2::text[])
        AND attributes_json->>'session.id' IS NOT NULL AND attributes_json->>'session.id' <> ''
        AND ${EXCLUDE_CUMULATIVE_MONOTONIC_SQL}`,
-    [tz],
+    [tz, allRollupMetricNames()],
   );
 
   const rows: SeenRow[] = [
