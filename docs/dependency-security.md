@@ -54,6 +54,26 @@ moderate / 0 high**:
 - The genuinely reachable production items: `ws` 8.20.0 → 8.21.0,
   `marked` 18.0.0 → 18.0.4 (plus `hono` 4.12.7 → 4.12.23).
 
+**2026-08-12 refresh (HS-9635 / HS-9636).** A new batch of advisories reappeared
+and was cleared with semver-compatible bumps only (no `--force` / no major bumps):
+
+- **npm (`npm audit fix`, package-lock.json only):** `fast-uri` (HIGH host-confusion),
+  `@hono/node-server` (serve-static path traversal + WS DoS), `body-parser` (DoS),
+  and `hono` (JSX cross-request disclosure, `cx()` XSS, CORS ReDoS, `memo()`
+  cross-user disclosure) — all fixed within the existing `^` ranges. The residual
+  `sharp`/`domotion-svg` libvips highs have **no fix available** and are dev-only
+  (video/demo tooling), so `--omit=dev` excludes them from the gate.
+- **cargo (`cargo update -p plist -p wayland-scanner -p tauri-winrt-notification`):**
+  cleared `quick-xml` RUSTSEC-2026-0194 (quadratic dup-attribute runtime) +
+  RUSTSEC-2026-0195 (unbounded namespace-declaration allocation DoS) by bumping the
+  three transitive dependents to versions that use `quick-xml 0.41.0` — `plist`
+  1.9.0→1.10.0, `wayland-scanner` 0.31.10→0.31.11, `tauri-winrt-notification`
+  0.7.2→0.7.3 (drops its quick-xml 0.37 copy). No `tauri` change. Both vulnerable
+  `quick-xml` copies (0.37.5, 0.39.4) are gone; only 0.41.0 remains. Reachability
+  note: `quick-xml` here parses only trusted bundle/system XML (Info.plist, wayland
+  protocol descriptors, WinRT toast XML), not attacker input — but the gate is fixed
+  outright rather than triaged. `npm run test:rust` (50 tests) still passes.
+
 After the bumps:
 
 - **`npm audit --omit=dev --audit-level=high` reports 0 vulnerabilities** — the
