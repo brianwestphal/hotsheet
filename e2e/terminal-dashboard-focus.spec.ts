@@ -82,20 +82,24 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
     // Single click zooms (the handler is debounced 220 ms to let dblclick win).
     await tile.click();
     await expect(tile).toHaveClass(/centered/, { timeout: 5000 });
-    await page.waitForTimeout(350); // let the FLIP animation + focus microtask settle
 
-    const afterZoom = await activeElementInfo(page);
-    expect(afterZoom.className, 'zooming should focus the terminal').toContain('xterm-helper-textarea');
+    // HS-9640 — POLL for focus (via toBeFocused) instead of reading
+    // `document.activeElement` once after a fixed 350 ms wait: in headless CI the
+    // zoom's FLIP-animation + focus microtask can land after that window, so the
+    // one-shot read intermittently saw <body> ("terminal-dashboard-active"). The
+    // zoomed tile holds the shared xterm, so its helper-textarea is the focus target.
+    await expect(tile.locator('.xterm-helper-textarea'), 'zooming should focus the terminal')
+      .toBeFocused({ timeout: 5000 });
 
     // Now click INSIDE the zoomed terminal, the way a user does before typing.
     // Pre-fix this dropped focus to <body> with no way back short of Esc.
     await tile.locator('.terminal-dashboard-tile-preview').click({ position: { x: 40, y: 40 } });
-    await page.waitForTimeout(150);
+    await expect(tile.locator('.xterm-helper-textarea'), 'clicking the zoomed terminal keeps focus on it')
+      .toBeFocused({ timeout: 5000 });
 
+    // …and it's the ZOOMED tile that holds it (not another instance's textarea).
     const afterClick = await activeElementInfo(page);
-    expect(afterClick.tag, 'focus must not fall back to the document body').not.toBe('body');
-    expect(afterClick.className).toContain('xterm-helper-textarea');
-    expect(afterClick.inCentered, 'and it must be the zoomed tile that holds it').toBe(true);
+    expect(afterClick.inCentered, 'the zoomed tile must hold focus').toBe(true);
   });
 
   // HS-9625 — double-clicking a tile no longer opens the in-dashboard dedicated
