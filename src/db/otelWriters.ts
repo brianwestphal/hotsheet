@@ -1,7 +1,7 @@
 import { extractLogTokens } from '../aiTools/logTokens.js';
 import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
-import { emitterForSignalName, UNKNOWN_EMITTER } from './otelEmitter.js';
+import { emitterForSignalName } from './otelEmitter.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
   addLogTokensToDailyRollup,
@@ -500,8 +500,18 @@ export async function persistLogsPayload(
           const ts = unixNanoToDate(rR.timeUnixNano ?? rR.observedTimeUnixNano);
           if (ts === null) { dropped++; continue; }
           const attrs = flattenAttributes(rR.attributes);
-          const eventName = typeof rR.eventName === 'string' ? rR.eventName
-            : typeof attrs['event.name'] === 'string' ? attrs['event.name']
+          // HS-9609 — prefer the tool's own `event.name` ATTRIBUTE over the OTLP
+          // `event_name` FIELD. codex sets the field to its Rust tracing location
+          // (`event otel/…/session_telemetry.rs:NNN`) and puts the real identity
+          // (`codex.user_prompt`, `codex.api_request`, `codex.sse_event`) in the
+          // attribute — so keying off the field left every codex event unmatched
+          // by the timeline (docs/68) and by per-ticket attribution (HS-9610),
+          // and unattributed (`unknown`). Verified safe for Claude Code: it sets
+          // ONLY the attribute (its `event_name` field is unset — checked against
+          // real ingested rows), so preferring the attribute is a no-op there and
+          // the field remains the fallback for anything that sets only it.
+          const eventName = typeof attrs['event.name'] === 'string' ? attrs['event.name']
+            : typeof rR.eventName === 'string' ? rR.eventName
             : 'log';
           const promptId = typeof attrs['prompt.id'] === 'string'
             ? attrs['prompt.id']
@@ -571,18 +581,12 @@ export async function persistLogsPayload(
             }
           }
           // HS-9602 — same attribution on the LOG side: a tool that emits only
-          // events (no metrics) must still be nameable on the dashboard.
-          // HS-9621 — codex sets the OTLP `event_name` field to its Rust tracing
-          // location (e.g. `event otel/…/session_telemetry.rs:236`), so the
-          // top-level name never carries the `codex.` prefix; the real identity is
-          // the `event.name` ATTRIBUTE. Fall back to it so codex's events attribute
-          // to `codex` rather than `unknown`.
-          let emitter = emitterForSignalName(eventName);
-          if (emitter === UNKNOWN_EMITTER && typeof attrs['event.name'] === 'string') {
-            emitter = emitterForSignalName(attrs['event.name']);
-          }
+          // events (no metrics) must still be nameable on the dashboard. Since
+          // HS-9609 `eventName` prefers the `event.name` attribute, this resolves
+          // codex's `codex.*` events to `codex` (its OTLP `event_name` field is the
+          // Rust tracing location, which never carried the prefix).
           try {
-            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'emitter', emitter);
+            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'emitter', emitterForSignalName(eventName));
           } catch (err) {
             console.debug('[otel] emitter record failed:', err);
           }

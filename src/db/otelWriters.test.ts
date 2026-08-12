@@ -11,6 +11,7 @@ import { cleanupTestDb, createTempDir, setupTestDb } from '../test-helpers.js';
 import { pushAll } from '../utils/largeArray.js';
 import { centralTelemetryDataDir, closeDbForDir, getDb, getDbForDir, telemetryClusterDataDir } from './connection.js';
 import { readOtelJsonlDay } from './otelJsonlStore.js';
+import { isClaudeCodeEvent } from './otelRollups.js';
 import {
   _testing,
   persistLogsPayload,
@@ -587,6 +588,56 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
         `SELECT DISTINCT id FROM otel_daily_seen WHERE project_secret = $1 AND kind = 'emitter'`,
         [KNOWN_SECRET],
       );
+      expect(seen.rows.map(x => x.id)).toContain('codex');
+    });
+
+    // HS-9609 — the stored event_name must come from the `event.name` ATTRIBUTE,
+    // not the OTLP `event_name` field, so codex's lifecycle events (which put
+    // their identity in the attribute and a Rust tracing location in the field)
+    // are matched by the docs/68 timeline + per-ticket attribution + emitter.
+    it('stores the event.name ATTRIBUTE over the OTLP event_name field (codex), and Claude is unaffected (HS-9609)', async () => {
+      const payload = {
+        resourceLogs: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+          scopeLogs: [{ logRecords: [
+            {
+              // codex shape: field is the Rust location, attribute is the identity.
+              timeUnixNano: '1700000000000000000',
+              eventName: 'event model-provider/src/models_endpoint.rs:202',
+              attributes: [{ key: 'event.name', value: { stringValue: 'codex.api_request' } }],
+            },
+            {
+              timeUnixNano: '1700000001000000000',
+              eventName: 'event otel/src/events/session_telemetry.rs:974',
+              attributes: [{ key: 'event.name', value: { stringValue: 'codex.user_prompt' } }],
+            },
+            {
+              // real Claude shape: ONLY the attribute (its field is unset). Verified
+              // against ingested rows — this is why flipping is safe for Claude.
+              timeUnixNano: '1700000002000000000',
+              attributes: [{ key: 'event.name', value: { stringValue: 'user_prompt' } }],
+            },
+          ] }],
+        }],
+      };
+      const result = await persistLogsPayload(payload, isKnownProject);
+      expect(result.inserted).toBe(3);
+
+      const stored = (await readAllJsonl('events')).map(r => r.event_name);
+      expect(stored).toContain('codex.api_request');   // attribute, NOT the .rs:202 location
+      expect(stored).toContain('codex.user_prompt');
+      expect(stored).toContain('user_prompt');          // Claude unaffected
+      expect(stored).not.toContain('event model-provider/src/models_endpoint.rs:202');
+
+      // The stored names are exactly what the timeline (docs/68) matches, so a
+      // codex project's timeline is no longer empty.
+      expect(isClaudeCodeEvent('codex.api_request', 'api_request')).toBe(true);
+      expect(isClaudeCodeEvent('codex.user_prompt', 'user_prompt')).toBe(true);
+
+      // …and every codex event now attributes to codex, not just the token one.
+      const mainDb = await getDb();
+      const seen = await mainDb.query<{ id: string }>(
+        `SELECT DISTINCT id FROM otel_daily_seen WHERE project_secret=$1 AND kind='emitter'`, [KNOWN_SECRET]);
       expect(seen.rows.map(x => x.id)).toContain('codex');
     });
   });

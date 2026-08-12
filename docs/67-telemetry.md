@@ -682,6 +682,22 @@ exact. Cost stays $0 by design (codex reports none — §67.17). Verified by an
 ingest test replaying a real two-response turn into the rollup
 (`otelWriters.test.ts`, HS-9621).
 
+**HS-9609 — the same root cause, generalized to ALL codex log events.** codex sets
+the OTLP `event_name` FIELD to its Rust tracing location for *every* event
+(`codex.api_request` → `event model-provider/…rs:202`, `codex.user_prompt` →
+`…session_telemetry.rs:974`) and puts the real identity in the `event.name`
+ATTRIBUTE. So `persistLogsPayload` now **prefers the `event.name` attribute over
+the OTLP field** for the stored `event_name`. Verified safe for Claude Code
+against real ingested rows: Claude sets ONLY the attribute (its field is unset),
+so the flip is a no-op for it; the field stays the fallback for anything that
+sets only it. This lands codex's lifecycle events under `codex.*`, so the
+existing HS-9610 prefix-matching (`eventNameVariants`) recognizes them — the
+docs/68 timeline (maintainer decision: reuse the existing timeline, anchor on
+`codex.user_prompt`), the per-ticket attribution, and emitter labeling all now
+see codex. **Known gap (HS-9623):** codex events carry `conversation.id` but no
+`prompt.id`, which the timeline groups by — so recognition works but per-prompt
+grouping/drilldown needs `conversation.id` mapped to the prompt anchor.
+
 ## 67.17 Cost that cannot be shown (HS-9605)
 
 Every cost surface sums `claude_code.cost.usage`. **Codex reports no cost at
