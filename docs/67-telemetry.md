@@ -640,6 +640,48 @@ codex turn (network, auth, a live model call). The flag is parser-validated, so
 the worst case is that no data appears — which is today's state — rather than a
 broken terminal.
 
+### 67.16.1 Verified end-to-end — three things were broken (HS-9621)
+
+The end-to-end check finally ran (real codex turns, codex-cli **0.147.0**, OTLP
+captured through a logging proxy and protoc-decoded). Nothing was arriving, for
+three independent reasons — all now fixed:
+
+1. **Endpoint path.** The flag set `endpoint="http://localhost:<port>"` with no
+   path. codex uses that URL **verbatim** — it does NOT append `/v1/logs` the way
+   the base `OTEL_EXPORTER_OTLP_ENDPOINT` env convention does — so every batch
+   POSTed to `/` and Hot Sheet (which serves OTLP only under `/v1/*`) 404'd it.
+   Isolated: pointing the flag at `/v1/logs` while the env stayed the bare base
+   still POSTed to `/v1/logs`, so **the `-c` flag, not the shared env, controls
+   the path.** `codexOtelConfigFlag` now emits `…/v1/logs`.
+
+2. **Logs, not metrics.** codex 0.147.0 exports token usage ONLY as an OTLP LOG
+   record — `event.name='codex.sse_event'`, `event.kind='response.completed'`,
+   with the counters as **attributes** (`input_token_count` etc., a mix of string
+   and int values) — and emits **no token metrics at all**. So the §67.18
+   metric-name mapping (`codex.turn.token_usage.*` / `gen_ai.usage.*`) matched
+   nothing on the wire, and the `gen_ai.usage.*` nesting §67.18 worried about
+   **does not exist on this stream.** `/v1/logs` (not `/v1/metrics`) is therefore
+   the correct and complete endpoint today.
+
+3. **Attribution + extraction.** codex sets the OTLP `event_name` FIELD to its
+   Rust tracing location (`event otel/…/session_telemetry.rs:NNN`), so the
+   top-level name never carries the `codex.` prefix and emitter attribution fell
+   to `unknown`; the real identity is the `event.name` ATTRIBUTE. And the logs
+   writer did no token extraction (only the metrics path did), so tokens stayed 0.
+
+The fix (all keyed to the plugin, so a second log-reporting tool needs only a
+declaration): a `LogTokenSpec` capability (`AiToolPlugin.telemetryLogTokens`,
+declared on the codex plugin) names the event + its counter attributes;
+`extractLogTokens` (`src/aiTools/logTokens.ts`) resolves any registered tool's
+spec; `addLogTokensToDailyRollup` sums the disjoint counts into the SAME
+`otel_rollup_daily` the metrics path feeds; and the logs writer now falls back to
+the `event.name` attribute for emitter attribution. Because a log record carries
+every counter together, the nesting the metrics path must `ignore` (input ⊇
+cached, output ⊇ reasoning) is resolved directly by subtraction — stateless and
+exact. Cost stays $0 by design (codex reports none — §67.17). Verified by an
+ingest test replaying a real two-response turn into the rollup
+(`otelWriters.test.ts`, HS-9621).
+
 ## 67.17 Cost that cannot be shown (HS-9605)
 
 Every cost surface sums `claude_code.cost.usage`. **Codex reports no cost at

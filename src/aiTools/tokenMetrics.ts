@@ -139,3 +139,87 @@ export function isRoutedTokenMetric(name: string, own: TokenMetricMap | undefine
   const r = routeTokenMetric(name, own);
   return r !== null && r !== 'ignore';
 }
+
+/**
+ * HS-9621 — one usage record's token counts, already resolved to the disjoint
+ * rollup columns (summing the four disjoint columns is a valid total;
+ * `reasoning_output_tokens` is a breakdown of `output_tokens`, never summed).
+ */
+export interface DisjointTokenCounts {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  reasoning_output_tokens: number;
+}
+
+/**
+ * HS-9621 (docs/67 §67.16) — how a tool reports token usage on a single OTLP LOG
+ * event, as opposed to as metrics (`telemetryTokenMetrics`).
+ *
+ * Measured against codex-cli 0.147.0: codex exports token usage ONLY via a log
+ * record (`event.name='codex.sse_event'`, `event.kind='response.completed'`) and
+ * emits NO token metrics at all — so the metric-name map can never reach it.
+ * This spec names the event and its per-counter attributes.
+ *
+ * The metrics path must `ignore` the inclusive parents (`input` ⊇ cached,
+ * `output` ⊇ reasoning) because each counter is an independent datapoint and no
+ * single ingest sees both. A log record carries EVERY counter together, so here
+ * the nesting is resolved directly by subtraction — stateless and exact.
+ */
+export interface LogTokenSpec {
+  /** The `event.name` attribute identifying the usage event. */
+  readonly eventName: string;
+  /** The `event.kind` value to require, if the event has kinds (codex sends
+   *  `response.created` etc. without token totals; only `response.completed`
+   *  carries them). */
+  readonly eventKind?: string;
+  /** Attribute carrying the model id; absent ⇒ '(unknown)'. */
+  readonly modelAttr?: string;
+  /** Attribute of the input counter, INCLUSIVE of `cacheRead`. */
+  readonly inputInclusive: string;
+  /** Attribute of the output counter, INCLUSIVE of `reasoning`. */
+  readonly outputInclusive: string;
+  /** Attribute of the cached-input (cache read) counter. */
+  readonly cacheRead: string;
+  /** Attribute of the cache-write (cache creation) counter. */
+  readonly cacheCreation: string;
+  /** Attribute of the reasoning-output counter (a breakdown of output). */
+  readonly reasoning: string;
+}
+
+/** Coerce a flattened OTLP attribute to a finite, non-negative number. codex
+ *  sends some counts as strings ("14769") and some as ints (11008) on the SAME
+ *  record, so both must be accepted. */
+function tokenNum(v: unknown): number {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Resolve a flattened log record's attributes to disjoint token counts + model
+ * using a tool's `LogTokenSpec`, or `null` when the record is not that event.
+ *
+ * `input`/`output` are made disjoint by subtracting their nested child, clamped
+ * at 0 so a malformed record can never contribute a negative addend to the SUM.
+ */
+export function disjointTokensFromLog(
+  attrs: Record<string, unknown>,
+  spec: LogTokenSpec,
+): (DisjointTokenCounts & { model: string }) | null {
+  if (attrs['event.name'] !== spec.eventName) return null;
+  if (spec.eventKind !== undefined && attrs['event.kind'] !== spec.eventKind) return null;
+  const cacheRead = tokenNum(attrs[spec.cacheRead]);
+  const reasoning = tokenNum(attrs[spec.reasoning]);
+  const input = tokenNum(attrs[spec.inputInclusive]);
+  const output = tokenNum(attrs[spec.outputInclusive]);
+  const modelRaw = spec.modelAttr !== undefined ? attrs[spec.modelAttr] : undefined;
+  return {
+    model: typeof modelRaw === 'string' && modelRaw !== '' ? modelRaw : '(unknown)',
+    input_tokens: Math.max(0, input - cacheRead),
+    output_tokens: Math.max(0, output - reasoning),
+    cache_read_tokens: cacheRead,
+    cache_creation_tokens: tokenNum(attrs[spec.cacheCreation]),
+    reasoning_output_tokens: reasoning,
+  };
+}

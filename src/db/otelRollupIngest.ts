@@ -1,6 +1,7 @@
 import { type PGlite } from '@electric-sql/pglite';
 
 import { listPlugins } from '../aiTools/registry.js';
+import type { DisjointTokenCounts } from '../aiTools/tokenMetrics.js';
 import { latencyBucketIndex } from './otelHistogram.js';
 import { breakdownColumnForDatapoint, isTokenRollupMetric, tokenColumnForDatapoint } from './otelTokenRouting.js';
 import type { MetricAggregation } from './otelWriters.js';
@@ -319,6 +320,49 @@ export async function updateDailyRollup(
     [projectSecret, day, model, querySource, cost, inputT, outputT, cacheReadT, cacheCreationT, reasoningT],
   );
   return true;
+}
+
+/**
+ * HS-9621 — upsert a FULL disjoint token set (all counters from ONE usage
+ * record) into the daily rollup. The metrics path routes one value per datapoint
+ * via `updateDailyRollup`; a log-based tool (codex) carries every counter on one
+ * `codex.sse_event` record, so it adds them together here.
+ *
+ * `query_source` is `'(unknown)'` — codex logs carry no `query.source` — and
+ * `cost_usd` is 0: codex reports no cost (`telemetryReportsCost: false`), so the
+ * cost surfaces show "unavailable" rather than a fabricated number. Keyed by the
+ * same (project, day, model, source) grain as the metrics path, so a project
+ * that runs both Claude and codex accumulates each under its own model. Additive
+ * across the two `response.completed` records per turn (per-response totals, not
+ * cumulative). Best-effort: throws only on a real DB error, which the caller
+ * swallows.
+ */
+export async function addLogTokensToDailyRollup(
+  mainDb: PGlite,
+  secret: string | null,
+  ts: Date,
+  model: string,
+  counts: DisjointTokenCounts,
+): Promise<void> {
+  await mainDb.query(
+    `INSERT INTO otel_rollup_daily
+       (project_secret, day, model, query_source,
+        cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+        reasoning_output_tokens, datapoint_count)
+     VALUES ($1, $2, $3, '(unknown)', 0, $4, $5, $6, $7, $8, 1)
+     ON CONFLICT (project_secret, day, model, query_source) DO UPDATE SET
+       input_tokens            = otel_rollup_daily.input_tokens            + EXCLUDED.input_tokens,
+       output_tokens           = otel_rollup_daily.output_tokens           + EXCLUDED.output_tokens,
+       cache_read_tokens       = otel_rollup_daily.cache_read_tokens       + EXCLUDED.cache_read_tokens,
+       cache_creation_tokens   = otel_rollup_daily.cache_creation_tokens   + EXCLUDED.cache_creation_tokens,
+       reasoning_output_tokens = otel_rollup_daily.reasoning_output_tokens + EXCLUDED.reasoning_output_tokens,
+       datapoint_count         = otel_rollup_daily.datapoint_count         + 1`,
+    [
+      secret ?? '', serverLocalDay(ts), model,
+      counts.input_tokens, counts.output_tokens, counts.cache_read_tokens,
+      counts.cache_creation_tokens, counts.reasoning_output_tokens,
+    ],
+  );
 }
 
 /** Cost on an `api_request` event, COALESCEing the attribute-name variants the

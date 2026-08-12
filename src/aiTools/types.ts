@@ -23,7 +23,7 @@
 // out (as `channelSlug.ts` was split out of `channel-config.ts`) rather than importing
 // across — see docs/132 §132.11.11.
 import type { AgentTransport } from '../agentBackendParse.js';
-import type { TokenMetricMap } from './tokenMetrics.js';
+import type { LogTokenSpec, TokenMetricMap } from './tokenMetrics.js';
 
 /**
  * How to tell whether a project uses this tool, expressed as data so the pure registry
@@ -133,6 +133,18 @@ export interface AiToolPlugin {
    * different for what reads like the same data.
    */
   readonly telemetryTokenMetrics?: TokenMetricMap;
+  /**
+   * HS-9621 — this tool reports token usage on a single OTLP LOG event rather
+   * than as metrics (see `LogTokenSpec` in `tokenMetrics.ts`).
+   *
+   * Codex is the reason this exists: measured against codex-cli 0.147.0, it
+   * emits NO token metrics — the counts ride on a `codex.sse_event` log record —
+   * so `telemetryTokenMetrics` above never matches on the live stream. A tool
+   * may declare both (a metrics build and a logs build), and the ingest path
+   * feeds either into the same daily rollup. Absent means the tool has no
+   * log-based token event.
+   */
+  readonly telemetryLogTokens?: LogTokenSpec;
   /**
    * HS-9601 (docs/90 §90.5) — worker-pool support. **Absent means unsupported**,
    * which is the §132.9 pattern and is what `assertWorkerLaunchSupported` now

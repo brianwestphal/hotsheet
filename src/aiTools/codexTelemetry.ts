@@ -63,7 +63,24 @@ export function codexOtelConfigFlag(dataDir: string): string {
   // the payload anyway, so emitting the flag would only add noise.
   if (port === null || getProjectSecret(dataDir) === '') return '';
 
-  const endpoint = `http://localhost:${String(port)}`;
+  // HS-9621 — the endpoint MUST include the `/v1/logs` path. Measured against
+  // codex-cli 0.147.0 (OTLP captured through a logging proxy): codex uses this
+  // `otel.exporter.otlp-http.endpoint` value **verbatim** as the POST URL — it
+  // does NOT append `/v1/logs` the way the base `OTEL_EXPORTER_OTLP_ENDPOINT`
+  // env convention does. With no path it POSTed to `/`, which Hot Sheet serves
+  // only at `/v1/*`, so every batch 404'd and was dropped — the reason no codex
+  // telemetry had ever reached Hot Sheet. (This flag, not the shared env var,
+  // controls the path: isolated by pointing the flag at `/v1/logs` while the env
+  // stayed the bare base — codex still POSTed to `/v1/logs`.)
+  //
+  // `/v1/logs` specifically (not `/v1/metrics`) because codex 0.147.0 exports
+  // token usage ONLY as OTLP logs — a `codex.sse_event` / `response.completed`
+  // log record whose attributes carry `input_token_count` etc. (docs/67 §67.16,
+  // HS-9621). It emits no token METRICS at all, so a single logs endpoint is the
+  // right and complete target today. NOTE: if a future codex sends metrics to
+  // this same literal endpoint, they would wrongly land on `/v1/logs` — at that
+  // point switch to a catch-all OTLP handler at `/` that routes by payload type.
+  const endpoint = `http://localhost:${String(port)}/v1/logs`;
   return `-c 'otel.exporter={otlp-http={endpoint="${endpoint}",protocol="binary"}}'`;
 }
 

@@ -58,6 +58,27 @@ export const codexPlugin: AiToolPlugin = {
     // these two are the only `codex.usage.*` token metrics.)
     'codex.usage.reasoning_output_tokens': 'ignore',
   },
+  // HS-9621 — the LIVE token path. Measured on the wire against codex-cli 0.147.0
+  // (OTLP captured through a proxy, protoc-decoded): codex emits token usage ONLY
+  // as an OTLP LOG record — `event.name='codex.sse_event'`,
+  // `event.kind='response.completed'`, with the counters as attributes — and
+  // sends ZERO token metrics, so the `telemetryTokenMetrics` map above matches
+  // nothing on the stream (it is kept for a possible future/interactive build
+  // that emits the `codex.turn.token_usage.*` metrics). The counters are nested
+  // exactly like the rollout files (`input_token_count` ⊇ `cached_token_count`,
+  // `output_token_count` ⊇ `reasoning_token_count`); because a log record carries
+  // them together, the ingest resolves the nesting by subtraction rather than by
+  // ignoring the parents. Values arrive as a mix of strings and ints.
+  telemetryLogTokens: {
+    eventName: 'codex.sse_event',
+    eventKind: 'response.completed',
+    modelAttr: 'model',
+    inputInclusive: 'input_token_count',
+    outputInclusive: 'output_token_count',
+    cacheRead: 'cached_token_count',
+    cacheCreation: 'cache_write_token_count',
+    reasoning: 'reasoning_token_count',
+  },
   // HS-9605 — stated rather than left absent: codex reports tokens in detail and
   // cost NEVER (verified against 0.146.0 — zero `*.cost*` metrics exist). Absence
   // would read as "nobody checked".

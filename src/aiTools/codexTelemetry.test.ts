@@ -45,7 +45,17 @@ describe('codexOtelConfigFlag (HS-9603)', () => {
 
   it('points at this project\'s own server port', () => {
     writeSettings({ port: 4321 });
-    expect(codexOtelConfigFlag(dataDir)).toContain('endpoint="http://localhost:4321"');
+    expect(codexOtelConfigFlag(dataDir)).toContain('endpoint="http://localhost:4321/v1/logs"');
+  });
+
+  it('includes the /v1/logs path — codex uses this endpoint verbatim (HS-9621)', () => {
+    // codex-cli 0.147.0 POSTs to this URL literally (no `/v1/*` append). Without
+    // the path it hit `/` and Hot Sheet 404'd every batch, so no codex telemetry
+    // ever landed. `/v1/logs` because codex exports token usage only as OTLP logs.
+    writeSettings({ port: 4174 });
+    const flag = codexOtelConfigFlag(dataDir);
+    expect(flag).toContain('endpoint="http://localhost:4174/v1/logs"');
+    expect(flag).not.toContain('endpoint="http://localhost:4174"'); // the pre-fix broken form
   });
 
   it('uses protobuf, matching what Claude already exports and the receiver decodes', () => {

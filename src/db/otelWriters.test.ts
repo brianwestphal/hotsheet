@@ -516,6 +516,79 @@ describe('OTLP persistence writers (HS-8470 / §67.5)', () => {
       const raw = await readAllJsonl('events');
       expect('attributes' in (raw[0].body_json as Record<string, unknown>)).toBe(false);
     });
+
+    // HS-9621 — codex 0.147.0 reports token usage on a LOG event, not metrics,
+    // and sets the OTLP `event_name` field to its Rust tracing location while the
+    // real identity + counts ride as ATTRIBUTES on a `codex.sse_event` /
+    // `response.completed` record. This replicates a real two-response turn
+    // captured on the wire (mixed string/int values, `input` inclusive of cached)
+    // and asserts the disjoint counts land in the daily rollup AND the emitter is
+    // attributed to codex despite the mislabeled top-level event_name.
+    it('extracts codex log-event tokens into the daily rollup + attributes to codex (HS-9621)', async () => {
+      const codexRecord = (input: string, output: string, cached: number): Record<string, unknown> => ({
+        timeUnixNano: '1700000000000000000',
+        // codex puts the tracing LOCATION here, not the event name — the fix must
+        // not rely on this field for identity/attribution.
+        eventName: 'event otel/src/events/session_telemetry.rs:236',
+        attributes: [
+          { key: 'event.name', value: { stringValue: 'codex.sse_event' } },
+          { key: 'event.kind', value: { stringValue: 'response.completed' } },
+          { key: 'input_token_count', value: { stringValue: input } },
+          { key: 'output_token_count', value: { stringValue: output } },
+          { key: 'cached_token_count', value: { intValue: cached } },
+          { key: 'cache_write_token_count', value: { intValue: 0 } },
+          { key: 'reasoning_token_count', value: { intValue: 0 } },
+          { key: 'model', value: { stringValue: 'gpt-5.6-sol' } },
+        ],
+      });
+      const payload = {
+        resourceLogs: [{
+          resource: { attributes: [{ key: 'hotsheet_project', value: { stringValue: KNOWN_SECRET } }] },
+          scopeLogs: [{
+            scope: { name: 'codex_otel.log_only' },
+            // Two response.completed records = two model calls in one turn. Each
+            // carries its OWN totals (not cumulative), so the rollup sums them.
+            logRecords: [codexRecord('11438', '0', 0), codexRecord('14769', '5', 11008)],
+          }],
+        }],
+      };
+      const result = await persistLogsPayload(payload, isKnownProject);
+      expect(result.inserted).toBe(2);
+
+      const mainDb = await getDb();
+      const roll = await mainDb.query<{
+        model: string; input_tokens: string; output_tokens: string;
+        cache_read_tokens: string; cache_creation_tokens: string; reasoning_output_tokens: string;
+        cost_usd: string; datapoint_count: number;
+      }>(
+        `SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                reasoning_output_tokens, cost_usd, datapoint_count
+         FROM otel_rollup_daily WHERE project_secret = $1`,
+        [KNOWN_SECRET],
+      );
+      expect(roll.rows).toHaveLength(1);
+      const r = roll.rows[0];
+      expect(r.model).toBe('gpt-5.6-sol');
+      // input disjoint: (11438−0) + (14769−11008) = 11438 + 3761 = 15199
+      expect(Number(r.input_tokens)).toBe(15199);
+      expect(Number(r.output_tokens)).toBe(5);
+      expect(Number(r.cache_read_tokens)).toBe(11008);
+      expect(Number(r.cache_creation_tokens)).toBe(0);
+      expect(Number(r.reasoning_output_tokens)).toBe(0);
+      expect(Number(r.cost_usd)).toBe(0); // codex reports no cost
+      expect(r.datapoint_count).toBe(2);
+      // The four disjoint columns sum to the true total (input+output across both
+      // responses = 11438 + 14774 = 26212), not double-counting cached.
+      const total = Number(r.input_tokens) + Number(r.output_tokens)
+        + Number(r.cache_read_tokens) + Number(r.cache_creation_tokens);
+      expect(total).toBe(26212);
+
+      const seen = await mainDb.query<{ id: string }>(
+        `SELECT DISTINCT id FROM otel_daily_seen WHERE project_secret = $1 AND kind = 'emitter'`,
+        [KNOWN_SECRET],
+      );
+      expect(seen.rows.map(x => x.id)).toContain('codex');
+    });
   });
 
   describe('persistTracesPayload', () => {

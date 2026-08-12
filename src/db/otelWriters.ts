@@ -1,8 +1,10 @@
+import { extractLogTokens } from '../aiTools/logTokens.js';
 import { getProjectBySecret } from '../projects.js';
 import { centralTelemetryDataDir, getDbForDir, pinClustersForDirs, telemetryClusterDataDir } from './connection.js';
-import { emitterForSignalName } from './otelEmitter.js';
+import { emitterForSignalName, UNKNOWN_EMITTER } from './otelEmitter.js';
 import { appendOtelJsonl } from './otelJsonlStore.js';
 import {
+  addLogTokensToDailyRollup,
   attributeApiRequestToTicket,
   attributeUserPromptToTicket,
   dataPointValue,
@@ -555,10 +557,32 @@ export async function persistLogsPayload(
               console.debug('[otel] hourly-seen prompt update failed:', err);
             }
           }
+          // HS-9621 — codex 0.147.0 reports token usage on a LOG event
+          // (`codex.sse_event`/`response.completed`), not as metrics, so the
+          // metrics token-routing never sees it. Extract the disjoint counts from
+          // the record's attributes and roll them into the SAME daily rollup the
+          // metrics path feeds, so a codex project's tokens aggregate like Claude's.
+          const logTokens = extractLogTokens(attrs);
+          if (logTokens !== null) {
+            try {
+              await addLogTokensToDailyRollup(mainDb, resCtx.projectSecret, ts, logTokens.model, logTokens);
+            } catch (err) {
+              console.debug('[otel] log-token rollup update failed:', err);
+            }
+          }
           // HS-9602 — same attribution on the LOG side: a tool that emits only
           // events (no metrics) must still be nameable on the dashboard.
+          // HS-9621 — codex sets the OTLP `event_name` field to its Rust tracing
+          // location (e.g. `event otel/…/session_telemetry.rs:236`), so the
+          // top-level name never carries the `codex.` prefix; the real identity is
+          // the `event.name` ATTRIBUTE. Fall back to it so codex's events attribute
+          // to `codex` rather than `unknown`.
+          let emitter = emitterForSignalName(eventName);
+          if (emitter === UNKNOWN_EMITTER && typeof attrs['event.name'] === 'string') {
+            emitter = emitterForSignalName(attrs['event.name']);
+          }
           try {
-            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'emitter', emitterForSignalName(eventName));
+            await markDailySeen(mainDb, resCtx.projectSecret, ts, 'emitter', emitter);
           } catch (err) {
             console.debug('[otel] emitter record failed:', err);
           }
