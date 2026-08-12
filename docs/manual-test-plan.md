@@ -1038,6 +1038,7 @@ build, so suspends identified by `pmset` correlation):
 ### 19.6 Lever: sleep / wake *(disruptive — sleeps the Mac)*
 
 - [ ] `pmset sleepnow`, wait >= 60 s, wake.
+- [ ] **Gotcha (measured 2026-08-12):** bare `pmset sleepnow` may produce only a ~2 s software-sleep that a `wifibt` network wake bounces instantly — below the 10 s `WAKE_GAP_THRESHOLD_MS`, so nothing fires. Toggle **WiFi + Bluetooth off** first (or `sudo pmset -a womp 0 powernap 0 tcpkeepalive 0`, restore after) to remove the wake source, and use `sudo pmset relative wake 100 && pmset sleepnow` so it self-wakes via RTC after a real ~100 s suspend.
 - [ ] Confirm a **`server-wake`** entry, or a heartbeat entry whose `cpuMs` is ~0 for a multi-second gap. Before HS-9567 neither existed and the stagger never ran.
 - [ ] Confirm the post-wake stagger engaged (background work spaced out, not a burst).
 - [ ] **Failure signal: a burst of cluster opens/evictions in the first seconds after wake** — that is the HS-9553 post-sleep stampede, named as the 2026-08-01 trigger.
