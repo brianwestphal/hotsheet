@@ -27,7 +27,7 @@ import {
   peekPending,
   recordDecision,
 } from './channelPermissions.js';
-import { maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
+import { type ChannelInfo, maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
 import { installPortFileWatcher } from './channelPortFileWatcher.js';
 import {
   listAliveEntries,
@@ -36,6 +36,7 @@ import {
   unregisterSelf,
 } from './channelRegistry.js';
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
+import { isWarmPoolClient } from './channelWarmClient.js';
 import { readFileSettings } from './file-settings.js';
 import { HotsheetSettingsSchema } from './schemas.js';
 import { getProjectSecret } from './secret-file.js';
@@ -83,7 +84,13 @@ import { getProjectSecret } from './secret-file.js';
 //   leader preference, and "Disconnect all" cleanup.
 // v21 (HS-9618) — hook timeouts cancel their own queued permission via
 // POST /permission/cancel so stale cross-project popups cannot replay.
-export const CHANNEL_VERSION = 21;
+// v22 (HS-9629) — the channel server reads the MCP client identity at
+// `initialize` (`oninitialized` → `getClientVersion`) and, for a codex warm-pool
+// client (docs/129 model-B daemon), upgrades its registry entry to `warm: true`
+// so codex's structurally-warm connections are excluded from the multi-connection
+// warning count. A running v21 channel prompts the user to reconnect via `/mcp`
+// (or restart the codex session) so the marker takes effect on existing sessions.
+export const CHANNEL_VERSION = 22;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
@@ -179,6 +186,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
 // looking at and stranding the first request unanswerable from the UI.
 // The wire shape on `/permission` is unchanged (returns the head only),
 // so no client / main-server changes are needed.
+
+// HS-9629 — after the client's `initialize` handshake, learn WHO connected and,
+// if it's a codex warm-pool client (docs/129 model-B daemon), upgrade our
+// registry entry to `warm: true` so it stops counting as a duplicate MAIN
+// connection. `handleClientInitialized` (defined below, hoisted) reads
+// `mcp.getClientVersion()` and re-registers. Set before `connect` so no
+// `initialized` notification is missed.
+mcp.oninitialized = handleClientInitialized;
 
 // Connect to Claude Code over stdio
 await mcp.connect(new StdioServerTransport());
@@ -521,6 +536,56 @@ let myPort: number | null = null;
 // `cleanup()` so the timer doesn't keep the event loop alive after exit.
 let disposePortFileWatcher: (() => void) | null = null;
 
+// HS-9629 — our registered registry entry, retained so `handleClientInitialized`
+// can upgrade it to `warm` once the MCP client identifies itself. `null` until
+// the http server has bound + registered. `clientIsWarm` bridges the race
+// between `oninitialized` and the `listen` callback: whichever runs first sets
+// the flag / registers, the later one reconciles.
+let registeredInfo: ChannelInfo | null = null;
+let clientIsWarm = false;
+
+/** HS-9629 — register THIS entry, then claim the `channel-port` leader view iff
+ *  we're the picked leader (pure `pickLeader` excludes worktree/drive/warm). A
+ *  non-leader logs `startup-follower` and leaves the file to the leader's
+ *  watcher. Factored out of the `listen` callback so `handleClientInitialized`
+ *  can re-run it after flipping us to `warm` (which may relinquish leadership to
+ *  a non-warm sibling). */
+function registerAndMaybeLead(info: ChannelInfo): void {
+  try {
+    registerSelf(dataDir, info);
+  } catch (err) {
+    channelLog.log('registry-register-error', String(err));
+  }
+  try {
+    const alive = listAliveEntries(dataDir);
+    const leader = pickLeader(alive);
+    if (leader === null || leader.pid === process.pid) {
+      writeChannelInfo(portFile, info);
+    } else {
+      channelLog.log('startup-follower', `leader-pid=${String(leader.pid)} aliveCount=${String(alive.length)}`);
+    }
+  } catch {
+    // data dir may not exist yet
+  }
+}
+
+/** HS-9629 — MCP `oninitialized` hook. Logs which client connected and, when it's
+ *  a codex warm-pool client (docs/129 model-B), upgrades our registry entry to
+ *  `warm` so it's excluded from the multi-connection count. Handles the race with
+ *  the `listen` callback: if we've already registered, re-register warm; if not,
+ *  set `clientIsWarm` so the callback registers warm from the start. */
+function handleClientInitialized(): void {
+  const client = mcp.getClientVersion();
+  channelLog.log('client-init', `name=${client?.name ?? '?'} version=${client?.version ?? '?'}`);
+  if (!isWarmPoolClient(client?.name)) return;
+  clientIsWarm = true;
+  if (registeredInfo !== null && registeredInfo.warm !== true) {
+    registeredInfo = { ...registeredInfo, warm: true };
+    channelLog.log('warm-client', `client=${client?.name ?? '?'} — marking connection warm (excluded from multi-connection count)`);
+    registerAndMaybeLead(registeredInfo);
+  }
+}
+
 // HS-8454 (revised after 2026-05-19 incident) — earlier drafts of this ticket
 // added a startup-time collision lock: if `isExistingChannelAlive(dataDir)`
 // returned true, the new channel-server process would exit cleanly so its
@@ -569,30 +634,22 @@ httpServer.listen(0, '127.0.0.1', () => {
       // multi-connection warning + leader pick + cleanup treat these expected,
       // temporary connections like worker connections rather than duplicate mains.
       drive: process.env.HOTSHEET_DRIVE_SPAWNED === '1' ? true : null,
+      // HS-9629 — set `warm` if the MCP client already identified itself as a
+      // codex warm-pool client before this callback ran (the `initialize`
+      // handshake vs `listen`-bound race); otherwise `handleClientInitialized`
+      // upgrades the entry when the client connects. Excludes codex daemon
+      // warm-pool connections from the multi-connection warning count.
+      warm: clientIsWarm ? true : null,
     };
     // HS-8460 — register our per-pid entry in `<dataDir>/channel-ports.d/`
-    // FIRST so the leader-selection below sees us. Then determine the
-    // leader: if it's us, write `channel-port` with our identity; if
-    // it's an older sibling channel-server, leave `channel-port`
-    // alone (its watcher owns it). The HS-8455 watcher installed
-    // below will promote us automatically the moment the older
-    // leader exits.
-    try {
-      registerSelf(dataDir, myInfo);
-    } catch (err) {
-      channelLog.log('registry-register-error', String(err));
-    }
-    try {
-      const alive = listAliveEntries(dataDir);
-      const leader = pickLeader(alive);
-      if (leader === null || leader.pid === process.pid) {
-        writeChannelInfo(portFile, myInfo);
-      } else {
-        channelLog.log('startup-follower', `leader-pid=${String(leader.pid)} aliveCount=${String(alive.length)}`);
-      }
-    } catch {
-      // data dir may not exist yet
-    }
+    // FIRST so the leader-selection sees us. Then determine the leader: if it's
+    // us, write `channel-port` with our identity; if it's an older sibling
+    // channel-server, leave `channel-port` alone (its watcher owns it). The
+    // HS-8455 watcher installed below promotes us automatically the moment the
+    // older leader exits. HS-9629 — extracted to `registerAndMaybeLead` so the
+    // post-initialize warm upgrade can re-run the same register + lead logic.
+    registeredInfo = myInfo;
+    registerAndMaybeLead(myInfo);
     disposePortFileWatcher = installPortFileWatcher({
       portFile,
       dataDir,

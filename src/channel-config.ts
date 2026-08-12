@@ -255,7 +255,11 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
 // A running v18 channel prompts the user to reconnect via `/mcp`.
 // HS-9618 — bumped 20 → 21 for POST /permission/cancel. Existing channel
 // processes need `/mcp` reconnect so hook timeouts can clear their queue entry.
-const EXPECTED_CHANNEL_VERSION = 21;
+// HS-9629 — bumped 21 → 22 in lockstep with `CHANNEL_VERSION` (src/channel.ts)
+// for the codex warm-pool registry marker (set post-`initialize` from the MCP
+// client identity). A running v21 channel prompts the user to reconnect via
+// `/mcp` (or restart the codex session) so the marker applies to existing sessions.
+const EXPECTED_CHANNEL_VERSION = 22;
 
 /** HS-8454 — shape of the `/health` response body the channel server
  *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7

@@ -64,6 +64,7 @@ export function registerSelf(dataDir: string, info: ChannelInfo): void {
     startedAt: info.startedAt,
     worktree: info.worktree ?? null, // HS-9038 — worker (follower-worktree) connection marker
     drive: info.drive ?? null, // HS-9380 — drive-spawned (one-shot play run) connection marker
+    warm: info.warm ?? null, // HS-9629 — codex daemon warm-pool connection marker (set post-initialize)
   });
   writeFileSync(path, body, 'utf-8');
 }
@@ -95,6 +96,7 @@ export function readEntry(path: string): ChannelInfo | null {
       startedAt: typeof obj.startedAt === 'string' && obj.startedAt !== '' ? obj.startedAt : null,
       worktree: typeof obj.worktree === 'string' && obj.worktree !== '' ? obj.worktree : null, // HS-9038
       drive: obj.drive === true ? true : null, // HS-9380
+      warm: obj.warm === true ? true : null, // HS-9629
     };
   } catch { return null; }
 }
@@ -138,11 +140,14 @@ export function listAliveEntries(
 }
 
 /** Pure — the MAIN connections among `entries`: not a distributed worker's
- *  (`worktree` set, HS-9038) and not a drive-spawned one-shot run's (`drive`
- *  set, HS-9380). These are the only entries the multi-connection warning
- *  counts and the "Disconnect all" cleanup tears down. */
+ *  (`worktree` set, HS-9038), not a drive-spawned one-shot run's (`drive` set,
+ *  HS-9380), and not a codex daemon warm-pool connection (`warm` set, HS-9629 —
+ *  codex model-B keeps one connection warm per session for the daemon's
+ *  lifetime, which is expected, not a duplicate main). These are the only
+ *  entries the multi-connection warning counts, the leader is picked from, and
+ *  the "Disconnect all" cleanup tears down. */
 export function mainConnections(entries: ChannelInfo[]): ChannelInfo[] {
-  return entries.filter(e => e.worktree == null && e.drive !== true);
+  return entries.filter(e => e.worktree == null && e.drive !== true && e.warm !== true);
 }
 
 /** Pick the leader (oldest alive entry). Returns null when no entries
@@ -151,9 +156,10 @@ export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
   if (entries.length === 0) return null;
   // HS-9038 — prefer the oldest MAIN (non-worktree) connection so triggers / the
   // play button route to the main agent, never a distributed worker. HS-9380 —
-  // likewise never a drive-spawned one-shot run's connection. `entries` is
-  // sorted oldest-first; fall back to the oldest overall if (somehow) only worker
-  // / drive connections exist.
+  // likewise never a drive-spawned one-shot run's connection. HS-9629 — likewise
+  // never a codex daemon warm-pool connection. `entries` is sorted oldest-first;
+  // fall back to the oldest overall if (somehow) only worker / drive / warm
+  // connections exist.
   return mainConnections(entries)[0] ?? entries[0];
 }
 
@@ -180,7 +186,9 @@ export function pickLeader(entries: ChannelInfo[]): ChannelInfo | null {
  * (mirrors the "never kill a worker mid-ticket" principle). Drive-spawned
  * connections (`drive` set, HS-9380 — a one-shot `codex exec` / `agy --print` /
  * ACP play run's own MCP child) are exempt for the same reason: killing one
- * would yank the MCP server out from under an in-flight run. Only MAIN
+ * would yank the MCP server out from under an in-flight run. Codex daemon
+ * warm-pool connections (`warm` set, HS-9629) are exempt too — killing one
+ * fights model-B's warm pool and the standing "never kill codex" rule. Only MAIN
  * connections are torn down.
  *
  * `kill` + `isPidAlive` are injectable for tests. Best-effort: a kill that

@@ -385,3 +385,46 @@ invites. `codexAppServer.test.ts` asserts it.
 The sibling `codexAppServerEnabled` was deliberately NOT removed in the same pass: it is
 the only in-app path that clears handshake-failure flags, so deleting it would take a real
 recovery route with it. That question is HS-9513's remaining half.
+
+## 129.12 Warm-pool MCP connections don't count as duplicate mains (HS-9629)
+
+**Symptom (user-reported, 2026-08-12).** After closing + reopening Hot Sheet, a codex project
+showed the multi-connection banner — "N Codex sessions hold a Hot Sheet connection … Disconnect
+all to clear stale sessions" — and reopening never cleared it.
+
+**Cause — a direct consequence of model-B's warm daemon (§129.5).** The machine-global,
+persistent `codex app-server` daemon spawns one `hotsheet-channel` MCP server per codex session
+as its OWN child (codex's `~/.codex/config.toml` `[mcp_servers.hotsheet-channel]` → `npx tsx
+src/channel.ts`, cwd = the project). Each such channel-server registers a MAIN entry in
+`<project>/.hotsheet/channel-ports.d/` (`src/channelRegistry.ts`) and keeps an HTTP server alive,
+so it never self-exits, and the stdio-disconnect watcher (`src/channelStdioWatcher.ts`) never
+fires because the daemon keeps the MCP pipe open. The channel-servers are children of the daemon,
+**not** of Hot Sheet, so Hot Sheet's startup `cleanupStaleChannel` (which only unlinks port files
+for *dead* servers) leaves them alone across a restart. They are genuinely alive (not OS orphans,
+not stale registry entries), so no liveness-GC drops them, and the standing "never kill codex"
+rule forbids reaping them. Net: a project accrues one warm connection per codex session and the
+count reads as N duplicate mains. Verified from the live process tree (daemon pid parent = 1,
+four warm channel-servers ~3 h old) and `mcp.log` (one lived ~2 days as the FIFO leader).
+
+**Fix — a `warm` registry marker (maintainer decision: option B).** Same pattern as the
+`worktree` (HS-9038) and `drive` (HS-9380) markers: the channel-server learns WHO connected from
+the MCP `initialize` handshake and, for a codex client, marks its registry entry `warm: true`.
+`mainConnections` (`src/channelRegistry.ts`) excludes `warm` entries, so — via the shared filter —
+the warning count, the FIFO leader pick, and "Disconnect all" all skip them. The banner stops
+firing for codex's structurally-warm pool but still catches genuine duplicate INTERACTIVE mains
+(the multi-Claude misroute case it was built for).
+
+Detection is by the MCP `clientInfo.name` (`src/channelWarmClient.ts::isWarmPoolClient` — a
+case-insensitive `codex` substring), read via the SDK's `getClientVersion()` in the server's
+`oninitialized` hook (`src/channel.ts`). It's the protocol's own identity signal — robust across
+platforms, no process-tree walking. Because the client isn't known at process start (registration
+happens on port-bind, before `initialize`), the entry is registered first and *upgraded* to warm
+in `oninitialized`; `registerAndMaybeLead` re-runs register + leader-pick so a newly-warm
+connection also relinquishes the `channel-port` leader view to a non-warm sibling. Both orderings
+of the `oninitialized`-vs-`listen`-callback race are handled by the `clientIsWarm` flag. Every
+connection also logs a `client-init` line to `mcp.log`, so the exact codex client name is
+observable. `CHANNEL_VERSION` bumped 21 → 22 (lockstep with `EXPECTED_CHANNEL_VERSION`) so a
+running v21 channel prompts the user to reconnect and pick up the marker. Tests:
+`src/channelWarmClient.test.ts` (the matcher, both directions) + `src/channelRegistry.test.ts`
+(warm round-trip, `mainConnections` exclusion incl. the four-warm-connections regression,
+`pickLeader` preferring a main over an older warm connection).

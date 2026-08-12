@@ -38,6 +38,12 @@ describe('channelRegistry — registerSelf / unregisterSelf', () => {
     expect(all[0].drive).toBe(true);
   });
 
+  it('HS-9629 — round-trips a codex warm-pool connection\'s warm marker', () => {
+    registerSelf(dataDir, { port: 4174, pid: 999, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', warm: true });
+    const all = listAliveEntries(dataDir, () => true);
+    expect(all[0].warm).toBe(true);
+  });
+
   it('writes an entry file at <dataDir>/channel-ports.d/<pid>.json', () => {
     registerSelf(dataDir, { port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z' });
     const path = entryPath(dataDir, 12345);
@@ -46,7 +52,7 @@ describe('channelRegistry — registerSelf / unregisterSelf', () => {
     // Read it back via listAliveEntries with an always-alive probe.
     const all = listAliveEntries(dataDir, () => true);
     expect(all).toHaveLength(1);
-    expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', worktree: null, drive: null });
+    expect(all[0]).toEqual({ port: 4174, pid: 12345, slug: 'demo', startedAt: '2026-05-19T07:00:00.000Z', worktree: null, drive: null, warm: null });
     // HS-8713 — build the expected suffix with `join` so the separator is
     // the platform's (`\` on Windows); a hardcoded `/channel-ports.d/...`
     // never matched the backslash path on Windows.
@@ -162,6 +168,27 @@ describe('channelRegistry — mainConnections (the multi-connection warning coun
     ];
     expect(mainConnections(entries)).toHaveLength(1);
   });
+
+  it('HS-9629 — excludes codex daemon warm-pool (warm) connections, keeping true mains', () => {
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-08-12T07:00:00.000Z' },                    // Claude main
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-08-12T07:00:01.000Z', warm: true },        // codex warm-pool
+      { port: 300, pid: 3, slug: 'x', startedAt: '2026-08-12T07:00:02.000Z', warm: true },        // codex warm-pool
+      { port: 400, pid: 4, slug: 'x', startedAt: '2026-08-12T07:00:03.000Z', warm: null },        // explicit-null main
+    ];
+    expect(mainConnections(entries).map(e => e.pid)).toEqual([1, 4]);
+  });
+
+  it('HS-9629 regression — four warmed codex connections do NOT read as a multi-connection state', () => {
+    // The ticket screenshot: "4 Codex sessions hold a Hot Sheet connection". Each
+    // is a codex model-B daemon warm-pool connection — expected, not a duplicate
+    // main. With them marked `warm`, the count is 0 (no interactive main), so the
+    // banner does not fire.
+    const entries = [1, 2, 3, 4].map((pid, i) => ({
+      port: 100 * pid, pid, slug: 'x', startedAt: `2026-08-12T07:00:0${String(i)}.000Z`, warm: true,
+    }));
+    expect(mainConnections(entries)).toHaveLength(0);
+  });
 });
 
 describe('channelRegistry — pickLeader', () => {
@@ -207,6 +234,25 @@ describe('channelRegistry — pickLeader', () => {
     const entries = [
       { port: 100, pid: 1, slug: 'x', startedAt: '2026-05-19T07:00:00.000Z', drive: true },
       { port: 200, pid: 2, slug: 'x', startedAt: '2026-05-19T07:00:01.000Z', drive: true },
+    ];
+    expect(pickLeader(entries)?.pid).toBe(1);
+  });
+
+  it('HS-9629 — prefers the oldest MAIN even when an older codex warm-pool connection exists', () => {
+    // A codex daemon warm-pool connection is older than the user's interactive
+    // (Claude) main; the main must still lead so triggers never route to a warmed
+    // codex connection.
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-08-12T07:00:00.000Z', warm: true },
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-08-12T07:00:01.000Z' },
+    ];
+    expect(pickLeader(entries)?.pid).toBe(2); // the main, not the older warm connection
+  });
+
+  it('HS-9629 — falls back to the oldest overall when only warm connections exist', () => {
+    const entries = [
+      { port: 100, pid: 1, slug: 'x', startedAt: '2026-08-12T07:00:00.000Z', warm: true },
+      { port: 200, pid: 2, slug: 'x', startedAt: '2026-08-12T07:00:01.000Z', warm: true },
     ];
     expect(pickLeader(entries)?.pid).toBe(1);
   });

@@ -640,6 +640,7 @@ export default tseslint.config(
       // it by the conformance suite, so the two cannot drift:
       "src/api/aiInstructions.ts", // the wire enum: a literal `as const` tuple by design (§132.5)
       "src/devFeatures.ts",        // the docs/124 In-Development gate table
+      "src/channelWarmClient.ts",  // HS-9629 — the codex MCP `clientInfo.name` signature; the lean channel-server bundle can't reach the aiTools registry
       // NOTE: tests name tools constantly and are exempt too, but they get that from
       // their OWN block above (which spells out a subset that never included the
       // tool-id rule) — listing them here as well would hand them this block's array

@@ -32,6 +32,16 @@ export interface ChannelInfo {
    *  are EXPECTED, temporary connections — excluded from the multi-connection
    *  warning count, leader preference, and "Disconnect all" cleanup. */
   drive?: boolean | null;
+  /** HS-9629 — `true` when the connected MCP client is a "warm-pool" client whose
+   *  connection is held open structurally, not per interactive session. In
+   *  practice this is codex (model-B, docs/129): its machine-global codex
+   *  `app-server` daemon keeps one `hotsheet-channel` connection warm per session
+   *  for the daemon's lifetime — across Hot Sheet restarts. Detected from the MCP
+   *  `clientInfo.name` at `initialize` (see `channelWarmClient.ts`), NOT known at
+   *  process start, so the registry entry is upgraded to `warm` in the channel
+   *  server's `oninitialized` hook. Like `worktree`/`drive`, excluded from the
+   *  multi-connection warning count, leader preference, and "Disconnect all". */
+  warm?: boolean | null;
 }
 
 /** HS-8454 — parse the port file. Accepts BOTH the new JSON shape AND
