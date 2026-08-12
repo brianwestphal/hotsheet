@@ -57,7 +57,7 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(() => ({ unref: vi.fn(), on: vi.fn() })),
 }));
 
-const { dashboardRoutes, resolveGlassboxBinWith, buildGlassboxReviewArgs, resolveReviewWorktreeCwd } = await import('./dashboard.js');
+const { dashboardRoutes, resolveGlassboxBinWith, buildGlassboxReviewArgs, resolveReviewWorktreeCwd, _setGlassboxBinForTesting, _clearGlassboxBinForTesting } = await import('./dashboard.js');
 
 let tempDir: string;
 let app: Hono<AppEnv>;
@@ -274,25 +274,57 @@ describe('GET /glassbox/status', () => {
     expect(typeof data.available).toBe('boolean');
   });
 
-  it('reports available when `which` resolves the CLI (HS-8786)', async () => {
-    const { execFileSync } = await import('child_process');
-    vi.mocked(execFileSync).mockReturnValueOnce('/usr/local/bin/glassbox\n');
-    const res = await app.request('/api/glassbox/status');
-    const data = await res.json() as { available: boolean };
-    expect(data.available).toBe(true);
+  it('reports available when the resolver finds the CLI (HS-8786 / HS-9631)', async () => {
+    // Force a resolved bin so the route's `available` reflects resolution, not
+    // whether glassbox happens to be installed on the test host. (Pre-HS-9631 this
+    // mocked the sync `execFileSync` — dead since HS-9522 made resolution async —
+    // and only "passed" locally via the real-`existsSync` fallback finding an
+    // installed glassbox; in CI it reported false.)
+    _setGlassboxBinForTesting('/usr/local/bin/glassbox');
+    try {
+      const res = await app.request('/api/glassbox/status');
+      const data = await res.json() as { available: boolean };
+      expect(data.available).toBe(true);
+    } finally {
+      _clearGlassboxBinForTesting();
+    }
+  });
+
+  it('reports NOT available when the resolver finds nothing', async () => {
+    _setGlassboxBinForTesting(null);
+    try {
+      const res = await app.request('/api/glassbox/status');
+      expect((await res.json() as { available: boolean }).available).toBe(false);
+    } finally {
+      _clearGlassboxBinForTesting();
+    }
   });
 });
 
 describe('POST /glassbox/launch', () => {
   it('launches the resolved glassbox CLI when available', async () => {
-    const { execFileSync, spawn } = await import('child_process');
-    vi.mocked(execFileSync).mockReturnValueOnce('/usr/local/bin/glassbox\n'); // `which` resolves it
-    const res = await app.request('/api/glassbox/launch', { method: 'POST' });
-    expect(res.status).toBe(200);
-    const data = await res.json() as { ok: boolean };
-    expect(data.ok).toBe(true);
-    // Spawned the resolved ABSOLUTE path (HS-8786), not the bare name.
-    expect(vi.mocked(spawn).mock.calls[0][0]).toBe('/usr/local/bin/glassbox');
+    const { spawn } = await import('child_process');
+    _setGlassboxBinForTesting('/usr/local/bin/glassbox');
+    try {
+      const res = await app.request('/api/glassbox/launch', { method: 'POST' });
+      expect(res.status).toBe(200);
+      const data = await res.json() as { ok: boolean };
+      expect(data.ok).toBe(true);
+      // Spawned the resolved ABSOLUTE path (HS-8786), not the bare name.
+      expect(vi.mocked(spawn).mock.calls[0][0]).toBe('/usr/local/bin/glassbox');
+    } finally {
+      _clearGlassboxBinForTesting();
+    }
+  });
+
+  it('returns 404 when glassbox is not resolvable', async () => {
+    _setGlassboxBinForTesting(null);
+    try {
+      const res = await app.request('/api/glassbox/launch', { method: 'POST' });
+      expect(res.status).toBe(404);
+    } finally {
+      _clearGlassboxBinForTesting();
+    }
   });
   // The not-found → 404 path is covered deterministically by the
   // `resolveGlassboxBinWith` unit tests below (a route test would depend on

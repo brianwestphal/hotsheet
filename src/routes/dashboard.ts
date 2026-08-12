@@ -203,14 +203,32 @@ const glassboxBinProbe = createCachedProbe<string | null>(async (deps) => {
   return resolveGlassboxBinWith({ which, fileExists: existsSync, binDirs: extraSearchDirs() });
 });
 
+/** Test-only — a forced resolution result so the `/glassbox/status` + `/launch`
+ *  ROUTE behavior is deterministic regardless of whether glassbox is installed on
+ *  the host (HS-9631). Resolution itself is covered by the `resolveGlassboxBinWith`
+ *  + `cliProbe` unit tests; the route only needs to react to a resolved/absent bin.
+ *  `null` = no override (use the real probe). */
+let glassboxBinOverride: { value: string | null } | null = null;
+
 /** Resolve the `glassbox` CLI to an absolute path, or null when not installed. */
 async function resolveGlassboxBin(): Promise<string | null> {
+  if (glassboxBinOverride !== null) return glassboxBinOverride.value;
   return glassboxBinProbe.get();
 }
 
 /** Test-only — drop the probe cache between cases. */
 export function _resetGlassboxProbeForTesting(): void {
   glassboxBinProbe.reset();
+}
+
+/** Test-only — force `resolveGlassboxBin` to a fixed result (`_clear…` to undo).
+ *  Lets a route test simulate "glassbox installed / absent" without depending on
+ *  the host or wrestling the async `execFile` mock through `promisify` (HS-9631). */
+export function _setGlassboxBinForTesting(value: string | null): void {
+  glassboxBinOverride = { value };
+}
+export function _clearGlassboxBinForTesting(): void {
+  glassboxBinOverride = null;
 }
 
 dashboardRoutes.get('/glassbox/status', async (c) => {
