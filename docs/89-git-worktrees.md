@@ -92,10 +92,22 @@ entry chokepoints so everything downstream uses the owner: `src/cli.ts::main`
 (primary launch — a bad pointer is a fatal startup error) and
 `src/projects.ts::registerProject`/`registerExistingProject` (Open Folder /
 multi-project; the dedup-by-dataDir then maps the follower onto the owner's
-existing context). The `authoritativeDataDir` key is a reserved setting (not a
-project setting). Tests: `file-settings.test.ts` (resolver unit cases) +
-`worktreeFollower.e2e.test.ts` (spawns against a follower dir → owner DB gets the
-data, no follower DB; bad pointer fails fast).
+existing context). **HS-9644 added a third chokepoint: the channel MCP tool path
+(`src/channel.tools.ts::loadChannelSettings`).** A **Codex** worker reaches the
+`hotsheet_*` tools through its GLOBAL cwd-resolving MCP config (`src/codex.ts`),
+which — unlike Claude's per-worktree `.mcp.json` (which bakes `--data-dir
+<owner>`, `src/channel-config.ts`) — carries NO `--data-dir`, so the channel
+server defaults `dataDir` to the worktree's follower `.hotsheet` (port-less).
+Before the fix `loadChannelSettings` read that dir directly, `safeParse` failed
+on the missing `port`, and every tool (incl. `hotsheet_claim_next`) returned
+"could not resolve the project port + secret" — so dispatched Codex workers
+launched and ran but never claimed a ticket. Now it resolves the pointer first
+(no-op for a main/owner dir; `deriveChannelActor()` still reads `process.cwd()`
+so the claim is attributed to the worktree id). The `authoritativeDataDir` key is
+a reserved setting (not a project setting). Tests: `file-settings.test.ts`
+(resolver unit cases), `channel.tools.test.ts` (follower → owner port+secret;
+bad-pointer → null, HS-9644) + `worktreeFollower.e2e.test.ts` (spawns against a
+follower dir → owner DB gets the data, no follower DB; bad pointer fails fast).
 
 ### Phase B — Worktree management (create / list / remove)
 **Server core ✅ SHIPPED (HS-8935).** `src/worktrees.ts` —

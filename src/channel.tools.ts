@@ -22,7 +22,7 @@ import { readFileSync } from 'fs';
 import { basename, join } from 'path';
 import { z } from 'zod';
 
-import { readFileSettings } from './file-settings.js';
+import { readFileSettings, resolveAuthoritativeDataDir } from './file-settings.js';
 import {
   TicketPrioritySchema,
   TicketStatusSchema,
@@ -93,10 +93,24 @@ const ChannelSettingsSchema = z.object({
  */
 export function loadChannelSettings(dataDir: string): ChannelSettings | null {
   try {
-    const resolved = readFileSettings(dataDir);
+    // HS-9644 — follow the docs/89 follower pointer to the owner's `.hotsheet`
+    // BEFORE reading port + secret. A Codex worker reaches the `hotsheet_*` tools
+    // through its GLOBAL cwd-resolving MCP config (`src/codex.ts`), which carries
+    // NO `--data-dir`, so `dataDir` defaults to the worktree's follower
+    // `.hotsheet` — which holds only `{authoritativeDataDir}` and no `port`.
+    // Without this hop `safeParse` fails on the missing port and EVERY tool
+    // (incl. `hotsheet_claim_next`) returns "could not resolve the project port +
+    // secret", so dispatched workers launch, run, but never claim a ticket.
+    // Claude workers avoided it only because their `.mcp.json` bakes
+    // `--data-dir <owner>` (`src/channel-config.ts`). No-op for a main/owner dir
+    // (no pointer → returns the dir unchanged). `deriveChannelActor()` keeps
+    // reading `process.cwd()` so the worker's claim is still attributed to its
+    // worktree id, not the owner's.
+    const authoritative = resolveAuthoritativeDataDir(dataDir);
+    const resolved = readFileSettings(authoritative);
     const result = ChannelSettingsSchema.safeParse(resolved);
     if (!result.success) return null;
-    const secret = getProjectSecret(dataDir);
+    const secret = getProjectSecret(authoritative);
     if (secret === '') return null;
     return { port: result.data.port, secret, actor: deriveChannelActor() };
   } catch {

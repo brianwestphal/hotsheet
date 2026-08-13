@@ -192,6 +192,42 @@ describe('loadChannelSettings (HS-8346)', () => {
     writeFileSync(join(tmpDataDir, 'secret.json'), JSON.stringify({ secret: 'sidecar-secret' }), 'utf-8');
     expect(loadChannelSettings(tmpDataDir)).toBeNull();
   });
+
+  // HS-9644 — a git-worktree FOLLOWER `.hotsheet` (docs/89) carries only
+  // `{authoritativeDataDir}` pointing at the owner and deliberately NO `port` of
+  // its own. A Codex worker reaches the `hotsheet_*` tools through its GLOBAL
+  // cwd-resolving MCP config (no `--data-dir`), so `loadChannelSettings` is handed
+  // the follower dir. It MUST follow the pointer to the owner's port + secret.
+  // Before the fix it returned null on the missing port, so EVERY tool — incl.
+  // `hotsheet_claim_next` — failed and dispatched workers launched but never
+  // claimed a ticket. (Claude workers dodged it because `.mcp.json` bakes
+  // `--data-dir <owner>`, which Codex ignores.)
+  it('follows a worktree follower authoritativeDataDir pointer to the owner port + secret (HS-9644)', () => {
+    const owner = mkdtempSync(join(tmpdir(), 'hotsheet-owner-'));
+    const follower = mkdtempSync(join(tmpdir(), 'hotsheet-follower-'));
+    try {
+      writeFileSync(join(owner, 'settings.json'), JSON.stringify({ port: 4321, secret: 'owner-secret-777' }), 'utf-8');
+      writeFileSync(join(follower, 'settings.json'), JSON.stringify({ authoritativeDataDir: owner }), 'utf-8');
+      expect(loadChannelSettings(follower)).toEqual({ port: 4321, secret: 'owner-secret-777' });
+    } finally {
+      rmSync(owner, { recursive: true, force: true });
+      rmSync(follower, { recursive: true, force: true });
+    }
+  });
+
+  // HS-9644 — a misconfigured follower (pointer at a non-existent owner) must
+  // fail closed to null (surfaced as "could not resolve port + secret"), NOT
+  // throw or silently read the port-less follower dir. `resolveAuthoritativeDataDir`
+  // throws on a missing target; `loadChannelSettings` catches it.
+  it('returns null for a follower whose authoritativeDataDir target does not exist (HS-9644)', () => {
+    const follower = mkdtempSync(join(tmpdir(), 'hotsheet-follower-bad-'));
+    try {
+      writeFileSync(join(follower, 'settings.json'), JSON.stringify({ authoritativeDataDir: join(tmpdir(), 'does-not-exist-hs9644') }), 'utf-8');
+      expect(loadChannelSettings(follower)).toBeNull();
+    } finally {
+      rmSync(follower, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
