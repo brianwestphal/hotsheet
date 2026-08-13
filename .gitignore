@@ -18,6 +18,10 @@ test-results/
 # alongside the per-scenario PNG + SVG in `docs/` for local debugging only.
 *.har
 
+# Python bytecode cache from the e2e fixtures (e.g. terminal-draw.py)
+__pycache__/
+*.pyc
+
 # Tauri / Rust
 src-tauri/target/
 src-tauri/binaries/
