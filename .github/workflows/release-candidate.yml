@@ -287,8 +287,14 @@ jobs:
       # rejects empty auth, and npm helpfully reports the rejection as a
       # 404 to obscure package existence. Upgrading to npm 11+ here makes
       # the OIDC handshake actually happen. See HS-8464 follow-up.
-      - name: Upgrade npm for OIDC trusted publishing (>=11.5.1)
-        run: npm install -g npm@latest
+      #
+      # HS-9649 — pin to the 11.x line, NOT `npm@latest`. npm@12 (released 2026-08)
+      # dropped Node 20 support (requires node ^22.22 || ^24.15 || >=26), so
+      # `npm install -g npm@latest` on this Node 20 runner fails with EBADENGINE
+      # and the whole publish job dies before it can publish. 11.x still has the
+      # OIDC trusted-publishing handshake (landed 11.5.1) and supports Node 20.
+      - name: Upgrade npm for OIDC trusted publishing (>=11.5.1, <12 for Node 20)
+        run: npm install -g 'npm@^11.5.1'
 
       - name: Set version and publish beta
         run: |
@@ -642,9 +648,11 @@ jobs:
       - run: npm ci
 
       # See `publish` job for why this matters — npm 10.x can't do OIDC
-      # trusted publishing for the PUT itself.
-      - name: Upgrade npm for OIDC trusted publishing (>=11.5.1)
-        run: npm install -g npm@latest
+      # trusted publishing for the PUT itself. HS-9649 — pin to 11.x (not
+      # `npm@latest`): npm@12 dropped Node 20 support, which EBADENGINE-fails the
+      # global install on this Node 20 runner.
+      - name: Upgrade npm for OIDC trusted publishing (>=11.5.1, <12 for Node 20)
+        run: npm install -g 'npm@^11.5.1'
 
       - name: Publish clean release version to npm
         run: |
