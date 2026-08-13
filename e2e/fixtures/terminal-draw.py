@@ -26,11 +26,21 @@ def get_size() -> tuple[int, int]:
 
 
 def redraw(*_args: object) -> None:
+    # `redraw` is BOTH the SIGWINCH handler and the initial draw, so a resize
+    # that arrives mid-draw re-enters this function. `sys.stdout` is a buffered
+    # writer whose write/flush raise `RuntimeError: reentrant call inside
+    # <_io.BufferedWriter>` when re-entered from a signal handler — which crashed
+    # the fixture intermittently and made the terminal show a Python traceback
+    # instead of the markers the tests assert on. Emit the whole frame with a
+    # single raw `os.write()` syscall: it bypasses the buffered writer (no
+    # reentrancy guard to trip) and auto-retries on EINTR (PEP 475).
     rows, cols = get_size()
-    sys.stdout.write('\033[2J\033[H')
-    sys.stdout.write(f'\033[1;1H\033[7m TOP-STATUS-BAR (rows={rows} cols={cols}) \033[m')
-    sys.stdout.write(f'\033[{rows};1H\033[7m BOTTOM-KEYBAR \033[m')
-    sys.stdout.flush()
+    frame = (
+        '\033[2J\033[H'
+        f'\033[1;1H\033[7m TOP-STATUS-BAR (rows={rows} cols={cols}) \033[m'
+        f'\033[{rows};1H\033[7m BOTTOM-KEYBAR \033[m'
+    )
+    os.write(sys.stdout.fileno(), frame.encode())
 
 
 def main() -> None:
