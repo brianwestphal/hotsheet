@@ -61,6 +61,18 @@ test.describe('Cross-project ticket drag (HS-8740 / HS-8663)', () => {
     const res = await request.post('/api/projects/register', { data: { dataDir } });
     expect(res.ok(), 'second project should register').toBeTruthy();
     projB = await res.json() as RegisteredProject;
+
+    // `layout` is a per-project (per-DB) setting. `e2e/coverage-fixture.ts`
+    // PATCHes `layout: 'list'` for the MAIN project only, but this fresh second
+    // project never gets that patch, so it renders in HS-8490's new-install
+    // COLUMN-view default — where a ticket title is a `<span>`, not the
+    // `.ticket-title-input[value=…]` <input> these specs' selectors expect.
+    // Pin B to list view too (mirroring the fixture) so a ticket landed in B is
+    // found by the same list-view selectors regardless of drag mode.
+    await request.patch('/api/settings', {
+      headers: { 'Content-Type': 'application/json', 'X-Hotsheet-Secret': projB.secret },
+      data: { layout: 'list', view: 'all' },
+    });
   });
 
   test.afterEach(async ({ request }) => {
