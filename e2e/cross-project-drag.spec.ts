@@ -154,11 +154,17 @@ test.describe('Cross-project ticket drag (HS-8740 / HS-8663)', () => {
     await dragTicketOntoTab(page, 'WithFile', b.secret, false);
     await expect(page.locator('.hs-toast')).toContainText('Copied 1 ticket', { timeout: 5000 });
 
-    // In project B the copied ticket carries the attachment. B is a fresh
-    // project, so wait for its list to settle to exactly the one copied row
-    // before opening it — otherwise the stale project-A rows are momentarily
-    // still mounted and a click races onto a ticket id that doesn't exist in B.
-    await page.locator(`.project-tab[data-secret="${b.secret}"]`).click();
+    // In project B the copied ticket carries the attachment. Reach B via a fresh
+    // navigation (`?project=` selects the active project on load — see
+    // `initProjectTabs`) rather than a client-side tab click. HS-9643: the
+    // attachment drop above leaves the project-A ticket selected with an async
+    // continuation that reloads its detail; a client-side switch to B races that,
+    // firing GET /tickets/<A-id>?project=<B> → 404 (a docs/125 stale-detail-on-
+    // switch race, tracked for a product fix in HS-9648). The cross-project copy's
+    // tab-click path is already covered by the sibling "copy" test; here a reload
+    // isolates the attachment-carry assertion from that unrelated race. B is a
+    // fresh project, so wait for its list to settle to exactly the one copied row.
+    await page.goto(`/?project=${b.secret}`);
     await expect(page.locator('.ticket-row[data-id]')).toHaveCount(1, { timeout: 5000 });
     await page.locator('.ticket-row[data-id]').filter({ has: page.locator('.ticket-title-input[value="WithFile"]') }).locator('.ticket-number').click();
     await expect(page.locator('#detail-attachments .attachment-item').filter({ hasText: 'carried.txt' })).toBeVisible({ timeout: 5000 });
