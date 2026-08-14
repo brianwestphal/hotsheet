@@ -89,6 +89,9 @@ export interface AttachOptions {
  *  (attach.ts adopts subscribers + adjusts cols/rows; lifecycle.ts
  *  spawns / kills the pty; state.ts reads bell / cwd / pid). */
 export interface SessionState {
+  /** The owning project secret. HS-9662 — needed to form the broker sessionId
+   *  (`secret::terminalId`); previously the registry never stored it. */
+  secret: string;
   pty: PtyLike | null;
   ptyDisposables: { dispose(): void }[];
   startedAt: number | null;

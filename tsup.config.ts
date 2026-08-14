@@ -87,6 +87,25 @@ export default defineConfig([
       js: "import { createRequire as __hsCreateRequire } from 'module';\nconst require = __hsCreateRequire(import.meta.url);",
     },
   },
+  // HS-9662 — detached PTY-broker process bundle (docs/136). Its own entry, like
+  // channel.js, so it can be spawned standalone by the node server. node-pty (+ its
+  // ws/@xterm travelers) stays EXTERNAL for the same native-addon reason as the cli
+  // bundle; the `require` banner covers any bundled CJS edge. Output: dist/ptyBrokerEntry.js
+  // (brokerMode.ts resolves it next to dist/cli.js in packaged installs; dev runs the .ts via tsx).
+  {
+    entry: ['src/terminals/broker/ptyBrokerEntry.ts'],
+    format: 'esm',
+    outDir: 'dist',
+    target: 'node20',
+    platform: 'node',
+    splitting: false,
+    clean: false,
+    sourcemap: false,
+    noExternal: [/^(?!node-pty|ws($|\/)|@xterm)/],
+    banner: {
+      js: "import { createRequire as __hsCreateRequire } from 'module';\nconst require = __hsCreateRequire(import.meta.url);",
+    },
+  },
   // Client bundle (browser JS + SCSS)
   {
     entry: ['src/client/app.tsx'],

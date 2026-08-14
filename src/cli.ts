@@ -270,6 +270,18 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
  */
 async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
   if (demo === null) {
+    // HS-9662 / docs/136 — connect the detached PTY broker (spawning it if absent)
+    // BEFORE any eager terminal spawn, so surviving sessions from a prior server
+    // death are re-adopted (with their scrollback) rather than re-spawned. Gated;
+    // no-op unless HOTSHEET_PTY_BROKER=1. Best-effort — a broker failure must never
+    // block startup (terminals just won't survive the next death).
+    {
+      const { isBrokerMode, initBrokerMode } = await import('./terminals/registry.js');
+      if (isBrokerMode()) {
+        startupMark('post-startup: connecting PTY broker');
+        try { await initBrokerMode(); } catch (e) { console.error('[pty-broker] init failed:', e instanceof Error ? e.message : String(e)); }
+      }
+    }
     startupMark('post-startup: init backup scheduler');
     initBackupScheduler(dataDir);
     startupMark('post-startup: init snapshot scheduler');
@@ -278,6 +290,20 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     addToProjectList(dataDir);
     startupMark('post-startup: restoring previous projects');
     await restorePreviousProjects(dataDir, actualPort);
+    // HS-9662 — sweep up any survived broker sessions no eager-spawn adopted (e.g.
+    // lazy terminals), now that the secret→dataDir map is complete, so their tabs
+    // come back too.
+    {
+      const { isBrokerMode, readoptBrokerSessions } = await import('./terminals/registry.js');
+      if (isBrokerMode()) {
+        try {
+          const { getAllProjects } = await import('./projects.js');
+          const map = new Map(getAllProjects().map((p) => [p.secret, p.dataDir]));
+          const n = readoptBrokerSessions((s: string) => map.get(s) ?? null);
+          startupMark(`post-startup: re-adopted ${String(n)} surviving terminal(s)`);
+        } catch (e) { console.error('[pty-broker] re-adopt sweep failed:', e instanceof Error ? e.message : String(e)); }
+      }
+    }
     // HS-8874 — one-time, non-destructive per-project telemetry migration. Runs
     // AFTER projects are registered (so the secret→dataDir map is complete) but
     // before serving heavy traffic. Best-effort + self-guarded by the

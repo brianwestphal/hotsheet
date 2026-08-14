@@ -111,6 +111,11 @@ export class PtyBroker {
     return [...this.sessions.entries()].map(([sessionId, s]) => this.infoFor(sessionId, s));
   }
 
+  /** Test-only: the live PTY for a session, so a test can drive a fake pty. */
+  ptyForTest(sessionId: string): PtyLike | null {
+    return this.sessions.get(sessionId)?.pty ?? null;
+  }
+
   /** Close the server + kill everything (test teardown / explicit shutdown). */
   shutdown(): void {
     this.killAll();

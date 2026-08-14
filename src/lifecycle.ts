@@ -230,7 +230,7 @@ async function runShutdownPipeline(reason: ShutdownReason): Promise<void> {
   // hung cleanup can't wedge the whole quit (see `gracefulShutdown` above).
   await runStep('closeHttpServer', closeHttpServer);
   await runStep('killShellCommands', killShellCommands);
-  await runStep('destroyTerminals', destroyTerminals);
+  await runStep('destroyTerminals', () => destroyTerminals(reason));
   await runStep('disposeGitWatchers', disposeGitWatchers);
   await runStep('terminateHashWorker', terminateHashWorkerStep);
   await runStep('stopClusterEvictionTimer', stopClusterEvictionTimerStep);
@@ -405,11 +405,19 @@ async function releaseLongLivedConnections(): Promise<void> {
   } catch { /* not wired (test env) — nothing to wake */ }
 }
 
-async function destroyTerminals(): Promise<void> {
+async function destroyTerminals(reason: ShutdownReason): Promise<void> {
   try {
     // Lazy-import so unit tests can run this module without pulling the PTY
     // registry (which depends on `node-pty`, an optional native binding).
-    const { destroyAllTerminals } = await import('./terminals/registry.js');
+    const { destroyAllTerminals, isBrokerMode, brokerShutdownForQuit } = await import('./terminals/registry.js');
+    // HS-9662 — in broker mode ONLY an explicit quit (SIGTERM/SIGINT) kills the
+    // detached broker's PTYs. A `--replace` relaunch (`/api/shutdown` → reason
+    // `'http'`) or any other reason leaves them alive so the fresh server
+    // re-adopts them — the survival guarantee. `destroyAllTerminals` itself only
+    // disconnects + clears local state in broker mode (never kills).
+    if (isBrokerMode() && (reason === 'SIGTERM' || reason === 'SIGINT')) {
+      brokerShutdownForQuit();
+    }
     destroyAllTerminals();
   } catch (err) {
     // Registry may already be torn down or absent (test environment).

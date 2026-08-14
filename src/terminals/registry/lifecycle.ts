@@ -12,6 +12,17 @@ import { killProcessTreeBestEffort } from '../processInspect.js';
 import { resolveTerminalCommand } from '../resolveCommand.js';
 import { RingBuffer } from '../ringBuffer.js';
 import { setupShellHistoryForSpawn } from '../shellHistory.js';
+import {
+  brokerAdopt,
+  brokerDisconnect,
+  brokerRemove,
+  brokerRemovePrefix,
+  brokerSpawn,
+  isBrokerMode,
+  remainingSurvivedSessions,
+  takeHistory,
+  takeSurvivedSession,
+} from './brokerMode.js';
 import { buildOtelEnv } from './otelEnv.js';
 import {
   DEFAULT_COLS,
@@ -40,7 +51,7 @@ export function setPtyFactory(factory: PtyFactory): PtyFactory {
 }
 
 export function createSession(
-  _secret: string,
+  secret: string,
   dataDir: string,
   terminalId: string,
   configOverride: TerminalConfig | null,
@@ -48,6 +59,7 @@ export function createSession(
   rows?: number,
 ): SessionState {
   return {
+    secret,
     pty: null,
     ptyDisposables: [],
     startedAt: null,
@@ -119,15 +131,14 @@ function doSpawnIntoSession(session: SessionState, dataDir: string): void {
     command: resolved.command,
   });
   const finalCommand = shellInit.rewrittenCommand ?? resolved.command;
-  const pty = activeFactory({
+  const spawnArgs: SpawnArgs = {
     command: finalCommand,
     cwd: resolved.cwd,
     cols: session.cols,
     rows: session.rows,
     env: buildEnv(shellInit.env, dataDir),
-  });
+  };
 
-  session.pty = pty;
   session.startedAt = Date.now();
   session.command = finalCommand;
   session.exitCode = null;
@@ -139,6 +150,28 @@ function doSpawnIntoSession(session: SessionState, dataDir: string): void {
   // OSC 7 on the first prompt.
   session.currentCwd = null;
 
+  // HS-9662 — in broker mode the PTY lives in the detached broker (so it survives
+  // an accidental server death). The returned `BrokerBackedPty` proxies I/O; the
+  // handler wiring below is identical either way.
+  const pty = isBrokerMode()
+    ? brokerSpawn(
+        sessionKey(session.secret, session.terminalId),
+        spawnArgs,
+        session.configOverride !== null ? { config: session.configOverride } : undefined,
+      )
+    : activeFactory(spawnArgs);
+
+  wireSessionToPty(session, pty);
+}
+
+/**
+ * HS-9662 — wire a session's scrollback / OSC-scan / bell / spinner / subscriber
+ * broadcast onto a (freshly spawned OR re-adopted) PTY. Extracted from
+ * `doSpawnIntoSession` so the broker re-adoption path reuses the exact same
+ * handling. Sets `session.pty` + `session.ptyDisposables`.
+ */
+function wireSessionToPty(session: SessionState, pty: PtyLike): void {
+  session.pty = pty;
   const dData = pty.onData((str) => {
     const chunk = Buffer.from(str, 'utf8');
     session.scrollback.push(chunk);
@@ -177,21 +210,82 @@ function doSpawnIntoSession(session: SessionState, dataDir: string): void {
   session.ptyDisposables = [dData, dExit];
 }
 
+/**
+ * HS-9662 — adopt a single broker session that survived a prior server death, if
+ * one exists for `(secret, terminalId)` and no local session does yet. Rebuilds
+ * the `SessionState`, seeds its scrollback from the broker's replayed history, and
+ * attaches a proxy pty. Returns true if it adopted. Shared by the eager-spawn path
+ * (`ensureSpawned`) and the post-restore sweep (`readoptBrokerSessions`).
+ */
+export function adoptSurvivedSession(secret: string, dataDir: string, terminalId: string): boolean {
+  if (!isBrokerMode()) return false;
+  const key = sessionKey(secret, terminalId);
+  if (sessions.has(key)) return false;
+  const info = takeSurvivedSession(key);
+  if (info === null) return false;
+  const session = createSession(secret, dataDir, terminalId, extractConfig(info.meta), info.cols, info.rows);
+  session.command = info.command;
+  session.startedAt = info.startedAt;
+  session.exitCode = info.alive ? null : info.exitCode;
+  // Seed scrollback from the broker's replayed history (before wiring live data).
+  const history = takeHistory(key);
+  if (history !== null && history.length > 0) session.scrollback.push(history);
+  const pty = brokerAdopt(key, info);
+  wireSessionToPty(session, pty);
+  if (!info.alive) { session.pty = null; }
+  sessions.set(key, session);
+  return true;
+}
+
+/**
+ * HS-9662 / docs/136 phase 2 — sweep the remaining survived broker sessions after
+ * projects are restored (the ones no eager-spawn adopted, e.g. lazy terminals), so
+ * their tabs come back too. `dataDirForSecret` maps a project secret → its dataDir;
+ * sessions whose project isn't registered this run are left in the broker.
+ */
+export function readoptBrokerSessions(dataDirForSecret: (secret: string) => string | null): number {
+  if (!isBrokerMode()) return 0;
+  let adopted = 0;
+  for (const info of remainingSurvivedSessions()) {
+    const sep = info.sessionId.indexOf('::');
+    if (sep === -1) continue;
+    const secret = info.sessionId.slice(0, sep);
+    const terminalId = info.sessionId.slice(sep + 2);
+    const dataDir = dataDirForSecret(secret);
+    if (dataDir === null) continue;
+    if (adoptSurvivedSession(secret, dataDir, terminalId)) adopted++;
+  }
+  return adopted;
+}
+
+function extractConfig(meta: Record<string, unknown> | undefined): TerminalConfig | null {
+  if (meta === undefined) return null;
+  const cfg = (meta as { config?: unknown }).config;
+  if (cfg === null || cfg === undefined || typeof cfg !== 'object') return null;
+  return cfg as TerminalConfig;
+}
+
 export function teardownPty(session: SessionState): void {
   for (const d of session.ptyDisposables) {
     try { d.dispose(); } catch { /* ignore */ }
   }
   session.ptyDisposables = [];
   if (session.pty) {
-    // HS-8140 — SIGTERM every descendant before SIGHUP-ing the shell.
-    // node-pty's `kill('SIGHUP')` reaches only the immediate shell process;
-    // grandchildren (a backgrounded `&` job, a `claude` instance running
-    // inside zsh, anything that traps SIGHUP) survive the shell's exit.
-    // Walking the process tree once via `ps -o pid,ppid,comm -A` and
-    // signalling each descendant catches those before the shell goes away.
-    const rootPid = session.pty.pid;
-    if (rootPid > 0) {
-      killProcessTreeBestEffort(rootPid, 'SIGTERM');
+    // HS-9662 — in broker mode the PTY (and its whole process tree) lives in the
+    // broker; `pty.kill` routes there, which does the tree-kill. Doing a LOCAL
+    // `killProcessTreeBestEffort` would be wrong (the tree isn't in this process's
+    // children) so it's skipped.
+    if (!isBrokerMode()) {
+      // HS-8140 — SIGTERM every descendant before SIGHUP-ing the shell.
+      // node-pty's `kill('SIGHUP')` reaches only the immediate shell process;
+      // grandchildren (a backgrounded `&` job, a `claude` instance running
+      // inside zsh, anything that traps SIGHUP) survive the shell's exit.
+      // Walking the process tree once via `ps -o pid,ppid,comm -A` and
+      // signalling each descendant catches those before the shell goes away.
+      const rootPid = session.pty.pid;
+      if (rootPid > 0) {
+        killProcessTreeBestEffort(rootPid, 'SIGTERM');
+      }
     }
     // HS-7528: SIGHUP rather than SIGTERM — interactive shells ignore
     // SIGTERM but exit cleanly on hang-up.
@@ -219,6 +313,10 @@ export function ensureSpawned(
   const key = sessionKey(secret, terminalId);
   let session = sessions.get(key);
   if (!session) {
+    // HS-9662 — if this terminal survived a prior server death in the broker,
+    // re-adopt it (keeping the running process + scrollback) instead of spawning
+    // a fresh one.
+    if (adoptSurvivedSession(secret, dataDir, terminalId)) return;
     session = createSession(secret, dataDir, terminalId, configOverride);
     sessions.set(key, session);
     spawnIntoSession(session, dataDir);
@@ -288,6 +386,8 @@ export function destroyTerminal(
   teardownPty(session);
   session.subscribers.clear();
   sessions.delete(key);
+  // HS-9662 — explicit close: drop the broker's session record too.
+  if (isBrokerMode()) brokerRemove(key);
 }
 
 /** Destroy every terminal for a project (e.g. on project unregister, when its
@@ -307,6 +407,8 @@ export function destroyProjectTerminals(secret: string): void {
     }
     sessions.delete(key);
   }
+  // HS-9662 — explicit project-tab close: drop the broker's records for it too.
+  if (isBrokerMode()) brokerRemovePrefix(prefix);
 }
 
 /** List ids of terminals the registry currently knows about for a project. */
@@ -319,8 +421,30 @@ export function listProjectTerminalIds(secret: string): string[] {
   return out;
 }
 
-/** Kill every live PTY. For server SIGTERM/SIGINT. */
+/**
+ * Tear down the LOCAL session registry on server shutdown.
+ *
+ * HS-9662 — in broker mode this is the survival path: it must NOT kill the PTYs
+ * (they live in the detached broker and outlive this process). It only disposes
+ * local handlers, disconnects from the broker, and clears the local map — the
+ * broker keeps the sessions alive for the next server to re-adopt. An EXPLICIT
+ * quit (SIGTERM/SIGINT) separately calls `brokerShutdownForQuit()` from the
+ * graceful pipeline (`src/lifecycle.ts`) to actually kill them. In non-broker mode
+ * this kills every live PTY as before.
+ */
 export function destroyAllTerminals(): void {
+  if (isBrokerMode()) {
+    for (const key of [...sessions.keys()]) {
+      const session = sessions.get(key);
+      if (session) {
+        for (const d of session.ptyDisposables) { try { d.dispose(); } catch { /* ignore */ } }
+        session.subscribers.clear();
+      }
+      sessions.delete(key);
+    }
+    brokerDisconnect();
+    return;
+  }
   for (const key of [...sessions.keys()]) {
     const session = sessions.get(key);
     if (!session) continue;

@@ -18,6 +18,7 @@
  */
 
 export { attach, detach, resizeTerminal, writeInput } from './registry/attach.js';
+export { brokerShutdownForQuit, initBrokerMode, isBrokerMode } from './registry/brokerMode.js';
 export {
   destroyAllTerminals,
   destroyProjectTerminals,
@@ -25,6 +26,7 @@ export {
   ensureSpawned,
   killTerminal,
   listProjectTerminalIds,
+  readoptBrokerSessions,
   restartTerminal,
   scrubParentEnv,
   setPtyFactory,
