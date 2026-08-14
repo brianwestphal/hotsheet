@@ -784,18 +784,30 @@ function buildTicketsQuery(isListLayout: boolean): string {
  * everything (the query endpoint doesn't paginate), so the Load More button
  * stays hidden regardless of layout.
  */
-async function loadCustomViewTickets(viewId: string): Promise<void> {
+/**
+ * HS-9659 — monotonic sequence for `loadTickets` / `loadCustomViewTickets` so an
+ * out-of-order STALE response can't overwrite a fresher state. Each call captures the
+ * next value; after every `await` it re-checks and bails if a newer call has since
+ * started. Without this a slow refetch resolving after a newer one (or after a newer
+ * optimistic write from HS-9652/9653) briefly reverted the board — e.g. a just-moved
+ * verified card snapping back.
+ */
+let loadTicketsSeq = 0;
+
+async function loadCustomViewTickets(viewId: string, seq: number): Promise<void> {
   const view = state.customViews.find(v => v.id === viewId);
   if (view) {
     const viewTag = view.tag;
-    setTicketsAnimated(await queryTickets({
+    const rows = await queryTickets({
       logic: view.logic,
       conditions: view.conditions,
       sort_by: state.sortBy,
       sort_dir: state.sortDir === 'desc' ? 'desc' : 'asc',
       ...(viewTag !== undefined && viewTag !== '' ? { required_tag: viewTag } : {}),
       ...(view.includeArchived === true ? { include_archived: true } : {}),
-    }));
+    });
+    if (seq !== loadTicketsSeq) return; // superseded by a newer load — don't apply stale rows
+    setTicketsAnimated(rows);
   } else {
     setTicketsAnimated([]);
   }
@@ -825,6 +837,9 @@ function refreshSearchExtraCounts(): void {
 }
 
 export async function loadTickets() {
+  // HS-9659 — claim the next sequence up front; each `await` below re-checks it and
+  // bails if a newer load started, so a slow response can't clobber a fresher state.
+  const seq = ++loadTicketsSeq;
   // Preview mode: filter backup tickets locally instead of querying the API.
   if (state.backupPreview?.active === true) {
     state.hasMoreTickets = false;
@@ -845,7 +860,7 @@ export async function loadTickets() {
 
   // Custom views use the dedicated query endpoint — early return.
   if (state.view.startsWith('custom:')) {
-    await loadCustomViewTickets(state.view.slice(7));
+    await loadCustomViewTickets(state.view.slice(7), seq);
     return;
   }
 
@@ -869,6 +884,7 @@ export async function loadTickets() {
   // post-await trim path to disagree with the request shape.
   const isListLayout = state.layout === 'list';
   const rows = await listTickets(buildTicketsQuery(isListLayout));
+  if (seq !== loadTicketsSeq) return; // HS-9659 — a newer load superseded this one
   if (isListLayout && rows.length > state.listLimit) {
     state.hasMoreTickets = true;
     rows.length = state.listLimit;
@@ -878,6 +894,7 @@ export async function loadTickets() {
   updateLoadMoreButton();
 
   const syncMap = await syncMapPromise;
+  if (seq !== loadTicketsSeq) return; // HS-9659 — superseded during the sync-map fetch
   if (syncMap !== null) setSyncedTicketMap(syncMap);
   setTicketsAnimated(rows);
   renderTicketList();
