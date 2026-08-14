@@ -40,45 +40,63 @@ const REPO_ROOT = resolve(import.meta.dirname, '..');
 const DOCS_DIR = join(REPO_ROOT, 'docs');
 const TSX_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 const DOMOTION_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'domotion');
+const SVG_TO_VIDEO_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'svg-to-video');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 const VIEWPORT = { width: 1400, height: 900 } as const;
 
-// HS-9003 — the accent + timing knobs for the storyboard treatment (below).
-const ACCENT = '#3b82f6'; // Hot Sheet blue (the app's own accent)
-const TITLE_MS = 2000; // title-card on-screen time
-const APP_MS = 3800; // app-scene on-screen time (also the caption hold)
+// HS-9003 — motion knobs for the dynamic demo treatment (below). No title card:
+// each demo opens directly on the UI, then a per-demo camera move (a gentle
+// full-window "dolly" or a "focus" push toward a hero element) plays while an
+// in-context caption fades in. Timings follow the domotion motion playbook
+// (ease-out entrance, hold long enough to read).
+const PAD_X = 50; // transparent margin the window "grows into" during the push (L/R)
+const PAD_TOP = 46; // top margin
+const PAD_BOTTOM = 46; // bottom margin (caption overlaps the lower window, lower-third style)
+const DOLLY_SCALE = 1.06; // whole-window push (overview/grid demos)
+const FOCUS_SCALE = 1.16; // push toward a hero element (feature demos)
+const MOVE_START_MS = 700; // hold the establishing frame, then begin the move
+const MOVE_DUR_MS = 1700; // camera-move duration
+const CAPTION_HOLD_MS = 2100; // caption on-screen time (enter + hold + exit)
+const TOTAL_MS = 4600; // full clip length
+const MOVE_EASE = 'cubic-bezier(0.215,0.61,0.355,1)'; // ease-out (entrance feel)
 
 /**
- * HS-9003 — per-demo storyboard copy. Each captured app screen is composed into
- * a short animated SVG: a light title card (eyebrow + headline + subtitle) →
- * the app framed in a light macOS-style window bezel with a white-on-dark
- * lower-third `caption`. Copy is distilled from the README section blurbs +
- * `DEMO_SCENARIOS` labels; keep it punchy (headline ≤ ~5 words, caption one
- * line). `captionPosition` moves the lower-third off content-heavy bottoms.
+ * HS-9003 — per-demo dynamic-demo spec. Each captured app screen is framed in a
+ * light macOS window bezel and composed into a short animated SVG that opens
+ * directly on the UI (no title card), plays a `verb` camera move, and fades in a
+ * white-on-dark lower-third `caption` naming the feature as the move settles.
+ *
+ * `verb`:
+ *   'dolly' — a gentle whole-window push (overview / grid demos, where cropping
+ *             would just remove the context that IS the point).
+ *   'focus' — a stronger push toward `heroSelector`'s center, so the highlighted
+ *             element enlarges and draws the eye. Falls back to 'dolly' when the
+ *             selector doesn't resolve (logged), so a missed selector degrades to
+ *             a safe move rather than an awkward crop.
+ * `captionPosition` moves the lower-third off content-heavy bottoms.
  */
 interface DemoMeta {
-  title: string;
-  subtitle: string;
+  verb: 'dolly' | 'focus';
   caption: string;
+  heroSelector?: string;
   captionPosition?: 'bottom-center' | 'top-center';
 }
-const EYEBROW = 'HOT SHEET';
 const DEMO_META: Record<number, DemoMeta> = {
-  1: { title: 'Every ticket, one board', subtitle: 'Categorize, prioritize, and track — in a fast bullet-list UI', caption: 'Categories, priorities, and statuses at a glance' },
-  2: { title: 'Capture at the speed of thought', subtitle: 'One bullet-list row — type, press Enter, done', caption: 'Quick ticket entry from the bullet-list input row' },
-  3: { title: 'Slice your work any way', subtitle: 'Custom views and category filters in the sidebar', caption: 'Custom views + category filtering' },
-  4: { title: "Your AI's marching orders", subtitle: 'Up Next tickets, with live AI progress notes', caption: 'Up Next work — with AI progress notes' },
-  5: { title: 'Change many at once', subtitle: 'Multi-select tickets and edit them in bulk', caption: 'Multi-select toolbar for batch operations' },
-  6: { title: 'The full story, one panel', subtitle: 'Details, tags, and notes — docked side or bottom', caption: 'Detail panel in bottom orientation', captionPosition: 'top-center' },
-  7: { title: 'Kanban when you want it', subtitle: 'Drag tickets across status columns', caption: 'Column view — a kanban board by status' },
-  8: { title: 'See your throughput', subtitle: 'Flow, cycle-time, and throughput charts', caption: 'Stats dashboard: throughput, flow, cycle time', captionPosition: 'top-center' },
-  9: { title: 'Hand the work to Claude', subtitle: 'A play button and custom commands drive your agent', caption: 'Claude Channel — AI-driven workflow' },
-  10: { title: 'Every project, one window', subtitle: 'Independent ticket lists behind switchable tabs', caption: 'Multiple projects, one window' },
-  11: { title: 'Terminals, built in', subtitle: 'Named PTY tabs live in the footer drawer', caption: 'Embedded terminal drawer with named tabs', captionPosition: 'top-center' },
-  12: { title: 'Every terminal at once', subtitle: 'A live grid across every registered project', caption: 'Terminal dashboard — all terminals, one grid', captionPosition: 'top-center' },
-  13: { title: 'Track Claude Code costs', subtitle: 'Cross-project cost over time, by model and project', caption: 'Cross-project telemetry + cost tracking', captionPosition: 'top-center' },
-  14: { title: 'Hear what shipped', subtitle: 'A/V narration of recent work, with inline code diffs', caption: 'Announcer — narrated work in a transcript PIP', captionPosition: 'top-center' },
+  1: { verb: 'dolly', caption: 'Categories, priorities & statuses — at a glance' },
+  2: { verb: 'focus', heroSelector: 'input.draft-input', caption: 'Capture a ticket in one keystroke' },
+  3: { verb: 'focus', heroSelector: '.sidebar, #sidebar', caption: 'Slice your work — custom views & filters' },
+  4: { verb: 'focus', heroSelector: '.detail-panel', caption: 'Up Next — with live AI progress notes' },
+  5: { verb: 'focus', heroSelector: '.selection-toolbar, .batch-toolbar, .list-controls, [class*="controls"]', caption: 'Multi-select → edit many at once' },
+  6: { verb: 'focus', heroSelector: '.detail-panel', caption: 'The full story — details, tags & notes', captionPosition: 'top-center' },
+  7: { verb: 'dolly', caption: 'A kanban board by status' },
+  8: { verb: 'focus', heroSelector: '.dashboard-chart-card', caption: 'Throughput, flow & cycle time', captionPosition: 'top-center' },
+  9: { verb: 'focus', heroSelector: '#channel-play-section, [id^="channel-play"]', caption: 'Hand the work to Claude', captionPosition: 'top-center' },
+  10: { verb: 'focus', heroSelector: '.project-tabs-inner', caption: 'Every project, one window', captionPosition: 'top-center' },
+  11: { verb: 'focus', heroSelector: '#footer-drawer, [id^="drawer-"]', caption: 'Terminals, built right in', captionPosition: 'top-center' },
+  12: { verb: 'dolly', caption: 'Every terminal at once', captionPosition: 'top-center' },
+  13: { verb: 'focus', heroSelector: '#telemetry-dashboard-cost-over-time, .cross-project-stats-page', caption: 'Track Claude Code costs over time', captionPosition: 'top-center' },
+  14: { verb: 'focus', heroSelector: '.announcer-pip', caption: 'Hear what shipped — narrated, with diffs', captionPosition: 'top-center' },
 };
 
 /**
@@ -411,74 +429,95 @@ interface Scenario { id: number; label: string }
 /** Run a `domotion` CLI verb, resolving on a clean exit. Async spawn (no sync
  *  child-process wedge risk — CLAUDE.md §"Synchronous child processes"); stderr
  *  is captured so a non-zero exit reports the domotion error. */
-function runDomotion(args: string[]): Promise<void> {
+function runBin(bin: string, args: string[]): Promise<void> {
   return new Promise((resolvePromise, reject) => {
-    const p = spawn(DOMOTION_BIN, args, { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn(bin, args, { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
     let err = '';
     p.stderr?.on('data', (c: Buffer) => { err += c.toString(); });
     p.stdout?.on('data', () => { /* drain */ });
     p.on('error', reject);
     p.on('exit', (code) => {
       if (code === 0) resolvePromise();
-      else reject(new Error(`domotion ${args[0] ?? ''} exited ${String(code)}: ${err.slice(-600)}`));
+      else reject(new Error(`${bin} ${args[0] ?? ''} exited ${String(code)}: ${err.slice(-600)}`));
     });
   });
 }
+const runDomotion = (args: string[]): Promise<void> => runBin(DOMOTION_BIN, args);
+
+/** A hero element's center as a fraction (0..1) of the app viewport, or null for
+ *  a whole-window dolly. Computed in `captureScenario` from the resolved hero
+ *  element's bounding box. */
+interface Focus { fx: number; fy: number }
 
 /**
- * HS-9003 — compose the captured app screen into a short animated storyboard SVG
- * at `docs/demo-<id>.svg`:
- *   scene 1  title-card (light, transparent, per-demo copy)     →  crossfade  →
- *   scene 2  the app in a LIGHT macOS-window bezel (wrapInDeviceChrome), with a
- *            white-on-dark lower-third `caption` composited over it (animated
- *            fade — hence `composite`, not a static storyboard overlay).
- * The whole canvas background is transparent, so the result floats on any host
- * (README light/dark). Everything is driven through the `domotion` CLI verbs
- * (`template` / `composite` / `storyboard`); the pre-rendered app SVG rides
- * through as an `svg` layer/scene so its glyph paths stay byte-identical.
+ * HS-9003 — compose the captured app screen into a short DYNAMIC animated SVG at
+ * `docs/demo-<id>.svg`. No title card: the clip opens directly on the UI. The
+ * app is framed in a LIGHT macOS-window bezel (`wrapInDeviceChrome`), placed on
+ * a transparent padded canvas, then a per-demo camera move plays while an
+ * in-context lower-third `caption` fades in as the move settles:
+ *   - 'dolly'  — a gentle whole-window push (origin = center).
+ *   - 'focus'  — a stronger push toward the hero element (origin = its center),
+ *                so the highlighted feature enlarges and leads the eye.
+ * The window scales into the transparent margin, so nothing internal is clipped
+ * (the fix for the orphaned-sidebar-numbers artifact an in-screen crop caused).
+ * Everything is driven through the `domotion` CLI verbs (`template` / `composite`);
+ * the pre-rendered app SVG rides through as an `svg` layer so its glyph paths
+ * stay byte-identical. Renders both `docs/demo-<id>.svg` (README) and, when
+ * `DEMO_MP4` is set, `docs/demo-<id>.mp4` (review).
  */
-async function buildStoryboard(id: number, appSvg: string, screenW: number, screenH: number): Promise<void> {
+async function buildDynamicDemo(id: number, appSvg: string, screenW: number, screenH: number, focus: Focus | null): Promise<void> {
   const meta = DEMO_META[id];
   if (meta === undefined) throw new Error(`no DEMO_META for scenario ${String(id)}`);
-  const tmp = mkdtempSync(join(tmpdir(), `hs-demo-sb-${String(id)}-`));
+  const tmp = mkdtempSync(join(tmpdir(), `hs-demo-dyn-${String(id)}-`));
   try {
     // 1. Light window chrome around the app capture.
-    const framed = wrapInDeviceChrome(appSvg, 'window', screenW, screenH, { theme: 'light', label: 'Hot Sheet' });
-    const { width: W, height: H } = framed;
+    const framed = wrapInDeviceChrome(appSvg, 'window', screenW, screenH, { theme: 'light', label: 'Hot Sheet Demo' });
+    const { width: FW, height: FH } = framed;
     const windowPath = join(tmp, 'window.svg');
     writeFileSync(windowPath, framed.svg);
 
-    // 2. Lower-third caption, composited over the window (animated fade-in).
+    // Padded transparent canvas the window grows into during the push.
+    const W = FW + PAD_X * 2;
+    const H = FH + PAD_TOP + PAD_BOTTOM;
+
+    // 2. Camera move: a 'focus' push maps the hero's app-space center into the
+    //    FRAMED layer's own box (the bezel adds a title bar above the screen, so
+    //    y is offset by the chrome height); a 'dolly' pushes about the center.
+    const useFocus = meta.verb === 'focus' && focus !== null;
+    const chromeTop = FH - screenH; // title-bar / bezel height above the screen
+    const originX = useFocus ? focus.fx * FW : FW / 2;
+    const originY = useFocus ? chromeTop + focus.fy * screenH : FH / 2;
+    const transformOrigin = useFocus ? `${((originX / FW) * 100).toFixed(1)}% ${((originY / FH) * 100).toFixed(1)}%` : 'center';
+    const scaleTo = useFocus ? FOCUS_SCALE : DOLLY_SCALE;
+
+    // 3. Lower-third caption, sized to the full canvas, fading in as the push
+    //    settles (start = most of the way through the move).
     const captionPath = join(tmp, 'caption.svg');
     await runDomotion(['template', 'caption', '--text', meta.caption,
       '--position', meta.captionPosition ?? 'bottom-center',
-      '--width', String(W), '--height', String(H),
-      '--textColor', '#ffffff', '--bgOpacity', '0.82', '--holdMs', String(APP_MS),
+      '--motion', 'slide', '--width', String(W), '--height', String(H),
+      '--textColor', '#ffffff', '--bgOpacity', '0.82',
+      '--inMs', '500', '--outMs', '450', '--holdMs', String(CAPTION_HOLD_MS),
       '-o', captionPath]);
-    const appScenePath = join(tmp, 'appscene.svg');
+
+    // 4. Composite: the framed window (with its camera-move animation) under the
+    //    caption, on a transparent canvas.
+    const outPath = join(DOCS_DIR, `demo-${String(id)}.svg`);
+    const captionStart = MOVE_START_MS + MOVE_DUR_MS - 400;
     writeFileSync(join(tmp, 'composite.json'), JSON.stringify({
-      width: W, height: H, background: 'transparent', output: appScenePath, duration: APP_MS,
+      width: W, height: H, background: 'transparent', output: outPath, duration: TOTAL_MS,
       layers: [
-        { svg: windowPath, x: 0, y: 0, width: W, height: H },
-        { svg: captionPath, x: 0, y: 0, width: W, height: H },
+        { svg: windowPath, x: PAD_X, y: PAD_TOP, width: FW, height: FH,
+          animations: [{ property: 'scale', from: 1, to: scaleTo, start: MOVE_START_MS, duration: MOVE_DUR_MS, easing: MOVE_EASE, transformOrigin }] },
+        { svg: captionPath, x: 0, y: 0, width: W, height: H, start: captionStart },
       ],
     }));
     await runDomotion(['composite', join(tmp, 'composite.json')]);
 
-    // 3. Storyboard: title card → captioned app scene.
-    const outPath = join(DOCS_DIR, `demo-${String(id)}.svg`);
-    writeFileSync(join(tmp, 'storyboard.json'), JSON.stringify({
-      width: W, height: H, background: 'transparent', output: outPath,
-      scenes: [
-        { template: 'title-card',
-          params: { eyebrow: EYEBROW, title: meta.title, subtitle: meta.subtitle,
-            theme: 'light', background: 'transparent', accent: ACCENT,
-            width: W, height: H, holdMs: TITLE_MS },
-          duration: TITLE_MS, transition: { type: 'crossfade', duration: 450 } },
-        { svg: appScenePath, fit: 'contain', duration: APP_MS },
-      ],
-    }));
-    await runDomotion(['storyboard', join(tmp, 'storyboard.json')]);
+    // Optional MP4 for review (DEMO_MP4=1).
+    if (process.env.DEMO_MP4 !== undefined && process.env.DEMO_MP4 !== '') {
+      await runBin(SVG_TO_VIDEO_BIN, [outPath, '-o', join(DOCS_DIR, `demo-${String(id)}.mp4`), '--width', '1200']);
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -596,17 +635,32 @@ async function captureScenario(scenario: Scenario): Promise<void> {
       await page.screenshot({ path: pngPath, fullPage: false });
       console.log(`  ✓ PNG: ${pngPath}`);
 
+      // HS-9003 — for a 'focus' demo, resolve the hero element's center (as a
+      // fraction of the viewport) so the camera pushes toward it. A missed
+      // selector logs + falls back to a whole-window dolly (focus === null).
+      const meta = DEMO_META[scenario.id];
+      let focus: Focus | null = null;
+      if (meta?.verb === 'focus' && meta.heroSelector !== undefined) {
+        const box = await page.locator(meta.heroSelector).first().boundingBox().catch(() => null);
+        if (box) {
+          focus = { fx: (box.x + box.width / 2) / VIEWPORT.width, fy: (box.y + box.height / 2) / VIEWPORT.height };
+        } else {
+          console.log(`  ⚠ hero selector "${meta.heroSelector}" did not resolve — falling back to dolly`);
+        }
+      }
+
       const tree = await captureElementTree(page, 'body', { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height });
       await embedRemoteImages(tree);
       // HS-8687 / domotion-svg 0.6.0: `elementTreeToSvg` returns a complete,
       // self-contained SVG document (outer `<svg xmlns viewBox …>` included).
       const appSvg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, { idPrefix: `demo-${scenario.id}-` });
-      // HS-9003 — instead of writing the bare app capture, compose it into an
-      // animated storyboard (title card → app in a light window bezel + a
-      // lower-third caption) via the domotion CLI verbs. See `buildStoryboard`.
-      await buildStoryboard(scenario.id, appSvg, VIEWPORT.width, VIEWPORT.height);
+      // HS-9003 — compose the bare app capture into a short DYNAMIC animated SVG
+      // (no title card): opens on the UI, plays a per-demo camera move toward the
+      // hero element (or a whole-window dolly), and fades in an in-context
+      // caption. See `buildDynamicDemo`.
+      await buildDynamicDemo(scenario.id, appSvg, VIEWPORT.width, VIEWPORT.height, focus);
       const svgPath = join(DOCS_DIR, `demo-${scenario.id}.svg`);
-      console.log(`  ✓ SVG storyboard: ${svgPath}`);
+      console.log(`  ✓ SVG (dynamic): ${svgPath}`);
       // Explicitly close the context first so the HAR is flushed to disk
       // before `browser.close()` tears everything down — see comment on the
       // newContext call above.
