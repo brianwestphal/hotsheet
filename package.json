@@ -66,8 +66,8 @@
     "!dist/*.map"
   ],
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.2",
-    "@electric-sql/pglite": "^0.4.5",
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@electric-sql/pglite": "^0.5.4",
     "@hono/node-server": "^2.0.5",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@xterm/addon-fit": "^0.11.0",
@@ -78,7 +78,7 @@
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "@zxing/browser": "^0.2.0",
-    "@zxing/library": "^0.22.0",
+    "@zxing/library": "^0.23.0",
     "apple-fm": "^1.0.0",
     "hono": "^4.12.25",
     "marked": "^18.0.0",
