@@ -81,6 +81,13 @@ interface DemoMeta {
   caption: string;
   heroSelector?: string;
   captionPosition?: 'bottom-center' | 'top-center';
+  /** HS-9664 — per-demo push strength override (default `FOCUS_SCALE`), for demos
+   *  whose hero wants a tighter crop than the shared value gives. */
+  focusScale?: number;
+  /** HS-9664 — draw a purple rounded-rect emphasis ring around the hero element,
+   *  baked into the app SVG (so it scales with the camera push). Varies the visual
+   *  verb away from zoom-only: the ring points the eye at the exact feature. */
+  highlight?: boolean;
 }
 const DEMO_META: Record<number, DemoMeta> = {
   1: { verb: 'dolly', caption: 'Categories, priorities & statuses — at a glance' },
@@ -92,7 +99,7 @@ const DEMO_META: Record<number, DemoMeta> = {
   7: { verb: 'dolly', caption: 'A kanban board by status' },
   8: { verb: 'focus', heroSelector: '.dashboard-chart-card', caption: 'Throughput, flow & cycle time', captionPosition: 'top-center' },
   9: { verb: 'focus', heroSelector: '#channel-play-section, [id^="channel-play"]', caption: 'Send a ticket straight to Claude Code', captionPosition: 'top-center' },
-  10: { verb: 'focus', heroSelector: '.project-tabs-inner', caption: 'Switch projects without leaving Hot Sheet', captionPosition: 'bottom-center' },
+  10: { verb: 'focus', heroSelector: '.project-tabs-inner', caption: 'Switch projects without leaving Hot Sheet', captionPosition: 'bottom-center', focusScale: 1.55, highlight: true },
   11: { verb: 'focus', heroSelector: '#footer-drawer, [id^="drawer-"]', caption: 'Terminals, built right in', captionPosition: 'top-center' },
   12: { verb: 'dolly', caption: 'Every terminal at once', captionPosition: 'top-center' },
   13: { verb: 'focus', heroSelector: '#telemetry-dashboard-cost-over-time, .cross-project-stats-page', caption: 'Track Claude Code costs over time', captionPosition: 'top-center' },
@@ -465,6 +472,24 @@ interface Focus { fx: number; fy: number }
  * stay byte-identical. Renders both `docs/demo-<id>.svg` (README) and, when
  * `DEMO_MP4` is set, `docs/demo-<id>.mp4` (review).
  */
+/** HS-9664 — a purple rounded-rect emphasis ring around `box`, injected into the
+ *  app SVG just before `</svg>` (app-space coords, viewBox 0 0 W H). A soft wide
+ *  translucent halo behind a crisp inner stroke reads as emphasis, not a border. */
+function injectHighlightRect(appSvg: string, box: { x: number; y: number; width: number; height: number }): string {
+  const P = 7;
+  const x = (box.x - P).toFixed(1);
+  const y = (box.y - P).toFixed(1);
+  const w = (box.width + P * 2).toFixed(1);
+  const h = (box.height + P * 2).toFixed(1);
+  const ring =
+    `<g>` +
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="13" ry="13" fill="none" stroke="#a855f7" stroke-opacity="0.28" stroke-width="12"/>` +
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="13" ry="13" fill="none" stroke="#8b5cf6" stroke-width="4"/>` +
+    `</g>`;
+  const i = appSvg.lastIndexOf('</svg>');
+  return i === -1 ? appSvg : appSvg.slice(0, i) + ring + appSvg.slice(i);
+}
+
 async function buildDynamicDemo(id: number, appSvg: string, screenW: number, screenH: number, focus: Focus | null): Promise<void> {
   const meta = DEMO_META[id];
   if (meta === undefined) throw new Error(`no DEMO_META for scenario ${String(id)}`);
@@ -488,7 +513,7 @@ async function buildDynamicDemo(id: number, appSvg: string, screenW: number, scr
     const originX = useFocus ? focus.fx * FW : FW / 2;
     const originY = useFocus ? chromeTop + focus.fy * screenH : FH / 2;
     const transformOrigin = useFocus ? `${((originX / FW) * 100).toFixed(1)}% ${((originY / FH) * 100).toFixed(1)}%` : 'center';
-    const scaleTo = useFocus ? FOCUS_SCALE : DOLLY_SCALE;
+    const scaleTo = useFocus ? (meta.focusScale ?? FOCUS_SCALE) : DOLLY_SCALE;
 
     // 3. Lower-third caption, sized to the full canvas, fading in as the push
     //    settles (start = most of the way through the move).
@@ -645,9 +670,11 @@ async function captureScenario(scenario: Scenario): Promise<void> {
       // selector logs + falls back to a whole-window dolly (focus === null).
       const meta = DEMO_META[scenario.id];
       let focus: Focus | null = null;
+      let heroBox: { x: number; y: number; width: number; height: number } | null = null;
       if (meta?.verb === 'focus' && meta.heroSelector !== undefined) {
         const box = await page.locator(meta.heroSelector).first().boundingBox().catch(() => null);
         if (box) {
+          heroBox = box;
           focus = { fx: (box.x + box.width / 2) / VIEWPORT.width, fy: (box.y + box.height / 2) / VIEWPORT.height };
         } else {
           console.log(`  ⚠ hero selector "${meta.heroSelector}" did not resolve — falling back to dolly`);
@@ -658,7 +685,12 @@ async function captureScenario(scenario: Scenario): Promise<void> {
       await embedRemoteImages(tree);
       // HS-8687 / domotion-svg 0.6.0: `elementTreeToSvg` returns a complete,
       // self-contained SVG document (outer `<svg xmlns viewBox …>` included).
-      const appSvg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, { idPrefix: `demo-${scenario.id}-` });
+      let appSvg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, { idPrefix: `demo-${scenario.id}-` });
+      // HS-9664 — bake a purple emphasis ring around the hero (in app-space coords,
+      // so it rides the camera push) when the demo asks for one.
+      if (meta?.highlight === true && heroBox !== null) {
+        appSvg = injectHighlightRect(appSvg, heroBox);
+      }
       // HS-9003 — compose the bare app capture into a short DYNAMIC animated SVG
       // (no title card): opens on the UI, plays a per-demo camera move toward the
       // hero element (or a whole-window dolly), and fades in an in-context
