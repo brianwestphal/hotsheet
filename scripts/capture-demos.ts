@@ -163,6 +163,51 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
       },
     ],
   },
+  // demo-6 — the full story: open a ticket, then really scroll its Details panel
+  // (bottom orientation) down through details → tags → notes.
+  6: {
+    posterAtMs: 4300,
+    frames: (url) => [
+      {
+        // HS-1 (mixed-shipping bug) is the content-rich ticket — long details +
+        // a note — so #detail-body actually overflows and the scroll targets it
+        // (a sparse ticket leaves nothing to scroll, so domotion falls back to
+        // scrolling the whole window, which ghosts).
+        input: url,
+        waitFor: '.column-card[data-id="1"], .ticket-row[data-id="1"]',
+        wait: 500,
+        actions: [
+          { type: 'click', selector: '.column-card[data-id="1"], .ticket-row[data-id="1"]' },
+          { type: 'wait', ms: 800 },
+        ],
+        duration: 1400,
+      },
+      // domotion's `scroll` frame is built for scrolling a tall PAGE (it
+      // translates the whole capture), which ghosts a fixed-viewport app whose
+      // only scroller is a nested panel. So drive `#detail-body.scrollTop`
+      // directly across continue-frames — only the panel content moves, the
+      // chrome stays fixed. Short crossfades read as a paced scroll-through.
+      {
+        continue: true,
+        waitFor: '#detail-body',
+        actions: [{ type: 'evaluate', script: "document.getElementById('detail-body').scrollTop=130" }, { type: 'wait', ms: 150 }],
+        duration: 750,
+        transition: { type: 'crossfade', duration: 220 },
+      },
+      {
+        continue: true,
+        actions: [{ type: 'evaluate', script: "document.getElementById('detail-body').scrollTop=300" }, { type: 'wait', ms: 150 }],
+        duration: 750,
+        transition: { type: 'crossfade', duration: 220 },
+      },
+      {
+        continue: true,
+        actions: [{ type: 'evaluate', script: "var b=document.getElementById('detail-body'); b.scrollTop=b.scrollHeight" }, { type: 'wait', ms: 150 }],
+        duration: 1500,
+        transition: { type: 'crossfade', duration: 220 },
+      },
+    ],
+  },
 };
 
 /**
