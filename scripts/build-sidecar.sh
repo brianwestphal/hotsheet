@@ -82,6 +82,10 @@ mkdir -p "$SERVER_DIR"
 # Copy the built server bundle, channel server, and client assets
 cp dist/cli.js "$SERVER_DIR/"
 cp dist/channel.js "$SERVER_DIR/"
+# HS-9662 / docs/136 — the detached PTY-broker entry, spawned by the server next to
+# cli.js (brokerMode.spawnDetachedBroker prod path). Required when the terminal-survival
+# broker is enabled; harmless otherwise.
+cp dist/ptyBrokerEntry.js "$SERVER_DIR/"
 mkdir -p "$SERVER_DIR/client"
 cp dist/client/app.global.js "$SERVER_DIR/client/"
 cp dist/client/styles.css "$SERVER_DIR/client/"
