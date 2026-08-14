@@ -128,8 +128,10 @@ interface InteractionSpec {
   /** Build the animate frames for a live server URL. Frame 0's `actions` get the
    *  nudge-suppress `evaluate` prepended automatically. The clip's total duration
    *  is read back from the rendered SVG (typeResample expands frame 1), so it is
-   *  not specified here. */
-  frames: (url: string) => AnimateFrame[];
+   *  not specified here. `secret` is the demo project's API secret (from
+   *  `<dataDir>/secret.json`) for demos that drive a mutation via `evaluate` +
+   *  `fetch` (e.g. the live-update demo). */
+  frames: (url: string, secret: string) => AnimateFrame[];
 }
 
 /** Injected as frame 0's first action: hide any nudge/network overlay (the
@@ -159,6 +161,35 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
         continue: true,
         actions: [{ type: 'focus', selector: 'input.draft-input' }, { type: 'press', key: 'Enter' }, { type: 'wait', ms: 1300 }],
         duration: 2600,
+        transition: { type: 'crossfade', duration: 300 },
+      },
+    ],
+  },
+  // demo-4 — live update: open a ticket, then an AI/MCP-style change lands via
+  // fetch (status → started + a progress note). The WS push (docs/93) updates the
+  // open detail panel AND moves the card to the STARTED column live — no reload.
+  4: {
+    posterAtMs: 4300,
+    frames: (url, secret) => [
+      {
+        input: url,
+        waitFor: '.column-card[data-id], .ticket-row[data-id]',
+        wait: 500,
+        actions: [
+          { type: 'click', selector: '.column-card[data-id], .ticket-row[data-id]:not(.trash-row)' },
+          { type: 'wait', ms: 800 },
+        ],
+        duration: 1500,
+      },
+      {
+        continue: true,
+        actions: [
+          // Mutate the OPEN ticket as an external agent would (the channel/MCP
+          // path). The WS bus pushes `ticket-updated` → the client updates in place.
+          { type: 'evaluate', script: "var card=document.querySelector('.column-card.selected, .ticket-row.selected'); var id=card&&card.getAttribute('data-id'); if(id){fetch('/api/tickets/'+id,{method:'PATCH',headers:{'Content-Type':'application/json','X-Hotsheet-Secret':'" + secret + "','X-Hotsheet-Actor':'claude','X-Hotsheet-Actor-Label':'Claude Code'},body:JSON.stringify({status:'started',notes:'Started working on this — implemented the core change and added tests. All passing; opening a PR for review.'})});}" },
+          { type: 'wait', ms: 1500 },
+        ],
+        duration: 2700,
         transition: { type: 'crossfade', duration: 300 },
       },
     ],
@@ -643,14 +674,14 @@ function readAnimatedDurationMs(svg: string): number {
  *  `wrapInDeviceChrome` preserves the input SVG's `@keyframes` (verified), so the
  *  interaction plays inside a static bezel — no camera push (the interaction IS
  *  the motion). Renders `docs/demo-<id>.svg` + a PNG poster from the payoff frame. */
-async function captureInteractionDemo(id: number, port: number, spec: InteractionSpec): Promise<void> {
+async function captureInteractionDemo(id: number, port: number, secret: string, spec: InteractionSpec): Promise<void> {
   const meta = DEMO_META[id];
   if (meta === undefined) throw new Error(`no DEMO_META for scenario ${String(id)}`);
   const tmp = mkdtempSync(join(tmpdir(), `hs-demo-int-${String(id)}-`));
   try {
     // 1. Drive the live app → animated app SVG. Prepend nudge-suppression to
     //    frame 0's actions so no modal intercepts the interaction.
-    const frames = spec.frames(`http://localhost:${String(port)}/`);
+    const frames = spec.frames(`http://localhost:${String(port)}/`, secret);
     const f0 = frames[0];
     const existing = Array.isArray(f0.actions) ? (f0.actions as AnimateFrame[]) : [];
     f0.actions = [{ type: 'evaluate', script: NUDGE_SUPPRESS }, ...existing];
@@ -821,7 +852,13 @@ async function captureScenario(scenario: Scenario): Promise<void> {
     const interaction = INTERACTIONS[scenario.id];
     if (interaction !== undefined) {
       console.log(`  server ready, driving interaction...`);
-      await captureInteractionDemo(scenario.id, port, interaction);
+      // The demo project's API secret (for demos that drive a mutation via fetch).
+      let secret = '';
+      try {
+        const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'secret.json'), 'utf8'));
+        if (typeof raw === 'object' && raw !== null && 'secret' in raw && typeof raw.secret === 'string') secret = raw.secret;
+      } catch { /* no secret file — non-mutating demos don't need it */ }
+      await captureInteractionDemo(scenario.id, port, secret, interaction);
       console.log(`  ✓ SVG (interaction): ${join(DOCS_DIR, `demo-${scenario.id}.svg`)}`);
       return;
     }
