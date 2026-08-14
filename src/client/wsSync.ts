@@ -520,8 +520,17 @@ const wsSync = createWsSync({
   // sessions the PTY broker preserved (and the fresh server re-adopted) reappear
   // with scrollback, no app restart / manual resume needed. `loadAndRenderTerminalTabs`
   // reconciles the client tabs against `/api/terminal/list` and reattaches each.
+  //
+  // Retried at 0/1.5s/4s: the fresh server binds its port (→ the sync socket
+  // reconnects) BEFORE it finishes re-adopting broker sessions (project restore +
+  // per-project re-adopt run in post-startup, ~3s later). A one-shot rebuild races
+  // that and misses late-restored tabs; the reconcile is idempotent, so re-running
+  // it as the server catches up is safe and makes restore reliable.
   onReconnected: () => {
-    void import('./terminal.js').then(({ loadAndRenderTerminalTabs }) => loadAndRenderTerminalTabs());
+    void import('./terminal.js').then(({ loadAndRenderTerminalTabs }) => {
+      void loadAndRenderTerminalTabs();
+      for (const ms of [1500, 4000]) setTimeout(() => { void loadAndRenderTerminalTabs(); }, ms);
+    });
   },
 });
 
