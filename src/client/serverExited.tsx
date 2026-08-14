@@ -22,6 +22,47 @@ import { markShuttingDown } from './shutdownState.js';
 import { getTauriEventListener } from './tauriIntegration.js';
 
 let overlayEl: HTMLElement | null = null;
+// HS-9656 — which overlay is up: the transient "Restarting…" notice (the shell is
+// auto-restarting the server, docs/134 §134.6) or the terminal "Server Stopped" one.
+// 'exited' is terminal and wins over 'restarting'; a successful restart navigates the
+// webview (page reload), which discards this module's state and clears the overlay.
+let overlayKind: 'exited' | 'restarting' | null = null;
+
+function clearOverlay(): void {
+  overlayEl?.remove();
+  overlayEl = null;
+  overlayKind = null;
+}
+
+/**
+ * HS-9656 — transient "Restarting the server…" overlay, shown while the Tauri shell's
+ * bounded supervisor re-spawns a server that died in steady state. Suppresses the
+ * connection-error popup during the gap (the client's fetches fail until the fresh
+ * server is up); the webview re-navigates on the new server's ready handshake, which
+ * reloads the page and drops this overlay. If the restart ultimately fails (budget
+ * exhausted / spawn error), the shell emits `server-exited` and the terminal overlay
+ * replaces this one.
+ */
+export function showServerRestartingOverlay(detail: string): void {
+  markShuttingDown();
+  document.getElementById('network-error-popup')?.remove();
+  if (overlayKind === 'exited') return; // terminal state already shown — leave it
+  if (overlayKind === 'restarting') return; // idempotent
+  overlayEl = toElement(
+    <div className="shutdown-overlay" role="alertdialog" aria-label="Restarting server">
+      <div className="shutdown-overlay-box">
+        <div className="shutdown-overlay-title">Restarting the server…</div>
+        <div className="shutdown-overlay-step">
+          The Hot Sheet server stopped and is being restarted automatically. Your work is
+          safe — everything is saved to disk. This should only take a moment.
+        </div>
+        <div className="shutdown-overlay-step">{detail}</div>
+      </div>
+    </div>,
+  );
+  overlayKind = 'restarting';
+  document.body.appendChild(overlayEl);
+}
 
 /**
  * Put up the (permanent) "Server Stopped" overlay. Idempotent.
@@ -42,7 +83,8 @@ export function showServerExitedOverlay(detail: string): void {
   // server" popup would be strictly less informative noise stacked behind this.
   markShuttingDown();
   document.getElementById('network-error-popup')?.remove();
-  if (overlayEl !== null) return;
+  if (overlayKind === 'exited') return; // already terminal
+  clearOverlay(); // HS-9656 — replace a transient "Restarting…" overlay if one is up
 
   overlayEl = toElement(
     <div className="shutdown-overlay" role="alertdialog" aria-label="Server stopped">
@@ -60,12 +102,13 @@ export function showServerExitedOverlay(detail: string): void {
       </div>
     </div>,
   );
+  overlayKind = 'exited';
   document.body.appendChild(overlayEl);
 }
 
 /**
- * Subscribe to the shell's `server-exited` event. Call once at boot; no-ops
- * outside Tauri.
+ * Subscribe to the shell's `server-exited` + `server-restarting` events. Call once at
+ * boot; no-ops outside Tauri.
  */
 export function initServerExitedNotice(): void {
   const listen = getTauriEventListener();
@@ -75,10 +118,14 @@ export function initServerExitedNotice(): void {
       typeof e.payload === 'string' && e.payload !== '' ? e.payload : 'The server exited unexpectedly.',
     );
   });
+  void listen('server-restarting', (e: { payload: unknown }) => {
+    showServerRestartingOverlay(
+      typeof e.payload === 'string' && e.payload !== '' ? e.payload : 'The server exited unexpectedly.',
+    );
+  });
 }
 
 /** **TEST ONLY** — remove the overlay + reset module state between tests. */
 export function _resetServerExitedForTesting(): void {
-  overlayEl?.remove();
-  overlayEl = null;
+  clearOverlay();
 }

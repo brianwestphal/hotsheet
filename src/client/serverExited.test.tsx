@@ -16,6 +16,7 @@ import {
   _resetServerExitedForTesting,
   initServerExitedNotice,
   showServerExitedOverlay,
+  showServerRestartingOverlay,
 } from './serverExited.js';
 import { _resetShutdownStateForTesting, isShuttingDown } from './shutdownState.js';
 
@@ -26,6 +27,28 @@ afterEach(() => {
   _resetShutdownStateForTesting();
   document.getElementById('network-error-popup')?.remove();
   delete (window as TauriWindow).__TAURI__;
+});
+
+describe('showServerRestartingOverlay (HS-9656)', () => {
+  it('puts up a transient "Restarting…" overlay that reassures the work is safe', () => {
+    showServerRestartingOverlay('killed by a signal');
+    expect(document.querySelector('.shutdown-overlay-title')?.textContent).toBe('Restarting the server…');
+    expect(document.querySelector('.shutdown-overlay')?.textContent).toContain('saved to disk');
+  });
+
+  it('is replaced by the terminal "Server Stopped" overlay if the restart gives up', () => {
+    showServerRestartingOverlay('killed by a signal');
+    showServerExitedOverlay('auto-restart gave up');
+    // Exactly one overlay, and it's the terminal one — not stacked behind the restart notice.
+    expect(document.querySelectorAll('.shutdown-overlay')).toHaveLength(1);
+    expect(document.querySelector('.shutdown-overlay-title')?.textContent).toBe('Server Stopped');
+  });
+
+  it('does NOT downgrade a terminal "Server Stopped" back to "Restarting…"', () => {
+    showServerExitedOverlay('exit code 1');
+    showServerRestartingOverlay('a late restart event');
+    expect(document.querySelector('.shutdown-overlay-title')?.textContent).toBe('Server Stopped');
+  });
 });
 
 describe('showServerExitedOverlay', () => {

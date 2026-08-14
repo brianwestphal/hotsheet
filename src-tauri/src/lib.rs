@@ -14,6 +14,8 @@ use tauri_plugin_shell::ShellExt;
 #[cfg(not(debug_assertions))]
 use tauri_plugin_shell::process::CommandEvent;
 #[cfg(not(debug_assertions))]
+use tauri_plugin_shell::process::CommandChild;
+#[cfg(not(debug_assertions))]
 use tauri_plugin_updater::UpdaterExt;
 
 // HS-9307 — desktop loopback mTLS proxy (docs/112 §112.5.1).
@@ -52,6 +54,44 @@ struct QuitConfirmed(AtomicBool);
 /// triggers `app.exit(0)` — instead of `confirm_quit` exiting immediately and
 /// leaving the OS to beachball the app while the sidecar drains.
 struct ShuttingDown(AtomicBool);
+
+/// HS-9656 (docs/134 §134.6) — bounded auto-restart budget for the server sidecar,
+/// reversing HS-9563's never-restart decision at the maintainer's request. A rare
+/// STEADY-STATE server death (watchdog SIGKILL, OOM, crash) now auto-restarts instead
+/// of leaving the app pointing at a dead server — lossless, since project state is
+/// durable on disk (PGLite). Bounded so a crash-on-boot loop can't spin forever: after
+/// `MAX` restarts inside a rolling `WINDOW` we give up and surface the permanent
+/// "Server Stopped" overlay. The rolling window self-resets — deaths spaced further
+/// apart than `WINDOW` each get a fresh restart, so a server that runs fine for a while
+/// between rare deaths keeps recovering indefinitely. Consumed by BOTH supervisors —
+/// the dev `node --import tsx` loop (`#[cfg(debug_assertions)]`) and the production
+/// sidecar loop (`#[cfg(not(debug_assertions))]`).
+struct RestartBudget(Mutex<Vec<std::time::Instant>>);
+
+impl Default for RestartBudget {
+    fn default() -> Self {
+        RestartBudget(Mutex::new(Vec::new()))
+    }
+}
+
+impl RestartBudget {
+    const MAX: usize = 3;
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(120);
+
+    /// Record a restart attempt at `now` and return whether it is within budget.
+    /// Pure w.r.t. the injected clock so `cargo test` can drive the rolling window
+    /// deterministically (CLAUDE.md §"Rust tests"). Prunes attempts older than
+    /// `WINDOW`, then admits the attempt iff fewer than `MAX` remain in the window.
+    fn allow_restart_at(&self, now: std::time::Instant) -> bool {
+        let mut attempts = self.0.lock().unwrap();
+        attempts.retain(|t| now.duration_since(*t) < Self::WINDOW);
+        if attempts.len() >= Self::MAX {
+            return false;
+        }
+        attempts.push(now);
+        true
+    }
+}
 
 /// Returns the expected symlink/install path for the CLI on this platform.
 fn cli_install_path() -> PathBuf {
@@ -971,14 +1011,16 @@ fn sanitize_save_filename(name: &str) -> String {
 }
 
 #[cfg(not(debug_assertions))]
-/// Spawns the sidecar Node process with the given data_dir, waits for the "running at" URL,
-/// navigates the main window to it, stores the PID for cleanup, and sets the window title.
-async fn spawn_sidecar_and_navigate(
+/// HS-9656 — build + spawn the sidecar Node process, returning its event receiver +
+/// child handle. Also stores `SidecarPid`, sets the window title, and truncates the
+/// per-launch stderr log. Extracted from `spawn_sidecar_and_navigate` so the supervisor
+/// loop can RE-spawn on a steady-state death without async recursion (a self-calling
+/// async fn would be an infinitely-sized future).
+fn build_and_spawn_sidecar(
     app: &tauri::AppHandle,
     data_dir: &str,
-    extra_args: Vec<String>,
-) -> Result<(), String> {
-    startup_log(&format!("[sidecar] spawn_sidecar_and_navigate called with data_dir={} extra_args={:?}", data_dir, extra_args));
+    extra_args: &[String],
+) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -994,7 +1036,7 @@ async fn spawn_sidecar_and_navigate(
         sidecar_args.push("--data-dir".to_string());
         sidecar_args.push(data_dir.to_string());
     }
-    sidecar_args.extend(extra_args);
+    sidecar_args.extend_from_slice(extra_args);
     eprintln!("[sidecar] args={:?}", sidecar_args);
 
     let mut sidecar = app
@@ -1016,7 +1058,7 @@ async fn spawn_sidecar_and_navigate(
     }
 
     let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
-    let (mut rx, child) = sidecar
+    let (rx, child) = sidecar
         .args(&args_refs)
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
@@ -1029,19 +1071,46 @@ async fn spawn_sidecar_and_navigate(
     startup_log(&format!("[sidecar] spawned with PID {}", sidecar_pid));
     *app.state::<SidecarPid>().0.lock().unwrap() = Some(sidecar_pid);
 
+    // Set window title from settings or project folder name (skip in demo mode — no fixed dataDir)
+    if !data_dir.is_empty() {
+        if let Some(window) = app.get_webview_window("main") {
+            let name = resolve_app_name(data_dir);
+            let _ = window.set_title(&name);
+        }
+    }
+
+    Ok((rx, child))
+}
+
+#[cfg(not(debug_assertions))]
+/// Spawns the sidecar, navigates the main window to it on the "running at" handshake,
+/// and SUPERVISES it (HS-9656, docs/134 §134.6): a steady-state death auto-restarts
+/// within `RestartBudget` and re-navigates when the fresh server is ready; a launch-time
+/// death keeps the settings.json fallback; a budget-exhausted crash loop surfaces the
+/// permanent "server-exited" overlay. State is durable on disk (PGLite), so a restart
+/// loses nothing.
+async fn spawn_sidecar_and_navigate(
+    app: &tauri::AppHandle,
+    data_dir: &str,
+    extra_args: Vec<String>,
+) -> Result<(), String> {
+    startup_log(&format!("[sidecar] spawn_sidecar_and_navigate called with data_dir={} extra_args={:?}", data_dir, extra_args));
+    let (rx, child) = build_and_spawn_sidecar(app, data_dir, &extra_args)?;
+
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
-    // Set window title from settings or project folder name (skip in demo mode — no fixed dataDir)
-    if !data_dir.is_empty() {
-        let name = resolve_app_name(data_dir);
-        let _ = window.set_title(&name);
-    }
-
+    let app_handle = app.clone();
     let data_dir_owned = data_dir.to_string();
     tauri::async_runtime::spawn(async move {
-        let _child = child;
+        let mut rx = rx;
+        let mut _child = child;
+        let extra_args = extra_args;
+        // HS-9656 — supervise: each iteration watches ONE sidecar to death, then
+        // either finishes (shutdown / launch-failure / budget exhausted) or
+        // re-spawns and loops. This is a single task with a loop, NOT async recursion.
+        loop {
         let mut navigated = false;
         // HS-9564 — the rendered cause from `Terminated`, kept so the
         // channel-close handler below can report it. The event arrives BEFORE the
@@ -1119,16 +1188,17 @@ async fn spawn_sidecar_and_navigate(
         // sidecar's per-step budgets — heavy HTTP/DB steps up to 90s each, HS-9028)
         // so finish the app exit now — the overlay has been showing progress the
         // whole time, so there's no beachball.
-        if window.app_handle().state::<ShuttingDown>().0.load(Ordering::SeqCst) {
+        // Channel closed = the sidecar process exited.
+        if app_handle.state::<ShuttingDown>().0.load(Ordering::SeqCst) {
             shutdown_log("[sidecar] exited during shutdown — app.exit(0)");
-            window.app_handle().exit(0);
+            app_handle.exit(0);
             return;
         }
         if !navigated {
             // A sidecar that dies before the handshake is a LAUNCH failure, not a
-            // steady-state death, and it has its own recovery: read the port from
-            // settings.json. Skipped in demo mode — the sidecar picks a temp
-            // dataDir we don't know up front.
+            // steady-state death. Do NOT auto-restart (it would crash-loop on a broken
+            // launch); use the settings.json port fallback and stop. Skipped in demo
+            // mode — the sidecar picks a temp dataDir we don't know up front.
             if !data_dir_owned.is_empty() {
                 startup_log("[sidecar] process exited without navigating, trying settings.json fallback");
                 let settings_path = std::path::PathBuf::from(&data_dir_owned).join("settings.json");
@@ -1144,21 +1214,50 @@ async fn spawn_sidecar_and_navigate(
                     }
                 }
             }
-        } else {
-            // HS-9564 (docs/134 §134.4) — the steady-state death: the app has been
-            // running normally and the server went away. This branch did not exist,
-            // so the shipped app left a fully rendered window pointing at a dead
-            // server with no log line and no notice — the 2026-08-03 failure
-            // (HS-9561), which HS-9558 fixed for dev builds ONLY.
-            let detail = exit_detail
-                .unwrap_or_else(|| "The server exited unexpectedly.".to_string());
-            startup_log(&format!(
-                "[sidecar] exited UNEXPECTEDLY ({detail}) — the app is now pointing at a dead \
-                 server. See ~/.hotsheet/startup.log for a [fatal] report (HS-9557) and \
-                 ~/.hotsheet/server-stderr.log for anything below JS."
-            ));
-            let _ = window.emit("server-exited", detail);
+            return;
         }
+        // HS-9656 (docs/134 §134.6) — steady-state death: the app was running normally
+        // and the server went away (watchdog SIGKILL / OOM / crash). Auto-restart within
+        // the bounded budget and loop — the fresh server's "running at" re-navigates the
+        // webview (reloading the page, which clears the "server-restarting" overlay). If
+        // the budget is exhausted (crash loop), surface the permanent "server-exited"
+        // overlay instead of spinning. State is durable on disk, so this loses nothing.
+        let detail = exit_detail
+            .unwrap_or_else(|| "The server exited unexpectedly.".to_string());
+        startup_log(&format!(
+            "[sidecar] exited UNEXPECTEDLY ({detail}) — see ~/.hotsheet/startup.log for a \
+             [fatal] report (HS-9557) and ~/.hotsheet/server-stderr.log for anything below JS."
+        ));
+        if !app_handle.state::<RestartBudget>().allow_restart_at(std::time::Instant::now()) {
+            startup_log("[supervisor] auto-restart budget exhausted (crash loop) — leaving the server down (HS-9656).");
+            let _ = window.emit(
+                "server-exited",
+                format!("{detail} (the server kept dying — auto-restart gave up)"),
+            );
+            return;
+        }
+        startup_log("[supervisor] auto-restarting the server (bounded safety net, HS-9656)…");
+        let _ = window.emit("server-restarting", detail.clone());
+        // Give the OS a beat to release the dead server's port/lock; `--replace` + the
+        // CLI's stale-lock recovery reclaim whatever remains.
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        let mut restart_args = extra_args.clone();
+        if !restart_args.iter().any(|a| a == "--replace") {
+            restart_args.push("--replace".to_string());
+        }
+        match build_and_spawn_sidecar(&app_handle, &data_dir_owned, &restart_args) {
+            Ok((new_rx, new_child)) => {
+                rx = new_rx;
+                _child = new_child;
+                startup_log("[supervisor] restart spawned; awaiting the fresh server's ready handshake.");
+            }
+            Err(e) => {
+                startup_log(&format!("[supervisor] auto-restart failed to spawn: {e}"));
+                let _ = window.emit("server-exited", format!("{detail} (auto-restart failed: {e})"));
+                return;
+            }
+        }
+        } // end HS-9656 supervise loop
     });
 
     Ok(())
@@ -1234,6 +1333,7 @@ pub fn run() {
         .manage(TtsChild(Mutex::new(None)))
         .manage(QuitConfirmed(AtomicBool::new(false)))
         .manage(ShuttingDown(AtomicBool::new(false)))
+        .manage(RestartBudget::default())
         .manage(mtls_proxy::MtlsProxies::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1424,108 +1524,125 @@ pub fn run() {
                     .expect("main window not found");
 
                 let app_args: Vec<String> = std::env::args().collect();
-                // Dev builds always start a clean server: if a prior instance is running,
-                // --replace tells the CLI to shut it down before starting.
-                // HS-8828 — `node --import tsx` (NOT `npx tsx`) so the spawned
-                // child IS the cli.ts server and is directly killable on quit;
-                // see `build_dev_server_args`.
+                // Dev builds always start a clean server: --replace tells the CLI to
+                // shut down any prior instance before starting (build_dev_server_args
+                // always includes it), which is ALSO what the HS-9656 auto-restart
+                // relies on to reclaim a dead server's port + lock on respawn.
+                // HS-8828 — `node --import tsx` (NOT `npx tsx`) so the spawned child IS
+                // the cli.ts server and is directly killable on quit.
                 let server_args = build_dev_server_args(&app_args);
-
-                // The Rust binary runs from src-tauri/, so set cwd to the project root
+                // The Rust binary runs from src-tauri/, so set cwd to the project root.
+                // `&'static Path` (env!) — Copy, reused across restart iterations.
                 let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-                shutdown_log(&format!("[dev] spawning server: node {}", server_args.join(" ")));
-                let mut child = std::process::Command::new("node")
-                    .args(&server_args)
-                    .current_dir(project_root)
-                    // tsx-as-loader reads the tsconfig (jsx / jsxImportSource /
-                    // paths) from here instead of the old `--tsconfig` CLI flag.
-                    .env("TSX_TSCONFIG_PATH", "tsconfig.json")
-                    .stdout(std::process::Stdio::piped())
-                    // HS-9557 — was `Stdio::inherit()`, which discarded every fatal
-                    // message on a GUI launch. Piped + drained by the thread below.
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .expect("Failed to start dev server (is node/tsx installed?)");
-
-                shutdown_log(&format!("[dev] server child pid = {}", child.id()));
-                *app.state::<SidecarPid>().0.lock().unwrap() = Some(child.id());
-
-                // HS-9557 — drain stderr on its own thread. This is NOT optional
-                // once the pipe is captured: an unread pipe fills at ~64 KB and
-                // then blocks the child on its next write, which would wedge the
-                // server exactly the way this ticket exists to diagnose.
-                if let Some(stderr) = child.stderr.take() {
-                    truncate_server_stderr_log();
-                    std::thread::spawn(move || {
-                        use std::io::{BufRead, BufReader};
-                        for line in BufReader::new(stderr).lines() {
-                            let Ok(line) = line else { break };
-                            server_stderr_log(&line);
-                        }
-                    });
-                }
-
-                let stdout = child.stdout.take().expect("Failed to capture stdout");
                 let app_handle = app.handle().clone();
+
+                // HS-9656 (docs/134 §134.6) — SUPERVISE the dev server: on a steady-state
+                // death, auto-restart within RestartBudget instead of leaving the window
+                // pointing at a dead server (the pre-fix behavior + the 2026-08-14 pain).
+                // One thread, a loop — not recursion. A launch-time death (never navigated)
+                // or an exhausted budget (crash loop) stops and surfaces the notice.
                 std::thread::spawn(move || {
-                    use std::io::{BufRead, BufReader};
-                    let reader = BufReader::new(stdout);
-                    // HS-8911 — keep reading stdout AFTER navigation (the pre-fix loop
-                    // `break`d on the first "running at" line) so the graceful-shutdown
-                    // `[lifecycle:progress]` markers reach the overlay during quit.
-                    let mut navigated = false;
-                    for line in reader.lines() {
-                        let Ok(line) = line else { break };
-                        println!("{}", line);
-                        // HS-8911 — stream shutdown step progress to the overlay.
-                        if let Some(label) = line.trim().strip_prefix("[lifecycle:progress] ") {
-                            let _ = window.emit("shutdown-progress", label.trim().to_string());
-                            continue;
+                    loop {
+                        shutdown_log(&format!("[dev] spawning server: node {}", server_args.join(" ")));
+                        let mut child = match std::process::Command::new("node")
+                            .args(&server_args)
+                            .current_dir(project_root)
+                            // tsx-as-loader reads the tsconfig (jsx / jsxImportSource / paths) from here.
+                            .env("TSX_TSCONFIG_PATH", "tsconfig.json")
+                            .stdout(std::process::Stdio::piped())
+                            // HS-9557 — piped (not inherited) + drained, so a GUI launch still
+                            // records fatals and a full pipe can't wedge the child.
+                            .stderr(std::process::Stdio::piped())
+                            .spawn()
+                        {
+                            Ok(c) => c,
+                            Err(e) => {
+                                shutdown_log(&format!("[dev] failed to spawn server: {e}"));
+                                let _ = window.emit("server-exited", format!("Failed to start the dev server: {e}"));
+                                return;
+                            }
+                        };
+
+                        shutdown_log(&format!("[dev] server child pid = {}", child.id()));
+                        *app_handle.state::<SidecarPid>().0.lock().unwrap() = Some(child.id());
+
+                        // HS-9557 — drain stderr on its own thread (an unread pipe fills at
+                        // ~64 KB and then blocks the child, wedging the server).
+                        if let Some(stderr) = child.stderr.take() {
+                            truncate_server_stderr_log();
+                            std::thread::spawn(move || {
+                                use std::io::{BufRead, BufReader};
+                                for line in BufReader::new(stderr).lines() {
+                                    let Ok(line) = line else { break };
+                                    server_stderr_log(&line);
+                                }
+                            });
                         }
-                        if !navigated {
-                            // Case 1: server started fresh
-                            if let Some(idx) = line.find("running at ") {
-                                let url = line[idx + "running at ".len()..].trim().to_string();
-                                if let Ok(parsed) = url.parse() {
-                                    let _ = window.navigate(parsed);
-                                    navigated = true;
+
+                        let stdout = child.stdout.take().expect("Failed to capture stdout");
+                        let mut navigated = false;
+                        {
+                            use std::io::{BufRead, BufReader};
+                            // HS-8911 — keep reading stdout AFTER navigation so graceful-
+                            // shutdown `[lifecycle:progress]` markers reach the overlay.
+                            for line in BufReader::new(stdout).lines() {
+                                let Ok(line) = line else { break };
+                                println!("{}", line);
+                                if let Some(label) = line.trim().strip_prefix("[lifecycle:progress] ") {
+                                    let _ = window.emit("shutdown-progress", label.trim().to_string());
+                                    continue;
+                                }
+                                if !navigated {
+                                    if let Some(idx) = line.find("running at ") {
+                                        let url = line[idx + "running at ".len()..].trim().to_string();
+                                        if let Ok(parsed) = url.parse() {
+                                            let _ = window.navigate(parsed);
+                                            navigated = true;
+                                        }
+                                    } else if let Some(idx) = line.find("running instance on port ") {
+                                        let port_str = line[idx + "running instance on port ".len()..].trim().to_string();
+                                        let url = format!("http://localhost:{}", port_str);
+                                        if let Ok(parsed) = url.parse() {
+                                            let _ = window.navigate(parsed);
+                                            navigated = true;
+                                        }
+                                    }
                                 }
                             }
-                            // Case 2: joined an existing running instance
-                            else if let Some(idx) = line.find("running instance on port ") {
-                                let port_str = line[idx + "running instance on port ".len()..].trim().to_string();
-                                let url = format!("http://localhost:{}", port_str);
-                                if let Ok(parsed) = url.parse() {
-                                    let _ = window.navigate(parsed);
-                                    navigated = true;
-                                }
-                            }
                         }
-                    }
-                    // stdout EOF = the dev server exited. Wait, then (if the user quit)
-                    // finish the app exit — the overlay showed progress the whole time.
-                    let status = child.wait();
-                    if app_handle.state::<ShuttingDown>().0.load(Ordering::SeqCst) {
-                        shutdown_log("[dev] server exited during shutdown — app.exit(0)");
-                        app_handle.exit(0);
-                    } else {
-                        // HS-9558 — the server died on its own. This branch used to be
-                        // absent entirely: no log, no event, no window change, and no
-                        // supervisor to respawn. On 2026-08-03 the window sat against a
-                        // dead localhost:4174 for 49 MINUTES and was reported as "Hot
-                        // Sheet hung" (HS-9561). Nothing here restarts it — that needs
-                        // backoff + a cap, tracked separately — but the user is told,
-                        // and the log finally records that it happened.
-                        // `None` for the signal: reaping the child ourselves only
-                        // yields `ExitStatus::code()`. The production path gets the
-                        // signal from the shell plugin (HS-9564).
+
+                        // stdout EOF = the dev server exited. `None` for the signal: reaping
+                        // the child ourselves yields only `ExitStatus::code()`.
+                        let status = child.wait();
+                        if app_handle.state::<ShuttingDown>().0.load(Ordering::SeqCst) {
+                            shutdown_log("[dev] server exited during shutdown — app.exit(0)");
+                            app_handle.exit(0);
+                            return;
+                        }
                         let detail = describe_child_exit(status.ok().and_then(|s| s.code()), None);
+                        if !navigated {
+                            // Launch-time death — do NOT restart (would crash-loop a broken launch).
+                            shutdown_log(&format!("[dev] server exited before navigating ({detail}) — not restarting."));
+                            let _ = window.emit("server-exited", detail);
+                            return;
+                        }
+                        // HS-9656 — steady-state death: auto-restart within the bounded budget
+                        // (state is durable on disk, so it's lossless); the fresh server's
+                        // "running at" re-navigates the webview. Budget exhausted → give up.
                         shutdown_log(&format!(
-                            "[dev] server exited UNEXPECTEDLY ({detail}) — the app is now pointing at a dead \
-                             server. See ~/.hotsheet/startup.log for a [fatal] report (HS-9557) and \
-                             ~/.hotsheet/server-stderr.log for anything below JS."
+                            "[dev] server exited UNEXPECTEDLY ({detail}) — see ~/.hotsheet/startup.log \
+                             for a [fatal] report (HS-9557) and ~/.hotsheet/server-stderr.log below JS."
                         ));
-                        let _ = window.emit("server-exited", detail);
+                        if !app_handle.state::<RestartBudget>().allow_restart_at(std::time::Instant::now()) {
+                            shutdown_log("[dev][supervisor] auto-restart budget exhausted (crash loop) — leaving the server down.");
+                            let _ = window.emit("server-exited", format!("{detail} (the server kept dying — auto-restart gave up)"));
+                            return;
+                        }
+                        shutdown_log("[dev][supervisor] auto-restarting the server (bounded safety net, HS-9656)…");
+                        let _ = window.emit("server-restarting", detail);
+                        // Let the OS release the dead server's port/lock; --replace reclaims the rest.
+                        std::thread::sleep(std::time::Duration::from_millis(750));
+                        // loop → re-spawn
                     }
                 });
             }
@@ -1892,6 +2009,52 @@ mod teardown_action_tests {
     fn abandons_after_kill_grace() {
         assert_eq!(teardown_action(true, TERM + KILL, TERM, KILL, true), TeardownAction::Abandon);
         assert_eq!(teardown_action(true, Duration::from_secs(20), TERM, KILL, true), TeardownAction::Abandon);
+    }
+}
+
+#[cfg(test)]
+mod restart_budget_tests {
+    //! HS-9656 — the bounded auto-restart budget: admit up to MAX restarts inside a
+    //! rolling WINDOW, then refuse (crash-loop guard), and self-reset as old attempts
+    //! age out so a server that dies rarely keeps recovering indefinitely.
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn admits_up_to_max_then_refuses_within_window() {
+        let budget = RestartBudget::default();
+        let t0 = Instant::now();
+        for i in 0..RestartBudget::MAX {
+            assert!(
+                budget.allow_restart_at(t0 + Duration::from_secs(i as u64)),
+                "attempt {i} (within window) should be admitted"
+            );
+        }
+        // The next attempt, still inside the window, is refused — the crash-loop guard.
+        assert!(!budget.allow_restart_at(t0 + Duration::from_secs(RestartBudget::MAX as u64)));
+    }
+
+    #[test]
+    fn self_resets_once_old_attempts_age_out() {
+        let budget = RestartBudget::default();
+        let t0 = Instant::now();
+        for i in 0..RestartBudget::MAX {
+            assert!(budget.allow_restart_at(t0 + Duration::from_secs(i as u64)));
+        }
+        assert!(!budget.allow_restart_at(t0 + Duration::from_secs(1)), "immediately over budget");
+        // Beyond WINDOW the earlier attempts have aged out → a fresh restart is admitted.
+        let later = t0 + RestartBudget::WINDOW + Duration::from_secs(1);
+        assert!(budget.allow_restart_at(later));
+    }
+
+    #[test]
+    fn deaths_spaced_further_apart_than_the_window_always_restart() {
+        let budget = RestartBudget::default();
+        let t0 = Instant::now();
+        for i in 0..10u32 {
+            let t = t0 + (RestartBudget::WINDOW + Duration::from_secs(1)) * i;
+            assert!(budget.allow_restart_at(t), "spaced death {i} should be admitted");
+        }
     }
 }
 

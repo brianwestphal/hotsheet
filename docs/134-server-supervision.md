@@ -8,9 +8,11 @@ Companion to [8-cli-server.md](8-cli-server.md) (what the server process is),
 [45-pglite-robustness.md](45-pglite-robustness.md) (the watchdog, which handles the *other* way the
 server stops serving — a wedge rather than an exit).
 
-**Status: detection + notice SHIPPED on both launch paths; restart is the open decision.**
+**Status: detection + notice + bounded auto-restart SHIPPED on both launch paths.**
 §134.3 shipped as HS-9558 (dev), §134.4 as HS-9564 and §134.5 as HS-9565 (production parity).
-§134.6 is the decision this document exists to frame (HS-9563) — nothing in it is built.
+§134.6 was DECIDED "A, never restart" (HS-9563) then **REVISED 2026-08-14 to "C, bounded
+auto-restart" and shipped as HS-9656** — the shell now auto-restarts a dead server within a rolling
+budget (lossless; state is on disk), alongside continued prevention (§134.10).
 
 ---
 
@@ -153,7 +155,7 @@ side had to persist its own startup log. Worth correcting when this area is touc
 
 ---
 
-## 134.6 The decision: should the shell restart the server? — **DECIDED: A, never restart**
+## 134.6 The decision: should the shell restart the server? — **REVISED 2026-08-14: C, bounded auto-restart** (was A)
 
 Everything above restores *visibility*. Restart is a separate question: once the user knows, should
 the app fix itself?
@@ -176,6 +178,30 @@ would have cost, so the question is not reopened from scratch; §134.6.3 in part
 as the map of what any future supervision work would have to touch.
 
 The prevention goal is tracked separately — see §134.10.
+
+**REVISION, 2026-08-14 (HS-9656).** After another `[dev]` death (HS-9654 — a TIMESTAMPTZ
+migration WASM trap storm wedged the loop → watchdog SIGKILL), the maintainer chose to add the
+safety net after all: **C, bounded auto-restart, ALONGSIDE continued prevention** (not instead of
+it). The 2026-08-04 reasoning still holds — a restart absorbs failure rather than preventing it — so
+prevention stays the priority (HS-9654 fixed that death's cause; §134.10 continues). But because the
+project DB is durable on disk, a restart is **lossless**, and a rare death recovering invisibly beats
+a manual relaunch. Shipped:
+
+- `RestartBudget` (`src-tauri/src/lib.rs`): a rolling-window budget — `MAX` restarts per `WINDOW`
+  (3 per 120 s), self-resetting as attempts age out, so a crash-on-boot loop gives up (permanent
+  overlay) while a server that dies rarely recovers indefinitely. Pure `allow_restart_at(now)`,
+  unit-tested.
+- **Both** supervisors restructured into a single-thread loop (no async recursion): the production
+  sidecar path (`spawn_sidecar_and_navigate` + extracted `build_and_spawn_sidecar`) AND the dev
+  `node --import tsx` path (the one the maintainer actually runs). On a steady-state death: emit
+  `server-restarting`, wait 750 ms, re-spawn with `--replace` (reclaims the dead server's port +
+  lock), and the fresh "running at" re-navigates the webview. Launch-time death (never navigated) or
+  exhausted budget → the permanent `server-exited` overlay (§134.3/4/5 unchanged).
+- Frontend: a transient "Restarting the server…" overlay (`src/client/serverExited.tsx`).
+
+This required the launch-path extraction §134.6.3 flagged (the sidecar/dev spawn is now a re-callable
+loop). B (a manual "Restart Server" button) remains unbuilt — C subsumes it. The options + trade-off
+analysis below is kept as the record of how the choice was reached.
 
 ### 134.6.1 Options
 
@@ -260,8 +286,10 @@ The pure pieces are already the testable ones and should stay that way:
 
 All resolved; nothing here is open.
 
-1. **Restart at all, and which option?** → **A, never restart** (maintainer, 2026-08-04, HS-9563).
-   B and C are recorded in §134.6 as considered-and-declined, not as backlog.
+1. **Restart at all, and which option?** → originally **A, never restart** (2026-08-04, HS-9563);
+   **REVISED to C, bounded auto-restart, 2026-08-14 (HS-9656)** after HS-9654 — kept alongside
+   continued prevention, not instead of it (see the §134.6 revision note). B (manual button) stays
+   unbuilt; C subsumes it.
 2. **Does production parity (§134.4, §134.5) block the restart work?** → No, and it shipped first
    (HS-9564, HS-9565). Independent of the restart question by construction, and they were bugs in
    the shipped app rather than decisions.

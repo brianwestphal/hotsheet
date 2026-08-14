@@ -27,7 +27,7 @@ tauri-plugin-notification = "2"
 # `axum` runs the loopback (127.0.0.1) plain-HTTP server the WebView hits. The
 # WebSocket-proxy leg (tokio-tungstenite + a shared rustls config) is a follow-up.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 axum = { version = "0.8", features = ["ws"] }
 # HS-9309 — the WS-proxy leg. tokio-tungstenite dials the remote `wss://` with a
 # shared rustls 0.23 ClientConfig (client-auth cert + project CA root); axum's `ws`
