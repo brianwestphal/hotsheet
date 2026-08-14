@@ -54,7 +54,7 @@ const PAD_X = 50; // transparent margin the window "grows into" during the push 
 const PAD_TOP = 46; // top margin
 const PAD_BOTTOM = 46; // bottom margin (caption overlaps the lower window, lower-third style)
 const DOLLY_SCALE = 1.06; // whole-window push (overview/grid demos)
-const FOCUS_SCALE = 1.16; // push toward a hero element (feature demos)
+const FOCUS_SCALE = 1.28; // push toward a hero element (feature demos) — tighter so the highlighted feature is legible at README size (codex feedback, HS-9663)
 const MOVE_START_MS = 700; // hold the establishing frame, then begin the move
 const MOVE_DUR_MS = 1700; // camera-move duration
 const CAPTION_HOLD_MS = 2100; // caption on-screen time (enter + hold + exit)
@@ -86,13 +86,13 @@ const DEMO_META: Record<number, DemoMeta> = {
   1: { verb: 'dolly', caption: 'Categories, priorities & statuses — at a glance' },
   2: { verb: 'focus', heroSelector: 'input.draft-input', caption: 'Capture a ticket in one keystroke' },
   3: { verb: 'focus', heroSelector: '.sidebar, #sidebar', caption: 'Slice your work — custom views & filters' },
-  4: { verb: 'focus', heroSelector: '.detail-panel', caption: 'Up Next — with live AI progress notes' },
+  4: { verb: 'focus', heroSelector: '.detail-panel', caption: 'Watch AI work update tickets live' },
   5: { verb: 'focus', heroSelector: '.selection-toolbar, .batch-toolbar, .list-controls, [class*="controls"]', caption: 'Multi-select → edit many at once' },
   6: { verb: 'focus', heroSelector: '.detail-panel', caption: 'The full story — details, tags & notes', captionPosition: 'top-center' },
   7: { verb: 'dolly', caption: 'A kanban board by status' },
   8: { verb: 'focus', heroSelector: '.dashboard-chart-card', caption: 'Throughput, flow & cycle time', captionPosition: 'top-center' },
-  9: { verb: 'focus', heroSelector: '#channel-play-section, [id^="channel-play"]', caption: 'Hand the work to Claude', captionPosition: 'top-center' },
-  10: { verb: 'focus', heroSelector: '.project-tabs-inner', caption: 'Every project, one window', captionPosition: 'top-center' },
+  9: { verb: 'focus', heroSelector: '#channel-play-section, [id^="channel-play"]', caption: 'Send a ticket straight to Claude Code', captionPosition: 'top-center' },
+  10: { verb: 'focus', heroSelector: '.project-tabs-inner', caption: 'Switch projects without leaving Hot Sheet', captionPosition: 'bottom-center' },
   11: { verb: 'focus', heroSelector: '#footer-drawer, [id^="drawer-"]', caption: 'Terminals, built right in', captionPosition: 'top-center' },
   12: { verb: 'dolly', caption: 'Every terminal at once', captionPosition: 'top-center' },
   13: { verb: 'focus', heroSelector: '#telemetry-dashboard-cost-over-time, .cross-project-stats-page', caption: 'Track Claude Code costs over time', captionPosition: 'top-center' },
