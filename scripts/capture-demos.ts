@@ -139,9 +139,9 @@ interface InteractionSpec {
  *  it appears, via a persistent stylesheet rule + an immediate sweep. */
 const NUDGE_SUPPRESS =
   "var st=document.createElement('style'); " +
-  "st.textContent='.upgrade-nudge-overlay,[class*=\"nudge-overlay\"],#network-error-popup,.network-error-popup{display:none !important}'; " +
+  "st.textContent='.upgrade-nudge-overlay,[class*=\"nudge-overlay\"],#network-error-popup,.network-error-popup,#channel-disconnected-alert{display:none !important}'; " +
   "document.head.appendChild(st); " +
-  "document.querySelectorAll('.upgrade-nudge-overlay,[class*=\"nudge-overlay\"],#network-error-popup').forEach(function(el){el.remove();});";
+  "document.querySelectorAll('.upgrade-nudge-overlay,[class*=\"nudge-overlay\"],#network-error-popup,#channel-disconnected-alert').forEach(function(el){el.remove();});";
 
 const INTERACTIONS: Record<number, InteractionSpec> = {
   // demo-2 — quick capture: type a ticket title key-by-key, press Enter, the new
@@ -244,6 +244,36 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
         ],
         duration: 1700,
         transition: { type: 'crossfade', duration: 200 },
+      },
+    ],
+  },
+  // demo-9 — send a ticket to Claude: click the channel play button, then open
+  // the Claude terminal tab to reveal a realistic session picking up the top Up
+  // Next ticket (HS-4) and starting work. The terminal is lazy, so opening the
+  // tab spawns it and the canned session streams in "in response" to the play.
+  9: {
+    posterAtMs: 5600,
+    frames: (url) => [
+      {
+        input: url,
+        waitFor: '#channel-play-btn',
+        wait: 600,
+        duration: 1400,
+      },
+      {
+        continue: true,
+        actions: [{ type: 'click', selector: '#channel-play-btn' }, { type: 'wait', ms: 600 }],
+        duration: 1200,
+        transition: { type: 'crossfade', duration: 200 },
+      },
+      {
+        continue: true,
+        actions: [
+          { type: 'click', selector: '.drawer-tab[data-drawer-tab="terminal:claude-work"]' },
+          { type: 'wait', ms: 2000 },
+        ],
+        duration: 3200,
+        transition: { type: 'crossfade', duration: 250 },
       },
     ],
   },

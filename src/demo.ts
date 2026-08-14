@@ -702,6 +702,41 @@ const SCENARIO_9_COMMANDS = [
 // tile lacks the printf flavor text.
 const DEMO_TERMINAL_APPEARANCE = { theme: 'github-dark', fontSize: 15 } as const;
 
+// --- Configured terminal for scenario 9 (Claude Channel play showcase) ---
+//
+// HS-9664 — the demo-9 interaction clicks the play button, then opens this
+// terminal to reveal a realistic Claude Code session that has picked up the top
+// Up Next ticket (HS-4) and started working. We can't run a real Claude here
+// (non-deterministic, needs the CLI), so the session is CANNED via `printf`
+// styled to match Claude Code's output (magenta ● bullets, dim tool results),
+// then `exec sleep 3600` keeps the PTY alive. MUST be `lazy: true` — an eager
+// spawn hits the HS-6799 redraw-on-attach Ctrl-L that wipes the printf (same as
+// SCENARIO_11 above). Lazy means it spawns on first attach (when the demo opens
+// the tab after the play click), so the session streams in "in response" to the
+// play button.
+const SCENARIO_9_TERMINALS = [
+  {
+    id: 'claude-work',
+    name: 'Claude',
+    command:
+      "printf '\\033[38;5;213m✻\\033[0m \\033[1mWelcome to Claude Code\\033[0m\\n" +
+      "\\033[90m  ~/dev/store · main\\033[0m\\n\\n" +
+      "\\033[90m> run the worklist\\033[0m\\n\\n" +
+      "\\033[38;5;213m●\\033[0m Reading the Hot Sheet worklist — 3 tickets Up Next. Starting the top one:\\n" +
+      "  \\033[1mHS-4 · Evaluate Stripe vs Square for payment processing\\033[0m\\n\\n" +
+      "\\033[38;5;213m●\\033[0m \\033[38;5;180mhotsheet\\033[0m - update_ticket \\033[90m(HS-4 → started)\\033[0m\\n" +
+      "  \\033[90m⎿  Marked started, added a plan note\\033[0m\\n\\n" +
+      "\\033[38;5;213m●\\033[0m Read(src/payments/gateway.ts)\\n" +
+      "  \\033[90m⎿  Read 142 lines\\033[0m\\n\\n" +
+      "\\033[38;5;213m●\\033[0m The gateway hardcodes Stripe. I will compare fees, API quality, and dispute\\n" +
+      "  handling across both providers, then write up a recommendation on HS-4.\\n\\n" +
+      "\\033[38;5;114m●\\033[0m Comparing payment providers\\033[38;5;114m…\\033[0m\\n" +
+      "'; exec sleep 3600",
+    lazy: true,
+    ...DEMO_TERMINAL_APPEARANCE,
+  },
+];
+
 const SCENARIO_11_TERMINALS = [
   {
     id: 'dev-server',
@@ -944,10 +979,16 @@ export async function seedDemoData(scenario: number): Promise<void> {
     await recordDailySnapshot();
   }
   if (scenario === 9) {
-    // Enable Claude Channel and add custom command buttons
+    // Enable Claude Channel and add custom command buttons. HS-9664 — also seed
+    // a (lazy) Claude terminal + open the drawer on the Commands Log tab, so the
+    // demo-9 interaction can click play and then open the Claude tab to reveal a
+    // realistic session picking up the ticket.
     writeProjectSettings(dataDir, {
       channel_enabled: 'true',
       custom_commands: JSON.stringify(SCENARIO_9_COMMANDS),
+      drawer_open: 'true',
+      drawer_active_tab: 'commands-log',
+      terminals: JSON.stringify(SCENARIO_9_TERMINALS),
     });
   }
   if (scenario === 11) {
