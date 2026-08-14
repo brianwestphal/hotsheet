@@ -22,8 +22,23 @@ import { BrokerClient } from '../broker/brokerClient.js';
 import type { BrokerSessionInfo, BrokerSpawnSpec } from '../broker/protocol.js';
 import type { PtyLike, SpawnArgs } from './types.js';
 
+/**
+ * HS-9662 / docs/136 — is terminal-survival broker mode active?
+ *
+ * DEFAULT ON (so beta / packaged users get survival), with an escape hatch and two
+ * carve-outs:
+ * - `HOTSHEET_PTY_BROKER=0` → off (escape hatch); `=1` → on (forces it, e.g. tests).
+ * - **Windows** → off until the named-pipe port (HS-9666); the unix-socket spawn
+ *   would just fail + fall back, so skip it to avoid the connect-retry startup delay.
+ * - **Unit suite** opts out via `vitest.setup.ts` (sets `=0`), so `registry.test.ts`
+ *   etc. keep using the in-process factory; e2e sets `=0` too (HS-9666 adds a broker
+ *   e2e). If the broker can't be reached at runtime, spawn falls back to in-process.
+ */
 export function isBrokerMode(): boolean {
-  return process.env.HOTSHEET_PTY_BROKER === '1';
+  if (process.env.HOTSHEET_PTY_BROKER === '0') return false;
+  if (process.env.HOTSHEET_PTY_BROKER === '1') return true;
+  if (process.platform === 'win32') return false;
+  return true;
 }
 
 /** Per-instance broker socket path (scoped by `HOTSHEET_HOME` via globalHotsheetDir). */

@@ -367,6 +367,11 @@ export const test = base.extend<{
       HOME: home,
       USERPROFILE: home,
       PLUGINS_ENABLED: process.env.PLUGINS_ENABLED ?? 'true',
+      // HS-9662 — keep e2e on the in-process PTY factory (broker defaults ON in real
+      // runs). Terminal specs assert in-process behavior; a per-server detached broker
+      // would add spawn latency + orphan-until-lease processes. A dedicated broker e2e
+      // is HS-9666.
+      HOTSHEET_PTY_BROKER: '0',
     };
     // `--port 0` → OS-assigned ephemeral port (no `--strict-port` needed: an
     // ephemeral bind never collides). The real port is read from the startup banner.

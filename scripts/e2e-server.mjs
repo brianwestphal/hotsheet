@@ -17,7 +17,11 @@ const pluginsEnabled = process.env.PLUGINS_ENABLED ?? 'true';
 
 // os.homedir() reads HOME on POSIX and USERPROFILE on Windows — set both so the
 // isolated home takes effect on every platform.
-const env = { ...process.env, HOME: home, USERPROFILE: home, PLUGINS_ENABLED: pluginsEnabled };
+// HS-9662 — keep the terminal-scope e2e server on the in-process PTY factory (the
+// broker defaults ON in real runs). Terminal specs assert in-process behavior; a
+// detached broker would add spawn latency + orphan-until-lease processes. A dedicated
+// broker e2e is HS-9666.
+const env = { ...process.env, HOME: home, USERPROFILE: home, PLUGINS_ENABLED: pluginsEnabled, HOTSHEET_PTY_BROKER: '0' };
 
 // 1. Build client assets first (the server serves them statically).
 const build = spawnSync(process.execPath, [join(root, 'scripts', 'build-client.mjs')], {

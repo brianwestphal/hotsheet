@@ -70,3 +70,10 @@ enableWarnings({
  * child process it spawns.
  */
 process.env.HOTSHEET_HOME = mkdtempSync(join(tmpdir(), 'hs-vitest-home-'));
+
+// HS-9662 — the PTY-broker terminal-survival mode defaults ON in real runs, but the
+// unit suite must stay on the in-process PTY factory: with it on, `registry.test.ts`
+// et al. would route to the detached broker (spawning real processes). Force it OFF
+// here; the one broker integration test (`registryBrokerMode.test.ts`) re-enables it
+// explicitly in its own `beforeAll`.
+process.env.HOTSHEET_PTY_BROKER = '0';
