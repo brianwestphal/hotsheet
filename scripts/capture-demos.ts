@@ -540,7 +540,12 @@ async function captureScenario(scenario: Scenario): Promise<void> {
     `--demo:${scenario.id}`,
   ], {
     cwd: REPO_ROOT,
-    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false' },
+    // HS-9662 — force the in-process PTY factory for demo captures: the broker now
+    // defaults ON, but a demo server never inits the broker (demo path), so its
+    // terminals would fall back to in-process AND the broker-mode shutdown path
+    // wouldn't kill them → leaked demo terminal processes per capture. `=0` keeps
+    // captures on the plain in-process lifecycle (killed cleanly on server exit).
+    env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, PLUGINS_ENABLED: 'false', HOTSHEET_PTY_BROKER: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

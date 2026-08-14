@@ -469,7 +469,14 @@ export function destroyAllTerminals(): void {
     for (const key of [...sessions.keys()]) {
       const session = sessions.get(key);
       if (session) {
-        for (const d of session.ptyDisposables) { try { d.dispose(); } catch { /* ignore */ } }
+        // A broker-backed PTY survives the server death (dispose local handlers
+        // only). An IN-PROCESS fallback PTY (broker was unreachable at spawn) would
+        // be orphaned by a mere disconnect, so it must be torn down + killed here.
+        if (session.pty instanceof BrokerBackedPty || session.pty === null) {
+          for (const d of session.ptyDisposables) { try { d.dispose(); } catch { /* ignore */ } }
+        } else {
+          teardownPty(session);
+        }
         session.subscribers.clear();
       }
       sessions.delete(key);
