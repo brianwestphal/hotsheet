@@ -27,7 +27,7 @@
  */
 import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
@@ -41,6 +41,7 @@ const DOCS_DIR = join(REPO_ROOT, 'docs');
 const TSX_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 const DOMOTION_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'domotion');
 const SVG_TO_VIDEO_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'svg-to-video');
+const SVG_TO_IMAGE_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'svg-to-image');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 const VIEWPORT = { width: 1400, height: 900 } as const;
@@ -104,6 +105,64 @@ const DEMO_META: Record<number, DemoMeta> = {
   12: { verb: 'dolly', caption: 'Every terminal at once', captionPosition: 'top-center' },
   13: { verb: 'focus', heroSelector: '#telemetry-dashboard-cost-over-time, .cross-project-stats-page', caption: 'Track Claude Code costs over time', captionPosition: 'top-center' },
   14: { verb: 'focus', heroSelector: '.announcer-pip', caption: 'Hear what shipped — narrated, with diffs', captionPosition: 'top-center' },
+};
+
+/**
+ * HS-9664 — REAL-INTERACTION demos. A handful of demos earn a live interaction
+ * (typing, clicking, scrolling, a context menu) instead of a camera move: they
+ * read as a usable tool, not a pretty screenshot. These drive the LIVE demo
+ * server through `domotion animate` (0.23.0+, `networkidle` now opt-in so the
+ * long-poll no longer blocks navigation): `typeResample` types key-by-key into
+ * the app's own field, `actions` click/press/hover with an animated cursor,
+ * `scroll` really scrolls, `evaluate` drives a state change / suppresses nudges.
+ * The animated app SVG is then wrapped in the same window chrome + caption as the
+ * camera demos (`buildInteractionDemo`), so the set stays visually cohesive.
+ *
+ * A demo listed here takes the interaction path in `captureScenario` INSTEAD of
+ * the static-capture + camera-move path; its caption still comes from `DEMO_META`.
+ */
+type AnimateFrame = Record<string, unknown>;
+interface InteractionSpec {
+  /** Timeline position (ms) to grab the PNG poster / payoff still. */
+  posterAtMs: number;
+  /** Build the animate frames for a live server URL. Frame 0's `actions` get the
+   *  nudge-suppress `evaluate` prepended automatically. The clip's total duration
+   *  is read back from the rendered SVG (typeResample expands frame 1), so it is
+   *  not specified here. */
+  frames: (url: string) => AnimateFrame[];
+}
+
+/** Injected as frame 0's first action: hide any nudge/network overlay (the
+ *  upgrade nudge is a modal that would intercept the interaction clicks) whenever
+ *  it appears, via a persistent stylesheet rule + an immediate sweep. */
+const NUDGE_SUPPRESS =
+  "var st=document.createElement('style'); " +
+  "st.textContent='.upgrade-nudge-overlay,[class*=\"nudge-overlay\"],#network-error-popup,.network-error-popup{display:none !important}'; " +
+  "document.head.appendChild(st); " +
+  "document.querySelectorAll('.upgrade-nudge-overlay,[class*=\"nudge-overlay\"],#network-error-popup').forEach(function(el){el.remove();});";
+
+const INTERACTIONS: Record<number, InteractionSpec> = {
+  // demo-2 — quick capture: type a ticket title key-by-key, press Enter, the new
+  // card appears at the top of NOT STARTED (and the detail panel opens on it).
+  2: {
+    posterAtMs: 5200,
+    frames: (url) => [
+      {
+        input: url,
+        waitFor: 'input.draft-input',
+        wait: 700,
+        actions: [{ type: 'click', selector: 'input.draft-input' }],
+        typeResample: { selector: 'input.draft-input', text: 'Add dark mode support to the settings dialog', speed: 22, caret: true },
+        duration: 2400,
+      },
+      {
+        continue: true,
+        actions: [{ type: 'focus', selector: 'input.draft-input' }, { type: 'press', key: 'Enter' }, { type: 'wait', ms: 1300 }],
+        duration: 2600,
+        transition: { type: 'crossfade', duration: 300 },
+      },
+    ],
+  },
 };
 
 /**
@@ -472,6 +531,79 @@ interface Focus { fx: number; fy: number }
  * stay byte-identical. Renders both `docs/demo-<id>.svg` (README) and, when
  * `DEMO_MP4` is set, `docs/demo-<id>.mp4` (review).
  */
+/** HS-9664 — the loop duration (ms) of a domotion-animated SVG, read from its
+ *  root `animation: … Xs infinite` declaration. typeResample expands a frame past
+ *  its declared `duration`, so the rendered SVG is the authority on total length. */
+function readAnimatedDurationMs(svg: string): number {
+  const m = /animation:\s*[\w-]+\s+([\d.]+)s/.exec(svg);
+  return m !== null ? Math.round(parseFloat(m[1]) * 1000) : 6000;
+}
+
+/** HS-9664 — drive the live demo server through an interaction and frame the
+ *  resulting ANIMATED app SVG in the same window chrome + caption as the camera
+ *  demos, so a typing/clicking demo sits cohesively beside the zoom demos.
+ *  `wrapInDeviceChrome` preserves the input SVG's `@keyframes` (verified), so the
+ *  interaction plays inside a static bezel — no camera push (the interaction IS
+ *  the motion). Renders `docs/demo-<id>.svg` + a PNG poster from the payoff frame. */
+async function captureInteractionDemo(id: number, port: number, spec: InteractionSpec): Promise<void> {
+  const meta = DEMO_META[id];
+  if (meta === undefined) throw new Error(`no DEMO_META for scenario ${String(id)}`);
+  const tmp = mkdtempSync(join(tmpdir(), `hs-demo-int-${String(id)}-`));
+  try {
+    // 1. Drive the live app → animated app SVG. Prepend nudge-suppression to
+    //    frame 0's actions so no modal intercepts the interaction.
+    const frames = spec.frames(`http://localhost:${String(port)}/`);
+    const f0 = frames[0];
+    const existing = Array.isArray(f0.actions) ? (f0.actions as AnimateFrame[]) : [];
+    f0.actions = [{ type: 'evaluate', script: NUDGE_SUPPRESS }, ...existing];
+    const interPath = join(tmp, 'interaction.svg');
+    writeFileSync(join(tmp, 'animate.json'), JSON.stringify({
+      width: VIEWPORT.width, height: VIEWPORT.height, output: interPath, cursor: 'auto', frames,
+    }));
+    await runDomotion(['animate', join(tmp, 'animate.json')]);
+    const animatedApp = readFileSync(interPath, 'utf8');
+    const totalMs = readAnimatedDurationMs(animatedApp);
+
+    // 2. Window chrome around the animated capture (keyframes preserved).
+    const framed = wrapInDeviceChrome(animatedApp, 'window', VIEWPORT.width, VIEWPORT.height, { theme: 'light', label: 'Hot Sheet Demo' });
+    const { width: FW, height: FH } = framed;
+    const windowPath = join(tmp, 'window.svg');
+    writeFileSync(windowPath, framed.svg);
+    const W = FW + PAD_X * 2;
+    const H = FH + PAD_TOP + PAD_BOTTOM;
+
+    // 3. Caption: fades in early, holds through the interaction, exits before the
+    //    loop restarts (in + hold + out + start ≈ totalMs).
+    const captionPath = join(tmp, 'caption.svg');
+    const holdMs = Math.max(1200, totalMs - 1650);
+    await runDomotion(['template', 'caption', '--text', meta.caption,
+      '--position', meta.captionPosition ?? 'bottom-center', '--motion', 'slide',
+      '--width', String(W), '--height', String(H), '--textColor', '#ffffff', '--bgOpacity', '0.82',
+      '--inMs', '500', '--outMs', '450', '--holdMs', String(holdMs), '-o', captionPath]);
+
+    // 4. Composite the animated window under the caption on a transparent canvas.
+    const outPath = join(DOCS_DIR, `demo-${String(id)}.svg`);
+    writeFileSync(join(tmp, 'composite.json'), JSON.stringify({
+      width: W, height: H, background: 'transparent', output: outPath, duration: totalMs,
+      layers: [
+        { svg: windowPath, x: PAD_X, y: PAD_TOP, width: FW, height: FH },
+        { svg: captionPath, x: 0, y: 0, width: W, height: H, start: 700 },
+      ],
+    }));
+    await runDomotion(['composite', join(tmp, 'composite.json')]);
+
+    // 5. PNG poster from the payoff frame (the interaction demos skip the static
+    //    Playwright still, so rasterize the composited SVG instead).
+    await runBin(SVG_TO_IMAGE_BIN, [outPath, '-o', join(DOCS_DIR, `demo-${String(id)}.png`), '--width', '1200', '--at', String(spec.posterAtMs)]);
+
+    if (process.env.DEMO_MP4 !== undefined && process.env.DEMO_MP4 !== '') {
+      await runBin(SVG_TO_VIDEO_BIN, [outPath, '-o', join(DOCS_DIR, `demo-${String(id)}.mp4`), '--width', '1200']);
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 /** HS-9664 — a purple rounded-rect emphasis ring around `box`, injected into the
  *  app SVG just before `</svg>` (app-space coords, viewBox 0 0 W H). A soft wide
  *  translucent halo behind a crisp inner stroke reads as emphasis, not a border. */
@@ -585,6 +717,17 @@ async function captureScenario(scenario: Scenario): Promise<void> {
 
   try {
     await pollServerReady(port);
+
+    // HS-9664 — interaction demos drive the live server via domotion `animate`
+    // (its own browser), so they skip the static Playwright capture + camera path.
+    const interaction = INTERACTIONS[scenario.id];
+    if (interaction !== undefined) {
+      console.log(`  server ready, driving interaction...`);
+      await captureInteractionDemo(scenario.id, port, interaction);
+      console.log(`  ✓ SVG (interaction): ${join(DOCS_DIR, `demo-${scenario.id}.svg`)}`);
+      return;
+    }
+
     console.log(`  server ready, launching browser...`);
 
     const browser = await chromium.launch();
