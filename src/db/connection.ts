@@ -1537,6 +1537,41 @@ export function ignoreBenignMigrationError(label: string, benign: readonly strin
   };
 }
 
+/**
+ * HS-9654 — idempotent TIMESTAMPTZ migration. Consults the catalog and ALTERs only the
+ * given columns still typed `timestamp without time zone`, so a fully-migrated cluster
+ * (every existing install, in steady state) runs ZERO DDL and cannot throw the PGLite
+ * WASM error a blind re-ALTER did on every open. See the call site in `initSchema` for
+ * the watchdog-SIGKILL wedge this prevents. `targets` are trusted constants (not user
+ * input), so the catalog-derived names are safe to interpolate into the ALTER.
+ */
+export async function migrateColumnsToTimestamptz(
+  db: PGlite,
+  targets: ReadonlyArray<readonly [string, string]>,
+): Promise<void> {
+  let stale: { table_name: string; column_name: string }[];
+  try {
+    const res = await db.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name FROM information_schema.columns
+       WHERE table_schema = 'public' AND data_type = 'timestamp without time zone'`,
+    );
+    stale = res.rows;
+  } catch (e) {
+    // Reading the catalog failed. Do NOT fall back to a blind ALTER — that is exactly
+    // the throw-storm path being removed. `ignoreBenignMigrationError` rethrows genuine
+    // storage corruption (→ recovery) and logs anything else once.
+    ignoreBenignMigrationError('TIMESTAMPTZ (probe)')(e);
+    return;
+  }
+  const want = new Set(targets.map(([t, c]) => `${t}.${c}`));
+  const toAlter = stale.filter((r) => want.has(`${r.table_name}.${r.column_name}`));
+  if (toAlter.length === 0) return; // steady state: nothing to migrate, no DDL, no storm
+  const ddl = toAlter
+    .map((r) => `ALTER TABLE ${r.table_name} ALTER COLUMN ${r.column_name} TYPE TIMESTAMPTZ;`)
+    .join('\n');
+  await db.exec(ddl).catch(ignoreBenignMigrationError('TIMESTAMPTZ', ['already']));
+}
+
 async function initSchema(db: PGlite): Promise<void> {
   await db.exec(`
     CREATE SEQUENCE IF NOT EXISTS ticket_seq START 1;
@@ -1597,16 +1632,26 @@ async function initSchema(db: PGlite): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_command_log_created ON command_log(created_at);
   `);
-  // Migrate existing command_log from TIMESTAMP to TIMESTAMPTZ
-  // Migrate all timestamp columns to TIMESTAMPTZ for correct timezone handling
-  await db.exec(`
-    ALTER TABLE tickets ALTER COLUMN created_at TYPE TIMESTAMPTZ;
-    ALTER TABLE tickets ALTER COLUMN updated_at TYPE TIMESTAMPTZ;
-    ALTER TABLE tickets ALTER COLUMN completed_at TYPE TIMESTAMPTZ;
-    ALTER TABLE tickets ALTER COLUMN deleted_at TYPE TIMESTAMPTZ;
-    ALTER TABLE attachments ALTER COLUMN created_at TYPE TIMESTAMPTZ;
-    ALTER TABLE command_log ALTER COLUMN created_at TYPE TIMESTAMPTZ;
-  `).catch(ignoreBenignMigrationError('TIMESTAMPTZ', ['already']));
+  // Migrate all timestamp columns to TIMESTAMPTZ for correct timezone handling.
+  //
+  // HS-9654 — this MUST be guarded, not blindly re-ALTERed on every open. `initSchema`
+  // runs on every cluster open, and the old code ran all 6 `ALTER … TYPE TIMESTAMPTZ`
+  // unconditionally, relying on `ignoreBenignMigrationError` to swallow the result. On a
+  // cluster where the no-op ALTER throws a NON-benign, non-storage error — observed:
+  // `cache lookup failed for attribute 0 of relation 0` — that fired a PGLite (WASM)
+  // error on EVERY open. Under docs/128 cluster-eviction churn the repeated throws
+  // became a WASM trap storm (`Runtime_ThrowWasmError` + WasmFrame::Summarize) that
+  // pinned the event loop for 60s → the §45 watchdog SIGKILLed the whole server
+  // (2026-08-14 wedge; same HS-9554 trap-storm class). Now we consult the catalog and
+  // ALTER only columns still typed `timestamp without time zone`, so a fully-migrated
+  // cluster — the steady state on every existing install — runs ZERO ALTERs and cannot
+  // storm. A brand-new cluster is already TIMESTAMPTZ from `CREATE TABLE`, so this is a
+  // no-op there too; it only fires for a genuinely-unmigrated legacy column.
+  await migrateColumnsToTimestamptz(db, [
+    ['tickets', 'created_at'], ['tickets', 'updated_at'],
+    ['tickets', 'completed_at'], ['tickets', 'deleted_at'],
+    ['attachments', 'created_at'], ['command_log', 'created_at'],
+  ]);
 
   // Migrations for existing databases
   await db.exec(`
