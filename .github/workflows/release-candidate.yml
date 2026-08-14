@@ -62,6 +62,14 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # HS-9650 — split the release e2e the way main CI does (HS-9141): the terminal /
+  # PTY / OSC specs run in their OWN job (`e2e-terminal`) with a fresh server + the
+  # full runner, so a timing-sensitive terminal flake can't be starved by resource
+  # contention from the rest of the suite and take down (and block publish on) the
+  # whole e2e run. Both jobs still gate publish, so a REAL terminal regression blocks;
+  # the isolation + Playwright's 3 CI retries make flakes rare, and if one does slip
+  # through a rerun now only needs the small terminal job, not the entire suite. Scope
+  # is driven by `E2E_SCOPE` (playwright.config.ts).
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -72,6 +80,21 @@ jobs:
       - run: npm run build:client
       - run: npx playwright install chromium --with-deps
       - run: npm run test:e2e
+        env:
+          E2E_SCOPE: no-terminal
+
+  e2e-terminal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
+      - run: npm ci
+      - run: npm run build:client
+      - run: npx playwright install chromium --with-deps
+      - run: npm run test:e2e
+        env:
+          E2E_SCOPE: terminal
 
   lint:
     runs-on: ubuntu-latest
@@ -160,7 +183,7 @@ jobs:
 
   create-release:
     if: contains(github.ref, '-beta.')
-    needs: [test, e2e, lint, npm-dry-run, tauri-build]
+    needs: [test, e2e, e2e-terminal, lint, npm-dry-run, tauri-build]
     runs-on: ubuntu-latest
     outputs:
       beta_version: ${{ steps.version.outputs.beta_version }}
@@ -245,7 +268,7 @@ jobs:
   # expired or rotated long-lived token (HS-8464 root cause).
 
   publish:
-    needs: [test, e2e, lint, npm-dry-run, tauri-build]
+    needs: [test, e2e, e2e-terminal, lint, npm-dry-run, tauri-build]
     runs-on: ubuntu-latest
     environment: npm-publish
     outputs:
