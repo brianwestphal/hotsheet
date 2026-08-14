@@ -48,7 +48,7 @@ That's it. Data stays local.
 <br>
 
 <p align="center">
-  <img src="docs/demo-1.png" alt="Hot Sheet main UI showing tickets across categories, priorities, and statuses with the detail panel open" width="900">
+  <img src="docs/demo-1.svg" alt="Hot Sheet main UI showing tickets across categories, priorities, and statuses with the detail panel open" width="900">
 </p>
 
 ---
@@ -75,31 +75,31 @@ The loop stays tight because the AI always knows what to work on next — and yo
 **Bullet-list input** — type a title, hit Enter, ticket created. Set category and priority inline with keyboard shortcuts.
 
 <p align="center">
-  <img src="docs/demo-2.png" alt="Quick ticket entry with the bullet-list input row" width="900">
+  <img src="docs/demo-2.svg" alt="Quick ticket entry with the bullet-list input row" width="900">
 </p>
 
 **Customizable categories** — defaults to a software development set (Issue, Bug, Feature, Req Change, Task, Investigation), with built-in presets for Design, Product Management, Marketing, and Personal workflows. Each category has a color, badge label, and keyboard shortcut — all configurable in Settings.
 
 <p align="center">
-  <img src="docs/demo-3.png" alt="Sidebar with custom views and category filtering" width="900">
+  <img src="docs/demo-3.svg" alt="Sidebar with custom views and category filtering" width="900">
 </p>
 
 **Column view** — switch to a kanban-style board grouped by status. Drag tickets between columns to change status. Click column headers to select all tickets in a column. Drag onto sidebar items to set category, priority, or view.
 
 <p align="center">
-  <img src="docs/demo-7.png" alt="Column view showing tickets organized by status in a kanban board" width="900">
+  <img src="docs/demo-7.svg" alt="Column view showing tickets organized by status in a kanban board" width="900">
 </p>
 
 **Batch operations** — select multiple tickets to bulk-update category, priority, status, or Up Next. The overflow menu provides duplicate, tags, mark as read/unread, move to backlog, and archive actions — all with icons. Right-click any ticket for a full context menu with submenus.
 
 <p align="center">
-  <img src="docs/demo-5.png" alt="Multiple tickets selected with the batch toolbar and context menu" width="900">
+  <img src="docs/demo-5.svg" alt="Multiple tickets selected with the batch toolbar and context menu" width="900">
 </p>
 
 **Detail panel** — side or bottom orientation (toggle in the toolbar), resizable, collapsible. Shows category, priority, status, and Up Next in a compact grid, plus title, details, tags, attachments, and editable notes. Click a note to edit inline; right-click to delete. **Reader mode** (book icon) opens any note — or the details body — in a distraction-free overlay that you can step through with chevrons or arrow keys without re-clicking the icon.
 
 <p align="center">
-  <img src="docs/demo-6.png" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
+  <img src="docs/demo-6.svg" alt="Detail panel in bottom orientation showing ticket details, tags, and notes" width="900">
 </p>
 
 **Embedded terminal** — a real PTY-backed terminal lives in the footer drawer next to the commands log. Configure multiple named terminals per project (dev server, tests, build, a Claude session, anything else), each with its own theme, font, and per-terminal shell-history pool — up-arrow on the dev-server tab won't surface the commit messages you typed on the deploy tab. **11 curated themes** (Default, Dracula, Solarized Dark/Light, Nord, Gruvbox, Monokai, One Dark, Tomorrow Night, GitHub Dark/Light) and 11 monospaced font choices, settable as a project default OR per-terminal via the gear popover. Right-click tabs to close, drag-to-reorder, single + button to spawn a one-off dynamic terminal. A macOS-Terminal.app-style quit-confirm catches Cmd+Q when long-running processes (claude, npm dev, anything heavier than an idle shell) are alive so you don't lose them by accident.
@@ -115,21 +115,21 @@ The loop stays tight because the AI always knows what to work on next — and yo
 **Stats dashboard** — click the sidebar widget to open a full analytics page with throughput charts, created-vs-completed trends, cumulative flow diagram, category breakdown, and cycle time scatter plot. Hover any chart for detailed tooltips.
 
 <p align="center">
-  <img src="docs/demo-8.png" alt="Stats dashboard showing throughput, flow, and cycle time charts" width="900">
+  <img src="docs/demo-8.svg" alt="Stats dashboard showing throughput, flow, and cycle time charts" width="900">
 </p>
 
 <p align="center">
-  <img src="docs/demo-11.png" alt="Embedded terminal in the footer drawer with named tabs for dev server, tests, and Claude" width="900">
+  <img src="docs/demo-11.svg" alt="Embedded terminal in the footer drawer with named tabs for dev server, tests, and Claude" width="900">
 </p>
 
 <p align="center">
-  <img src="docs/demo-12.png" alt="Terminal dashboard view showing every terminal across every registered project as a tile grid" width="900">
+  <img src="docs/demo-12.svg" alt="Terminal dashboard view showing every terminal across every registered project as a tile grid" width="900">
 </p>
 
 **Multi-project tabs** — open multiple projects in a single window. Each project remembers its own sidebar view, settings, sort preferences, and layout. Tabs appear automatically when you register a second project via Open Folder (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," switch with `Cmd+Shift+[/]`.
 
 <p align="center">
-  <img src="docs/demo-10.png" alt="Multiple project tabs showing independent ticket lists with tab context menu" width="900">
+  <img src="docs/demo-10.svg" alt="Multiple project tabs showing independent ticket lists with tab context menu" width="900">
 </p>
 
 **Also includes:**
@@ -164,7 +164,7 @@ The exported worklist is plain markdown. Any AI tool that can read files can use
 Star tickets as "Up Next" and they appear in the worklist, sorted by priority. As the AI works, it updates ticket status and appends notes — visible right in the detail panel. Tickets modified by the AI show a blue unread dot so you know what to review.
 
 <p align="center">
-  <img src="docs/demo-4.png" alt="Up Next view showing prioritized tickets with AI progress notes in the detail panel" width="900">
+  <img src="docs/demo-4.svg" alt="Up Next view showing prioritized tickets with AI progress notes in the detail panel" width="900">
 </p>
 
 ### Claude Code
@@ -262,7 +262,7 @@ Hot Sheet can push events directly to a running Claude Code session via MCP chan
 Requires Claude Code v2.1.80+ with channel support. See [docs/12-claude-channel.md](docs/12-claude-channel.md) for setup details.
 
 <p align="center">
-  <img src="docs/demo-9.png" alt="Claude Channel integration with play button, custom command buttons, and AI-driven workflow" width="900">
+  <img src="docs/demo-9.svg" alt="Claude Channel integration with play button, custom command buttons, and AI-driven workflow" width="900">
 </p>
 
 ### Announcer — narrated playback of project work (Beta)
@@ -279,7 +279,7 @@ Step away while Claude works, and the **Announcer** catches you up. It turns com
 API keys are managed once in **Settings → API Keys** — a machine-global registry of named keys stored in the OS keychain, selected by name per project so you never paste a secret twice. Enable narration in **Settings → Announcer**.
 
 <p align="center">
-  <img src="docs/demo-14.png" alt="Announcer transcript picture-in-picture narrating recent work over the ticket board, with emphasized phrases and an inline before/after code diff" width="900">
+  <img src="docs/demo-14.svg" alt="Announcer transcript picture-in-picture narrating recent work over the ticket board, with emphasized phrases and an inline before/after code diff" width="900">
 </p>
 
 ### Telemetry & Cost Tracking
@@ -295,7 +295,7 @@ API keys are managed once in **Settings → API Keys** — a machine-global regi
 Security model: localhost-bound OTLP receiver + `hotsheet_project` resource-attribute filter — foreign OTLP traffic from other tools on the same machine can't pollute Hot Sheet's tables even if it tries. Telemetry is stored per-project with a configurable retention window (30-day default) enforced by a periodic sweep with per-table windows and a row cap, so the database can't grow without bound; **Clear telemetry data** in Settings wipes the project's rows on demand.
 
 <p align="center">
-  <img src="docs/demo-13.png" alt="Cross-project telemetry stats page with cost-over-time chart, cost-by-project table, model donut, and hourly activity heatmap" width="900">
+  <img src="docs/demo-13.svg" alt="Cross-project telemetry stats page with cost-over-time chart, cost-by-project table, model donut, and hourly activity heatmap" width="900">
 </p>
 
 ### Other AI Tools

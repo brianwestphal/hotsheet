@@ -1,13 +1,20 @@
 /**
- * HS-8683 — capture every demo scenario as a PNG (Playwright) + an SVG
+ * HS-8683 — capture every demo scenario as a PNG (Playwright) + an animated SVG
  * (domotion-svg) in one pass. Spawns a fresh `tsx src/cli.ts --demo:N` server
  * per scenario in a temp data dir + temp HOME, opens it in headless Chromium,
  * performs the scenario-specific in-app navigation (sidebar widget click for
  * the dashboard demo, toolbar buttons for the terminal-dashboard / cross-
  * project-stats demos, Listen button for the announcer demo), and writes
- * `docs/demo-N.png` + `docs/demo-N.svg`. The announcer demo (14) additionally
- * mocks the `/api/announcer/*` read endpoints client-side (the PIP can't be
- * seeded headlessly — see `setupRoutesForScenario`).
+ * `docs/demo-N.png` (a raw Playwright still) + `docs/demo-N.svg`.
+ *
+ * HS-9003 — `docs/demo-N.svg` is no longer a bare screenshot: `buildStoryboard`
+ * composes each capture into a short, self-contained ANIMATED storyboard —
+ * a light title card (per-demo copy from `DEMO_META`) → the app framed in a
+ * light macOS-style window bezel with a white-on-dark lower-third caption — on a
+ * transparent background, driven through the `domotion` CLI verbs (`template` /
+ * `composite` / `storyboard`). The README embeds these SVGs. The announcer demo
+ * (14) additionally mocks the `/api/announcer/*` read endpoints client-side (the
+ * PIP can't be seeded headlessly — see `setupRoutesForScenario`).
  *
  * Usage:
  *   npx tsx scripts/capture-demos.ts            # capture all scenarios
@@ -20,21 +27,59 @@
  */
 import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
-import { mkdtempSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
 import { chromium, type Page } from '@playwright/test';
-import { captureElementTree, elementTreeToSvg, embedRemoteImages } from 'domotion-svg';
+import { captureElementTree, elementTreeToSvg, embedRemoteImages, wrapInDeviceChrome } from 'domotion-svg';
 
 import { DEMO_SCENARIOS } from '../src/demo.js';
 
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 const DOCS_DIR = join(REPO_ROOT, 'docs');
 const TSX_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
+const DOMOTION_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'domotion');
 const CLI_ENTRY = join(REPO_ROOT, 'src', 'cli.ts');
 
 const VIEWPORT = { width: 1400, height: 900 } as const;
+
+// HS-9003 — the accent + timing knobs for the storyboard treatment (below).
+const ACCENT = '#3b82f6'; // Hot Sheet blue (the app's own accent)
+const TITLE_MS = 2000; // title-card on-screen time
+const APP_MS = 3800; // app-scene on-screen time (also the caption hold)
+
+/**
+ * HS-9003 — per-demo storyboard copy. Each captured app screen is composed into
+ * a short animated SVG: a light title card (eyebrow + headline + subtitle) →
+ * the app framed in a light macOS-style window bezel with a white-on-dark
+ * lower-third `caption`. Copy is distilled from the README section blurbs +
+ * `DEMO_SCENARIOS` labels; keep it punchy (headline ≤ ~5 words, caption one
+ * line). `captionPosition` moves the lower-third off content-heavy bottoms.
+ */
+interface DemoMeta {
+  title: string;
+  subtitle: string;
+  caption: string;
+  captionPosition?: 'bottom-center' | 'top-center';
+}
+const EYEBROW = 'HOT SHEET';
+const DEMO_META: Record<number, DemoMeta> = {
+  1: { title: 'Every ticket, one board', subtitle: 'Categorize, prioritize, and track — in a fast bullet-list UI', caption: 'Categories, priorities, and statuses at a glance' },
+  2: { title: 'Capture at the speed of thought', subtitle: 'One bullet-list row — type, press Enter, done', caption: 'Quick ticket entry from the bullet-list input row' },
+  3: { title: 'Slice your work any way', subtitle: 'Custom views and category filters in the sidebar', caption: 'Custom views + category filtering' },
+  4: { title: "Your AI's marching orders", subtitle: 'Up Next tickets, with live AI progress notes', caption: 'Up Next work — with AI progress notes' },
+  5: { title: 'Change many at once', subtitle: 'Multi-select tickets and edit them in bulk', caption: 'Multi-select toolbar for batch operations' },
+  6: { title: 'The full story, one panel', subtitle: 'Details, tags, and notes — docked side or bottom', caption: 'Detail panel in bottom orientation', captionPosition: 'top-center' },
+  7: { title: 'Kanban when you want it', subtitle: 'Drag tickets across status columns', caption: 'Column view — a kanban board by status' },
+  8: { title: 'See your throughput', subtitle: 'Flow, cycle-time, and throughput charts', caption: 'Stats dashboard: throughput, flow, cycle time', captionPosition: 'top-center' },
+  9: { title: 'Hand the work to Claude', subtitle: 'A play button and custom commands drive your agent', caption: 'Claude Channel — AI-driven workflow' },
+  10: { title: 'Every project, one window', subtitle: 'Independent ticket lists behind switchable tabs', caption: 'Multiple projects, one window' },
+  11: { title: 'Terminals, built in', subtitle: 'Named PTY tabs live in the footer drawer', caption: 'Embedded terminal drawer with named tabs', captionPosition: 'top-center' },
+  12: { title: 'Every terminal at once', subtitle: 'A live grid across every registered project', caption: 'Terminal dashboard — all terminals, one grid', captionPosition: 'top-center' },
+  13: { title: 'Track Claude Code costs', subtitle: 'Cross-project cost over time, by model and project', caption: 'Cross-project telemetry + cost tracking', captionPosition: 'top-center' },
+  14: { title: 'Hear what shipped', subtitle: 'A/V narration of recent work, with inline code diffs', caption: 'Announcer — narrated work in a transcript PIP', captionPosition: 'top-center' },
+};
 
 /**
  * Scenario 14 (Announcer) curated reel. The announcer's transcript PIP is gated
@@ -149,7 +194,11 @@ async function selectFirstTicket(page: Page): Promise<void> {
   const sel = '.ticket-row[data-id]:not(.trash-row), .column-card[data-id]';
   const first = await page.waitForSelector(sel, { state: 'visible', timeout: 5000 }).catch(() => null);
   if (!first) return;
-  await first.click();
+  // HS-9003 — `force` bypasses actionability (interception) checks: a transient
+  // `#network-error-popup` (see the init script) is a fixed overlay that can win
+  // the 30 s click race even after we remove it, and the ticket row is a known,
+  // visible target. Belt-and-braces with the MutationObserver popup-remover.
+  await first.click({ force: true });
   // Let the detail panel paint.
   await page.waitForTimeout(250);
 }
@@ -225,7 +274,7 @@ async function navigateForScenario(page: Page, id: number): Promise<void> {
     }
     case 8: {
       // Stats dashboard — sidebar widget click toggles dashboard mode.
-      await page.click('#sidebar-dashboard-widget');
+      await page.click('#sidebar-dashboard-widget', { force: true }); // HS-9003 — bypass a transient popup interceptor
       await page.waitForSelector('#dashboard-container, .dashboard-section', { timeout: 5000 });
       // HS-8688 — hover the Cumulative Flow chart so its tooltip popup
       // renders. The hover handler lives in `addChartHover` in
@@ -259,7 +308,7 @@ async function navigateForScenario(page: Page, id: number): Promise<void> {
       // reveals it via `style.display = ''`. Playwright's default
       // `state: 'visible'` handles that transition correctly.
       await page.waitForSelector('#terminal-dashboard-toggle', { state: 'visible', timeout: 10_000 });
-      await page.click('#terminal-dashboard-toggle');
+      await page.click('#terminal-dashboard-toggle', { force: true }); // HS-9003 — bypass a transient popup interceptor
       await page.waitForSelector('.terminal-dashboard, .terminal-dashboard-section', { timeout: 5000 });
       // HS-8688 — every tile starts at `state: 'not_spawned'` and renders the
       // "Not yet started" play-glyph placeholder until its WebSocket-checkout
@@ -286,13 +335,20 @@ async function navigateForScenario(page: Page, id: number): Promise<void> {
       // `setSectionVisibility` poll once telemetry_enabled is true on at
       // least one registered project.
       await page.waitForSelector('#cross-project-stats-toggle', { state: 'visible', timeout: 15_000 });
-      await page.click('#cross-project-stats-toggle');
+      // HS-9003 — `force` bypasses interception: a transient `#network-error-popup`
+      // (a cross-project fetch aborting during load) intercepted this toggle click,
+      // so navigation never happened and `.cross-project-stats-page` timed out.
+      await page.click('#cross-project-stats-toggle', { force: true });
       // The page wrapper (`.cross-project-stats-page`) only appears after the
       // async `fetchAndRender` succeeds; on a fetch failure the container shows
       // `.telemetry-dashboard-error` instead. Wait for whichever lands, then
       // surface an error so a regression in the telemetry path doesn't ship a
       // broken (error-state) marketing shot silently.
-      await page.waitForSelector('.cross-project-stats-page, .telemetry-dashboard-error', { timeout: 20_000 });
+      // HS-9003 — bumped 20s → 40s: the cross-project telemetry aggregation over
+      // the seeded multi-project data is slow + variable and was landing right at
+      // the old 20s edge (flaky). The page wrapper only mounts once fetchAndRender
+      // resolves, so this waits for real data, not a spinner.
+      await page.waitForSelector('.cross-project-stats-page, .telemetry-dashboard-error', { timeout: 40_000 });
       const errBox = await page.$('.telemetry-dashboard-error');
       if (errBox) {
         const detail = await page.locator('.telemetry-dashboard-error-detail').textContent().catch(() => '');
@@ -351,6 +407,82 @@ function pickRandomPort(): number {
 }
 
 interface Scenario { id: number; label: string }
+
+/** Run a `domotion` CLI verb, resolving on a clean exit. Async spawn (no sync
+ *  child-process wedge risk — CLAUDE.md §"Synchronous child processes"); stderr
+ *  is captured so a non-zero exit reports the domotion error. */
+function runDomotion(args: string[]): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const p = spawn(DOMOTION_BIN, args, { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    let err = '';
+    p.stderr?.on('data', (c: Buffer) => { err += c.toString(); });
+    p.stdout?.on('data', () => { /* drain */ });
+    p.on('error', reject);
+    p.on('exit', (code) => {
+      if (code === 0) resolvePromise();
+      else reject(new Error(`domotion ${args[0] ?? ''} exited ${String(code)}: ${err.slice(-600)}`));
+    });
+  });
+}
+
+/**
+ * HS-9003 — compose the captured app screen into a short animated storyboard SVG
+ * at `docs/demo-<id>.svg`:
+ *   scene 1  title-card (light, transparent, per-demo copy)     →  crossfade  →
+ *   scene 2  the app in a LIGHT macOS-window bezel (wrapInDeviceChrome), with a
+ *            white-on-dark lower-third `caption` composited over it (animated
+ *            fade — hence `composite`, not a static storyboard overlay).
+ * The whole canvas background is transparent, so the result floats on any host
+ * (README light/dark). Everything is driven through the `domotion` CLI verbs
+ * (`template` / `composite` / `storyboard`); the pre-rendered app SVG rides
+ * through as an `svg` layer/scene so its glyph paths stay byte-identical.
+ */
+async function buildStoryboard(id: number, appSvg: string, screenW: number, screenH: number): Promise<void> {
+  const meta = DEMO_META[id];
+  if (meta === undefined) throw new Error(`no DEMO_META for scenario ${String(id)}`);
+  const tmp = mkdtempSync(join(tmpdir(), `hs-demo-sb-${String(id)}-`));
+  try {
+    // 1. Light window chrome around the app capture.
+    const framed = wrapInDeviceChrome(appSvg, 'window', screenW, screenH, { theme: 'light', label: 'Hot Sheet' });
+    const { width: W, height: H } = framed;
+    const windowPath = join(tmp, 'window.svg');
+    writeFileSync(windowPath, framed.svg);
+
+    // 2. Lower-third caption, composited over the window (animated fade-in).
+    const captionPath = join(tmp, 'caption.svg');
+    await runDomotion(['template', 'caption', '--text', meta.caption,
+      '--position', meta.captionPosition ?? 'bottom-center',
+      '--width', String(W), '--height', String(H),
+      '--textColor', '#ffffff', '--bgOpacity', '0.82', '--holdMs', String(APP_MS),
+      '-o', captionPath]);
+    const appScenePath = join(tmp, 'appscene.svg');
+    writeFileSync(join(tmp, 'composite.json'), JSON.stringify({
+      width: W, height: H, background: 'transparent', output: appScenePath, duration: APP_MS,
+      layers: [
+        { svg: windowPath, x: 0, y: 0, width: W, height: H },
+        { svg: captionPath, x: 0, y: 0, width: W, height: H },
+      ],
+    }));
+    await runDomotion(['composite', join(tmp, 'composite.json')]);
+
+    // 3. Storyboard: title card → captioned app scene.
+    const outPath = join(DOCS_DIR, `demo-${String(id)}.svg`);
+    writeFileSync(join(tmp, 'storyboard.json'), JSON.stringify({
+      width: W, height: H, background: 'transparent', output: outPath,
+      scenes: [
+        { template: 'title-card',
+          params: { eyebrow: EYEBROW, title: meta.title, subtitle: meta.subtitle,
+            theme: 'light', background: 'transparent', accent: ACCENT,
+            width: W, height: H, holdMs: TITLE_MS },
+          duration: TITLE_MS, transition: { type: 'crossfade', duration: 450 } },
+        { svg: appScenePath, fit: 'contain', duration: APP_MS },
+      ],
+    }));
+    await runDomotion(['storyboard', join(tmp, 'storyboard.json')]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
 
 async function captureScenario(scenario: Scenario): Promise<void> {
   const port = pickRandomPort();
@@ -413,6 +545,34 @@ async function captureScenario(scenario: Scenario): Promise<void> {
         try {
           window.localStorage.setItem('hotsheet_upgrade_nudge_last_shown', String(Number.MAX_SAFE_INTEGER));
         } catch { /* private mode */ }
+        // HS-9003 — suppress the §86 "Set Up Your AI Assistant" nudge dialog; it's
+        // a modal that dims + covers the board mid-capture. The nudge exposes a
+        // purpose-built pre-boot flag for exactly this (aiInstructionsNudge.tsx).
+        (window as unknown as { __HOTSHEET_DISABLE_AI_NUDGE__?: boolean }).__HOTSHEET_DISABLE_AI_NUDGE__ = true;
+      });
+      // HS-9003 — a transient in-flight fetch aborting mid-capture pops the
+      // HS-9455 "unable to reach the server" popup (`#network-error-popup`),
+      // which is a fixed overlay that then intercepts every navigation click for
+      // the rest of the capture (30 s click timeout → the whole scenario fails
+      // intermittently). It's a capture artifact, not demo content, so remove
+      // the node on sight for the duration of the shoot (a stylesheet rule alone
+      // didn't stop Playwright from treating it as an interceptor).
+      await page.addInitScript(() => {
+        const kill = (): void => {
+          document.getElementById('network-error-popup')?.remove();
+          document.querySelectorAll('.ai-instructions-nudge-overlay').forEach((el) => el.remove());
+        };
+        const start = (): void => {
+          kill();
+          // Both overlays are appended DIRECTLY to <body> (api.tsx /
+          // aiInstructionsNudge.tsx), so watch body's direct children only — NOT
+          // `subtree`. A whole-document subtree observer fires `querySelectorAll`
+          // on every deep mutation, which is O(n²) on the chart-heavy telemetry
+          // page (demo 13) and made its render never settle within the timeout.
+          new MutationObserver(kill).observe(document.body, { childList: true });
+        };
+        if (document.body) start();
+        else document.addEventListener('DOMContentLoaded', start);
       });
 
       // Per-scenario route mocks / init scripts (announcer demo) must be wired
@@ -438,17 +598,15 @@ async function captureScenario(scenario: Scenario): Promise<void> {
 
       const tree = await captureElementTree(page, 'body', { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height });
       await embedRemoteImages(tree);
-      // HS-8687 / domotion-svg 0.6.0: `elementTreeToSvg` now returns a complete
-      // SVG document (outer `<svg xmlns viewBox …>` included) AND its variadic
-      // tail moved into an `opts` object. The old (0.5.0) function returned
-      // inner-body markup only — the previously-saved `docs/demo-N.svg` files
-      // were technically malformed because we wrote that bare inner content
-      // straight to disk. The new shape produces a self-contained, browser-
-      // openable SVG with no caller-side `wrapSvg` step.
-      const svg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, { idPrefix: `demo-${scenario.id}-` });
+      // HS-8687 / domotion-svg 0.6.0: `elementTreeToSvg` returns a complete,
+      // self-contained SVG document (outer `<svg xmlns viewBox …>` included).
+      const appSvg = elementTreeToSvg(tree, VIEWPORT.width, VIEWPORT.height, { idPrefix: `demo-${scenario.id}-` });
+      // HS-9003 — instead of writing the bare app capture, compose it into an
+      // animated storyboard (title card → app in a light window bezel + a
+      // lower-third caption) via the domotion CLI verbs. See `buildStoryboard`.
+      await buildStoryboard(scenario.id, appSvg, VIEWPORT.width, VIEWPORT.height);
       const svgPath = join(DOCS_DIR, `demo-${scenario.id}.svg`);
-      writeFileSync(svgPath, svg);
-      console.log(`  ✓ SVG: ${svgPath} (${(svg.length / 1024).toFixed(1)} KB)`);
+      console.log(`  ✓ SVG storyboard: ${svgPath}`);
       // Explicitly close the context first so the HAR is flushed to disk
       // before `browser.close()` tears everything down — see comment on the
       // newContext call above.
