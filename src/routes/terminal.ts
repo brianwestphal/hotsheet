@@ -327,6 +327,17 @@ export function injectCommandWhenSettled(secret: string, terminalId: string, dat
  * output buffers in the session RingBuffer with no attached xterm (§54), so a
  * headless worker terminal is fine.
  */
+/**
+ * HS-9662 — re-register a dynamic terminal's config after it was re-adopted from
+ * the broker on server restart (docs/136). Without this, a survived `dyn-…`
+ * terminal has a live session but no `dynamicConfigs` entry, so `/api/terminal/list`
+ * would show it unnamed. Idempotent; only sets if absent so a live config wins.
+ */
+export function registerDynamicTerminalConfig(secret: string, terminalId: string, config: TerminalConfig): void {
+  const key = `${secret}::${terminalId}`;
+  if (!dynamicConfigs.has(key)) dynamicConfigs.set(key, config);
+}
+
 export function createDynamicTerminal(
   secret: string,
   dataDir: string,

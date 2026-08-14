@@ -14,6 +14,8 @@ import { RingBuffer } from '../ringBuffer.js';
 import { setupShellHistoryForSpawn } from '../shellHistory.js';
 import {
   brokerAdopt,
+  BrokerBackedPty,
+  brokerClient,
   brokerDisconnect,
   brokerRemove,
   brokerRemovePrefix,
@@ -152,8 +154,10 @@ function doSpawnIntoSession(session: SessionState, dataDir: string): void {
 
   // HS-9662 — in broker mode the PTY lives in the detached broker (so it survives
   // an accidental server death). The returned `BrokerBackedPty` proxies I/O; the
-  // handler wiring below is identical either way.
-  const pty = isBrokerMode()
+  // handler wiring below is identical either way. If the broker isn't connected
+  // (init failed), fall back to an in-process PTY so terminals still work — just
+  // without survival — rather than throwing.
+  const pty = (isBrokerMode() && brokerClient() !== null)
     ? brokerSpawn(
         sessionKey(session.secret, session.terminalId),
         spawnArgs,
@@ -234,6 +238,15 @@ export function adoptSurvivedSession(secret: string, dataDir: string, terminalId
   wireSessionToPty(session, pty);
   if (!info.alive) { session.pty = null; }
   sessions.set(key, session);
+  // HS-9662 — a survived DYNAMIC terminal (carries a configOverride) needs its
+  // config re-registered so `/api/terminal/list` shows the tab with its name.
+  // Lazy import avoids a registry ↔ routes cycle (mirrors the notify import above).
+  const cfg = session.configOverride;
+  if (cfg !== null) {
+    void import('../../routes/terminal.js')
+      .then((m) => m.registerDynamicTerminalConfig(secret, terminalId, cfg))
+      .catch(() => { /* list will fall back to the defense-pass id */ });
+  }
   return true;
 }
 
@@ -271,11 +284,11 @@ export function teardownPty(session: SessionState): void {
   }
   session.ptyDisposables = [];
   if (session.pty) {
-    // HS-9662 — in broker mode the PTY (and its whole process tree) lives in the
-    // broker; `pty.kill` routes there, which does the tree-kill. Doing a LOCAL
-    // `killProcessTreeBestEffort` would be wrong (the tree isn't in this process's
-    // children) so it's skipped.
-    if (!isBrokerMode()) {
+    // HS-9662 — a broker-backed PTY's process tree lives in the broker; `pty.kill`
+    // routes there (which does the tree-kill), so a LOCAL `killProcessTreeBestEffort`
+    // would be wrong. Keyed off the pty TYPE (not just the gate) so an in-process
+    // fallback PTY spawned while broker mode was on is still tree-killed correctly.
+    if (!(session.pty instanceof BrokerBackedPty)) {
       // HS-8140 — SIGTERM every descendant before SIGHUP-ing the shell.
       // node-pty's `kill('SIGHUP')` reaches only the immediate shell process;
       // grandchildren (a backgrounded `&` job, a `claude` instance running
