@@ -224,6 +224,17 @@ export interface WsSync {
   _receive(frame: unknown): void;
 }
 
+/**
+ * HS-9658 — client liveness deadline. The server pings every 20s
+ * (`routes/wsSync.ts` HEARTBEAT_INTERVAL_MS), so if NO frame (ping or mutation)
+ * arrives for this long the socket is half-open: the `onclose` that flips
+ * `active=false` never fired, so the poll fallback stays suppressed and nothing
+ * refetches (a big contributor to the HS-9653 "excessively long" staleness for
+ * non-acting clients). On timeout we tear the socket down and reconnect. 2.5× the
+ * ping interval so a couple of dropped pings don't false-trip it.
+ */
+export const LIVENESS_TIMEOUT_MS = 50_000;
+
 export function createWsSync(deps: WsSyncDeps): WsSync {
   let socket: WsLike | null = null;
   let active = false;
@@ -232,6 +243,7 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
   let connectedSecret: string | null = null;
   let reconnectAttempt = 0;
   let reconnectTimer: unknown = null;
+  let livenessTimer: unknown = null;
   let stopped = true;
   const drops: number[] = [];
 
@@ -239,7 +251,25 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     if (reconnectTimer !== null) { deps.clearTimer(reconnectTimer); reconnectTimer = null; }
   }
 
+  // HS-9658 — (re)arm the liveness deadline. Called on connect + on every frame,
+  // so any server activity (ping or mutation) keeps the socket "alive". If it fires,
+  // no frame arrived for LIVENESS_TIMEOUT_MS → the socket is half-open (no `onclose`),
+  // so treat it as a disconnect: tear down and reconnect, which flips `active=false`
+  // and lets the poll fallback resume.
+  function clearLiveness(): void {
+    if (livenessTimer !== null) { deps.clearTimer(livenessTimer); livenessTimer = null; }
+  }
+  function armLiveness(): void {
+    clearLiveness();
+    livenessTimer = deps.setTimer(() => {
+      livenessTimer = null;
+      teardownSocket(); // removes onclose, so it won't also fire onDisconnect
+      onDisconnect();
+    }, LIVENESS_TIMEOUT_MS);
+  }
+
   function teardownSocket(): void {
+    clearLiveness();
     if (socket !== null) {
       socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
       try { socket.close(); } catch { /* ignore */ }
@@ -255,8 +285,9 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     const url = deps.buildUrl(secret, lastSeq);
     const ws = deps.createSocket(url);
     socket = ws;
-    ws.onopen = () => { /* `connected` frame confirms; nothing to do yet */ };
+    ws.onopen = () => { armLiveness(); /* `connected` frame confirms; nothing else yet */ };
     ws.onmessage = (ev) => {
+      armLiveness(); // HS-9658 — any received frame proves the socket is alive
       let frame: unknown;
       try { frame = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data)); } catch { return; }
       handleFrame(frame);

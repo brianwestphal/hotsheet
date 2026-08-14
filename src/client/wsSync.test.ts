@@ -155,6 +155,18 @@ describe('createWsSync flow', () => {
     expect(h.ws.isActive()).toBe(true);
   });
 
+  it('flips inactive + tears down the socket when the liveness deadline fires with no frames (HS-9658)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 1 });
+    expect(h.ws.isActive()).toBe(true);
+    const socket = h.last();
+    // Server goes silent (half-open — no ping, no `onclose`). The liveness timer fires.
+    h.runTimers();
+    expect(h.ws.isActive()).toBe(false); // → the poll fallback stops being suppressed
+    expect(socket.closed).toBe(true);    // the dead socket is torn down (then reconnect is scheduled)
+  });
+
   it('does not connect when there is no active project secret', () => {
     const h = harness(null);
     h.ws.start();
