@@ -1,6 +1,6 @@
 # 136 — Terminal session survival across server restarts (PTY broker)
 
-**Status: design / investigation (HS-9662).** Recommendation + phased plan; implementation is follow-up tickets. Maintainer decision (2026-08-14): terminals **must survive an accidental server death and auto-restore as tabs** when Hot Sheet comes back online, while still being torn down on **explicit** user actions (close a terminal tab, close a project tab, quit the app).
+**Status: partial — survival engine SHIPPED behind a gate (HS-9662).** The broker + protocol + node client (phases 1a/1b) are built and unit-tested; wiring into the live registry + shutdown/quit semantics + Tauri + persistence + Windows (phases 2–5) are pending, gated behind `HOTSHEET_PTY_BROKER` (default OFF) and need real-app verification. Phase status in §136.7. Maintainer decision (2026-08-14): terminals **must survive an accidental server death and auto-restore as tabs** when Hot Sheet comes back online, while still being torn down on **explicit** user actions (close a terminal tab, close a project tab, quit the app).
 
 ## 136.1 Problem
 
@@ -64,11 +64,19 @@ Dynamic terminals (`dyn-…`, worker-pool) currently exist only in `dynamicConfi
 
 ## 136.7 Phased implementation (→ follow-up tickets)
 
-1. **Broker skeleton + control protocol** (spawn/write/resize/kill/list/subscribe over a unix socket); move `node-pty` into it; node server talks to the broker instead of spawning directly. Behavior-preserving — broker still dies with the node server for now. Ships the plumbing with zero user-visible change.
-2. **Detach + survive + re-adopt.** Spawn the broker in its own process group; stop killing PTYs on node shutdown paths (graceful `destroyTerminals` + `process.on('exit')`); on node boot, connect to an existing broker and re-adopt sessions; `/list` reports survived sessions; client rebuilds tabs + re-attaches (history replay). **This is the survival feature.**
-3. **Explicit-close + quit + orphan lease.** Wire explicit kills (`/kill`, `/destroy`, `DELETE /api/projects/:secret`) through the broker; Tauri `confirm_quit`/`RunEvent::Exit` explicitly kills the broker; broker self-exits on lost client lease.
-4. **Dynamic-config persistence** (§136.5) so restore lists dynamic + worker terminals.
-5. **Windows parity + tests:** accidental-death survival test (spawn → SIGKILL the node server → new server re-adopts → session alive), explicit-close test (each explicit path kills the PTY), orphan-exit test (kill all clients → broker self-exits within grace), `--replace` port-release test.
+Gated behind `HOTSHEET_PTY_BROKER` (docs/124 dev-gate pattern), default OFF, so nothing changes on the critical terminal path until the maintainer verifies it in the real app (this class of change can't be verified headlessly — the terminal integration tests can log out the macOS session, and true survival needs the desktop app + killing the server; the HS-9657 real-app-verification precedent applies).
+
+**1a. Control protocol — SHIPPED (commit a8ab82ea).** `src/terminals/broker/protocol.ts`: newline-delimited JSON frames, base64 binary, stable `secret::terminalId` sessionId. Pure; 10 unit tests.
+
+**1b. Broker process + node client — SHIPPED (commit cb0b09a9).** `src/terminals/broker/ptyBroker.ts` (owns node-pty, scrollback, identity; `hello`→`welcome`+`history` re-adoption; client-lease self-exit; explicit kill/killPrefix/shutdown) + `src/terminals/broker/brokerClient.ts` (connect-or-spawn, proxy, stream, ping). 7 integration tests incl. a REAL self-exiting node-pty and the re-adoption+history path. **Additive — not yet wired into the registry.** Tests inject a no-op process-tree killer so fake-PTY pids are never signalled.
+
+**2. Wire into the registry + startup re-adoption — PENDING (the survival feature).** Behind the gate: a `BrokerBackedPty implements PtyLike` (write/resize/kill proxy to the client; onData/onExit driven by a per-`sessionId` router) so the rest of `lifecycle.ts` (scrollback/OSC/bell handling) is unchanged; store `secret` on `SessionState` so the spawn path can form the sessionId; on node boot connect the broker, `list()`, and re-adopt each session (createSession + seed scrollback from `history` + attach a proxy pty); `/api/terminal/list` already drives the client tab rebuild. A broker entry script (`src/terminals/broker/main.ts`) + a tsup build target + a dev (tsx) spawn path + a per-instance socket path (§136.6 instance isolation).
+
+**3. Shutdown/quit semantics — PENDING.** Under the gate: `destroyAllTerminals` (graceful `destroyTerminals` step + `process.on('exit')`) DISCONNECTS the client instead of killing (survival); the graceful pipeline additionally calls `shutdownBroker()` ONLY on an explicit quit (SIGTERM/SIGINT/`/api/shutdown`) so app-quit kills terminals but an OOM/`--replace` SIGKILL (no handler runs) leaves them alive. Explicit `/kill` `/destroy` `DELETE /api/projects/:secret` route to the broker. Because the broker is detached (own process group), Tauri's `kill(-pid)` of the node group does NOT reach it — the node graceful handler is what kills it on quit; verify Tauri escalation timing gives the handler time (docs/134), else add an explicit Tauri→broker kill.
+
+**4. Dynamic-config persistence — PENDING** (§136.5) so restore lists dynamic + worker terminals (the broker already stores + echoes `meta`; also mirror to settings.json as broker-death defense).
+
+**5. Windows parity + full test matrix — PENDING:** named pipe instead of unix socket + detach semantics; accidental-death survival test (spawn → SIGKILL the node server → new server re-adopts → session alive), explicit-close test, orphan-exit test, `--replace` port-release test.
 
 ## 136.8 Relationship to other work
 
