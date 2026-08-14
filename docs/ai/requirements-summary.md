@@ -1585,6 +1585,14 @@ Keep each section **4–6 sentences**. This doc exists to *replace* reading 20+ 
 
 **Known gap (§135.6, HS-9585):** the guard itself disarms on the next restart — `noteClusterCreatedEmpty` fires only when the open path finds no `PG_VERSION`, so a restart that *opens* the empty cluster leaves the durability writers free to overwrite the good artifacts. The banner persists (marker is on disk); the protection does not.
 
+## 136. Terminal session survival across server restarts (`136-terminal-session-survival.md`)
+
+**Status: Design only (HS-9662).** Makes terminals + their AI sessions **survive an accidental node-server death** (OOM / §45 watchdog SIGKILL / crash / `--replace` / HS-9656 auto-restart) and **auto-restore as tabs** when the server comes back, while still tearing them down on **explicit** actions (close a terminal tab, close a project tab, quit the app). Maintainer decision 2026-08-14.
+
+**Root cause (audited):** PTYs are ordinary children of the node server's process group (`node-pty`, no `detached`/`setsid` in `src/terminals/registry/lifecycle.ts`), so any server death kills them; the registry (`sessions` Map) is in-memory only and *dynamic* terminal identity (`dynamicConfigs`) has zero disk persistence. The client already treats `GET /api/terminal/list` + the checkout-WS `history` replay (docs/54) as the source of truth for which tabs exist — the surface auto-restore reuses.
+
+**Design:** a **detached PTY broker** process in its own process group that owns all PTYs, holds scrollback + dynamic identity, and exposes a control socket; the node server becomes a client that **re-adopts** live sessions on restart. Explicit closes and app-quit signal the broker to kill; a client-lease heartbeat makes the broker self-exit rather than leave orphan shells. Accidental *node* death survives; broker death / reboot does not (accepted scope). Phased plan in §136.7 (broker skeleton → detach+re-adopt → explicit-close+quit+lease → dynamic-config persistence → Windows+tests). Also flags the observed 2026-08-14 `--replace` port double-bind (two servers on 4174) as a companion fix. Absorption layer = HS-9656/docs/134; prevention = docs/128/131 (HS-9566).
+
 ## 16. Related reading
 
 - **Code map:** `docs/ai/code-summary.md` (sibling file — read together).
