@@ -139,30 +139,34 @@ describe('connectCodexDaemon — real UDS WebSocket round-trip', () => {
 describe('ensureCodexDaemonRunning (HS-9396)', () => {
   afterEach(() => { _resetEnsureCodexDaemonForTesting(); });
 
-  it('resolves true immediately when the socket already exists (no start)', async () => {
+  it('resolves true immediately when the daemon is LIVE (no start)', async () => {
     const startDaemon = vi.fn();
-    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', fileExists: () => true, startDaemon })).toBe(true);
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(true), startDaemon })).toBe(true);
     expect(startDaemon).not.toHaveBeenCalled();
   });
 
-  it('starts the daemon and polls until the socket appears', async () => {
+  it('HS-9667 — a stale socket (present but not listening) is treated as DOWN → starts the daemon', async () => {
+    // Live probe returns false (stale/ECONNREFUSED) until start flips it true.
     let up = false;
     const startDaemon = vi.fn().mockImplementation(() => { up = true; return Promise.resolve(true); });
-    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', fileExists: () => up, startDaemon })).toBe(true);
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(up), startDaemon })).toBe(true);
     expect(startDaemon).toHaveBeenCalledTimes(1);
   });
 
   it('resolves false when the start command fails', async () => {
-    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', fileExists: () => false, startDaemon: () => Promise.resolve(false) })).toBe(false);
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(false), startDaemon: () => Promise.resolve(false) })).toBe(false);
   });
 
   it('concurrent callers share ONE in-flight start (several projects registering at once)', async () => {
     let resolveStart: (v: boolean) => void = () => { /* replaced below */ };
     let up = false;
     const startDaemon = vi.fn().mockImplementation(() => new Promise<boolean>((r) => { resolveStart = r; }));
-    const deps = { socketPath: '/s.sock', fileExists: () => up, startDaemon };
+    const deps = { socketPath: '/s.sock', probeSocket: () => Promise.resolve(up), startDaemon };
     const a = ensureCodexDaemonRunning(deps);
     const b = ensureCodexDaemonRunning(deps);
+    // Let the first liveness probe resolve (false) so the shared in-flight reaches
+    // `start()` and assigns `resolveStart` before we drive it.
+    await new Promise((r) => setTimeout(r, 0));
     up = true;
     resolveStart(true);
     expect(await a).toBe(true);

@@ -10,7 +10,7 @@
 // `perMessageDeflate: false` and a plain `host` header.
 
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { connect as netConnect } from 'net';
 import { homedir } from 'os';
 import { join } from 'path';
 import { WebSocket } from 'ws';
@@ -122,10 +122,26 @@ function startDaemonProcess(): Promise<boolean> {
 export interface EnsureDaemonDeps {
   /** Injectable for tests. Defaults to `codexDaemonSocketPath()`. */
   socketPath?: string;
-  /** Injectable for tests. Defaults to `fs.existsSync`. */
-  fileExists?: (path: string) => boolean;
+  /** Injectable for tests. Liveness probe of the daemon socket — defaults to a real
+   *  UDS connect. NOT mere file existence: a stale socket left by an unclean daemon
+   *  death must read as DOWN (HS-9667). */
+  probeSocket?: (sockPath: string) => Promise<boolean>;
   /** Injectable for tests. Defaults to the real `codex app-server daemon start`. */
   startDaemon?: () => Promise<boolean>;
+}
+
+/** Liveness probe: connect to the UDS. `true` only if something is LISTENING; a
+ *  stale socket file (daemon SIGKILLed) yields `ECONNREFUSED` → `false`. */
+function probeDaemonSocket(sockPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: boolean): void => { if (!done) { done = true; try { socket.destroy(); } catch { /* ignore */ } resolve(v); } };
+    const socket = netConnect(sockPath);
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    const t = setTimeout(() => finish(false), 1500);
+    t.unref();
+  });
 }
 
 let ensureInFlight: Promise<boolean> | null = null;
@@ -136,9 +152,9 @@ export function _resetEnsureCodexDaemonForTesting(): void {
 }
 
 /**
- * HS-9396 (docs/123 §123.5) — make sure the shared daemon is RUNNING without
- * opening a connection to it: socket present → done; otherwise start the daemon
- * and poll for the socket. Used by the terminal-prep pre-start (project
+ * HS-9396 (docs/123 §123.5) — make sure the shared daemon is RUNNING: probe the
+ * socket for LIVENESS (HS-9667 — a stale file is not "running"); if down, start the
+ * daemon and poll until it's live. Used by the terminal-prep pre-start (project
  * registration / `ai_tool` switch / drive re-enable) so codex terminals can
  * launch attached with no play required first. Concurrent callers (several
  * projects registering at once) share one in-flight start. Resolves whether the
@@ -147,19 +163,24 @@ export function _resetEnsureCodexDaemonForTesting(): void {
  * (live-verified, 0.145.0).
  */
 export function ensureCodexDaemonRunning(deps: EnsureDaemonDeps = {}): Promise<boolean> {
-  const sockPath = deps.socketPath ?? codexDaemonSocketPath();
-  const fileExists = deps.fileExists ?? existsSync;
-  if (fileExists(sockPath)) return Promise.resolve(true);
   if (ensureInFlight !== null) return ensureInFlight;
+  const sockPath = deps.socketPath ?? codexDaemonSocketPath();
+  const probe = deps.probeSocket ?? probeDaemonSocket;
   const start = deps.startDaemon ?? startDaemonProcess;
   ensureInFlight = (async () => {
     try {
+      // HS-9667 — probe LIVENESS, not file existence. A stale socket left by an
+      // unclean daemon death (server SIGKILL/OOM) would otherwise read as "running"
+      // → the daemon never restarts → `codex --remote unix://<stale>` fails with
+      // "failed to connect to remote app server". `codex app-server daemon start`
+      // itself handles the stale socket; the bug was never reaching it.
+      if (await probe(sockPath)) return true;
       if (!await start()) return false;
       for (const delayMs of [250, 1500, 3000]) {
-        if (fileExists(sockPath)) return true;
+        if (await probe(sockPath)) return true;
         await new Promise((r) => { const t = setTimeout(r, delayMs); t.unref(); });
       }
-      return fileExists(sockPath);
+      return await probe(sockPath);
     } finally {
       ensureInFlight = null;
     }
