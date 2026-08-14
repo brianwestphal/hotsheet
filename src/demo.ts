@@ -924,6 +924,13 @@ export async function seedDemoData(scenario: number): Promise<void> {
   // re-opens it below.
   writeProjectSettings(dataDir, { drawer_open: 'false' });
 
+  // HS-9003 — suppress the §86 "Set Up Your AI Assistant" nudge in demo mode: a
+  // showcase shouldn't nag about adding CLAUDE.md sections, and (unlike the
+  // client-only `__HOTSHEET_DISABLE_AI_NUDGE__` flag) a file setting also keeps
+  // it out of `domotion animate` captures, which drive the live app with their
+  // own browser (no Playwright init scripts). `readDismissed` reads this key.
+  writeProjectSettings(dataDir, { ai_instructions_nudge_dismissed: 'true' });
+
   if (scenario === 3) {
     writeProjectSettings(dataDir, { custom_views: JSON.stringify(SCENARIO_3_VIEWS) });
   }
