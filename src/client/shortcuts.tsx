@@ -629,6 +629,11 @@ export function activeElementUsesSpaceKey(): boolean {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement)) return false;
   if (el.tagName === 'BUTTON' || el.tagName === 'A') return true;
+  // HS-9661 — a focused attachment row consumes Space as its Quick Look/preview
+  // key (see `bindDetailAttachmentActions`), so the "Space = read latest note"
+  // shortcut must yield to it; otherwise selecting an attachment + Space opened
+  // the note instead of previewing.
+  if (el.classList.contains('attachment-item')) return true;
   const role = el.getAttribute('role');
   return role === 'button' || role === 'checkbox' || role === 'switch' || role === 'menuitem' || role === 'tab';
 }

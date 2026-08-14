@@ -32,6 +32,11 @@ describe('activeElementUsesSpaceKey (HS-8830)', () => {
     expect(activeElementUsesSpaceKey()).toBe(true);
   });
 
+  it('is true for a focused .attachment-item (HS-9661 — Space previews it)', () => {
+    focus('<div class="attachment-item" tabindex="0" data-focus>file.png</div>');
+    expect(activeElementUsesSpaceKey()).toBe(true);
+  });
+
   it('is false for a plain focused div / no focus', () => {
     focus('<div tabindex="0" data-focus>x</div>');
     expect(activeElementUsesSpaceKey()).toBe(false);
