@@ -528,6 +528,76 @@ describe('per-project undo stacks (HS-9335)', () => {
   });
 });
 
+// HS-9652 / HS-9653 — the status-change tracked helpers must write the ticket store
+// OPTIMISTICALLY, before the server round-trip resolves. Without this the column view
+// only reflected the change after a full refetch/WS/poll round-trip, which lagged
+// "excessively" on a busy/large project — a verified→completed move showed in BOTH
+// columns, and an archive appeared to "do nothing" for a long time. These tests hold
+// the server promise open and assert the store already moved.
+describe('optimistic store updates before the server resolves (HS-9652/9653)', () => {
+  /** A ticket seeded into the SAME fresh store instance the fresh actions module uses
+   *  (return type inferred — the store instance comes from the post-`resetModules` graph). */
+  async function seed(t: Ticket) {
+    const actions = await freshActions();
+    const { ticketsStore } = await import('../ticketsStore.js');
+    ticketsStore.actions.setTickets([t]);
+    return { actions, store: ticketsStore };
+  }
+
+  it('trackedBatch moves a verified ticket to completed in the store before batchTickets resolves', async () => {
+    const { actions, store } = await seed(ticket({ id: 42, status: 'verified' }));
+    let releaseServer!: () => void;
+    mockBatchTickets.mockReset().mockImplementation(() => new Promise<void>(r => { releaseServer = r; }));
+
+    const p = actions.trackedBatch(
+      [ticket({ id: 42, status: 'verified' })],
+      { ids: [42], action: 'status', value: 'completed' },
+      'Move',
+    );
+    // Server still pending — the store must ALREADY show the move (this is the fix).
+    expect(store.state.value.tickets.find(t => t.id === 42)?.status).toBe('completed');
+    releaseServer();
+    await p;
+    expect(store.state.value.tickets.find(t => t.id === 42)?.status).toBe('completed');
+  });
+
+  it('trackedBatch archives a verified ticket in the store before the server resolves', async () => {
+    const { actions, store } = await seed(ticket({ id: 7, status: 'verified' }));
+    let releaseServer!: () => void;
+    mockBatchTickets.mockReset().mockImplementation(() => new Promise<void>(r => { releaseServer = r; }));
+
+    const p = actions.trackedBatch(
+      [ticket({ id: 7, status: 'verified' })],
+      { ids: [7], action: 'status', value: 'archive' },
+      'Archive',
+    );
+    expect(store.state.value.tickets.find(t => t.id === 7)?.status).toBe('archive');
+    releaseServer();
+    await p;
+  });
+
+  it('trackedPatch applies a single-ticket status change to the store before updateTicket resolves', async () => {
+    const { actions, store } = await seed(ticket({ id: 5, status: 'verified' }));
+    let releaseServer!: (t: Ticket) => void;
+    mockUpdateTicket.mockReset().mockImplementation(() => new Promise<unknown>(r => { releaseServer = r; }));
+
+    const p = actions.trackedPatch(ticket({ id: 5, status: 'verified' }), { status: 'completed' }, 'Move');
+    expect(store.state.value.tickets.find(t => t.id === 5)?.status).toBe('completed');
+    releaseServer(ticket({ id: 5, status: 'completed' }));
+    await p;
+    expect(store.state.value.tickets.find(t => t.id === 5)?.status).toBe('completed');
+  });
+
+  it('reverts via loadTickets when the server rejects the batch', async () => {
+    const { actions } = await seed(ticket({ id: 9, status: 'verified' }));
+    mockBatchTickets.mockReset().mockRejectedValue(new Error('boom'));
+    await expect(
+      actions.trackedBatch([ticket({ id: 9, status: 'verified' })], { ids: [9], action: 'status', value: 'completed' }, 'Move'),
+    ).rejects.toThrow('boom');
+    expect(mockLoadTickets).toHaveBeenCalled(); // resync from the server's truth
+  });
+});
+
 // Discourage `Mock` type from being shaken out by tsc's unused-import check.
 const _typeOnly: Mock | null = null;
 void _typeOnly;

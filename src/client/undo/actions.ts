@@ -34,6 +34,35 @@ export function snapshot(ticket: Ticket, includeNotes = false): TicketSnapshot {
   return s;
 }
 
+/**
+ * HS-9652 / HS-9653 — apply a batch op to the ticket store IMMEDIATELY, before the
+ * server round-trip, so the column view moves/removes the card instantly. Without this,
+ * `trackedBatch`/`trackedPatch` only fired the server call and waited for a full
+ * `loadTickets()` refetch (or a `/ws/sync` push, or the long-poll) to bring the change
+ * back — which on a busy/large project lagged "excessively", showing a verified→completed
+ * move in BOTH columns (9652) or an archive that "did nothing" for a long time (9653).
+ * The follow-up refetch the callers already run reconciles the authoritative state; on a
+ * server error the caller path here calls `loadTickets()` to revert. Mirrors the HS-9052
+ * read-state fix (which gave `mark_read`/`mark_unread` this treatment at the call site).
+ */
+function applyBatchOptimistic(op: { ids: number[]; action: string; value?: unknown }): void {
+  const { ids, action, value } = op;
+  for (const id of ids) {
+    if (action === 'delete') {
+      ticketsStore.actions.removeTicket(id);
+    } else if (action === 'status' && typeof value === 'string') {
+      ticketsStore.actions.optimisticUpdate(id, { status: value });
+    } else if (action === 'category' && typeof value === 'string') {
+      ticketsStore.actions.optimisticUpdate(id, { category: value });
+    } else if (action === 'priority' && typeof value === 'string') {
+      ticketsStore.actions.optimisticUpdate(id, { priority: value });
+    } else if (action === 'up_next' && typeof value === 'boolean') {
+      ticketsStore.actions.optimisticUpdate(id, { up_next: value });
+    }
+    // mark_read / mark_unread are applied optimistically by the caller (toggleReadState).
+  }
+}
+
 /** Record and apply a single-ticket field change. */
 export async function trackedPatch(
   ticket: Ticket,
@@ -44,7 +73,19 @@ export async function trackedPatch(
   // HS-8642 — `updates` is a loose field bag (callers like ticketRow /
   // contextMenu still build `{ [field]: value }`); validate + narrow it to the
   // typed request shape so we route through the typed `updateTicket` caller.
-  const updated = await updateTicket(ticket.id, UpdateTicketSchema.parse(updates));
+  const parsed = UpdateTicketSchema.parse(updates);
+  // HS-9652/9653 — optimistic store write BEFORE the round-trip so the column view
+  // reflects the change instantly (see `applyBatchOptimistic`). `parsed` is a
+  // validated UpdateTicketReq, a structural subset of `Ticket`.
+  ticketsStore.actions.optimisticUpdate(ticket.id, parsed);
+  let updated: Ticket;
+  try {
+    updated = await updateTicket(ticket.id, parsed);
+  } catch (e) {
+    void loadTickets(); // revert the optimistic change from the server's truth
+    throw e;
+  }
+  ticketsStore.actions.applyServerUpdate(updated); // authoritative
   const after = snapshot(updated);
   activeStack().push({ label, timestamp: Date.now(), before: [before], after: [after] });
   return updated;
@@ -80,7 +121,6 @@ export async function trackedBatch(
   // through the typed `batchTickets`. The narrowed `action` / `value` also
   // drive the after-state below via `typeof` guards (no more `as string`).
   const parsed = BatchActionSchema.parse(batchBody);
-  await batchTickets(parsed);
 
   // Construct after-state from the batch action
   const afters = befores.map(b => {
@@ -96,6 +136,16 @@ export async function trackedBatch(
     return a;
   });
 
+  // HS-9652/9653 — apply to the store BEFORE the server round-trip so the column view
+  // moves/removes cards instantly; the caller's follow-up `loadTickets()` reconciles.
+  applyBatchOptimistic(parsed);
+  try {
+    await batchTickets(parsed);
+  } catch (e) {
+    void loadTickets(); // revert the optimistic change from the server's truth
+    throw e;
+  }
+
   activeStack().push({ label, timestamp: Date.now(), before: befores, after: afters });
 }
 
@@ -110,8 +160,16 @@ export async function trackedCompoundBatch(
   // HS-8642 — validate + narrow each op to `BatchActionReq`, then route through
   // the typed `batchTickets`. The same narrowed ops drive the after-state.
   const parsedOps = operations.map(op => BatchActionSchema.parse(op));
-  for (const op of parsedOps) {
-    await batchTickets(op);
+  // HS-9652/9653 — apply each op to the store BEFORE the round-trips so the column
+  // view updates instantly; the caller's follow-up `loadTickets()` reconciles.
+  for (const op of parsedOps) applyBatchOptimistic(op);
+  try {
+    for (const op of parsedOps) {
+      await batchTickets(op);
+    }
+  } catch (e) {
+    void loadTickets(); // revert the optimistic changes from the server's truth
+    throw e;
   }
 
   // Construct after-state by applying all operations in order
@@ -135,7 +193,15 @@ export async function trackedCompoundBatch(
 /** Record and apply a single-ticket deletion. */
 export async function trackedDelete(ticket: Ticket): Promise<void> {
   const before = snapshot(ticket);
-  await deleteTicket(ticket.id);
+  // HS-9652/9653 — drop from the store immediately so the card disappears now, not
+  // after the server round-trip + refetch.
+  ticketsStore.actions.removeTicket(ticket.id);
+  try {
+    await deleteTicket(ticket.id);
+  } catch (e) {
+    void loadTickets(); // the delete didn't persist — bring the ticket back
+    throw e;
+  }
   const after = { ...before, status: 'deleted' };
   activeStack().push({ label: 'Delete ticket', timestamp: Date.now(), before: [before], after: [after] });
 }
