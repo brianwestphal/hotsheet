@@ -211,6 +211,10 @@ export interface WsSyncDeps {
   /** HS-9305 — report the connection state for a project's `/ws/sync` (docs/112
    *  §112.8) so a remote project's tab can show connected/reconnecting/unreachable. */
   setConnectivity: (secret: string, state: 'connected' | 'reconnecting' | 'unreachable') => void;
+  /** HS-9662 — fired when the sync socket reconnects AFTER a drop (server restart /
+   *  crash / --replace), NOT on the first connect. Used to rebuild terminal tabs so
+   *  broker-preserved + re-adopted PTY sessions reappear without an app restart. */
+  onReconnected?: () => void;
 }
 
 export interface WsSync {
@@ -243,6 +247,7 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
   let connectedSecret: string | null = null;
   let reconnectAttempt = 0;
   let reconnectTimer: unknown = null;
+  let reconnectPending = false; // HS-9662 — true once a disconnect has happened, so the next connect fires onReconnected
   let livenessTimer: unknown = null;
   let stopped = true;
   const drops: number[] = [];
@@ -353,11 +358,20 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     // HS-9305 — per-project connectivity (docs/112 §112.8): this project's socket
     // is live → 'connected'.
     if (connectedSecret !== null) deps.setConnectivity(connectedSecret, 'connected');
+    // HS-9662 — a RECONNECT (not the first connect) means the server went away and
+    // came back (restart / crash / --replace). Rebuild the terminal tabs so any
+    // PTY sessions the broker preserved + the fresh server re-adopted reappear as
+    // tabs (with scrollback) — without needing an app restart or manual resume.
+    if (reconnectPending) {
+      reconnectPending = false;
+      deps.onReconnected?.();
+    }
   }
 
   function onDisconnect(): void {
     socket = null;
     active = false;
+    reconnectPending = true; // HS-9662 — next successful connect is a RECONNECT
     drops.push(deps.now());
     if (!fallback && shouldFallback(drops, deps.now())) {
       fallback = true;
@@ -501,6 +515,13 @@ const wsSync = createWsSync({
   },
   setConnectivity: (secret, state) => {
     void import('./remoteConnectivity.js').then(({ setConnectivity }) => setConnectivity(secret, state));
+  },
+  // HS-9662 — on reconnect after a server restart, rebuild the terminal tabs so
+  // sessions the PTY broker preserved (and the fresh server re-adopted) reappear
+  // with scrollback, no app restart / manual resume needed. `loadAndRenderTerminalTabs`
+  // reconciles the client tabs against `/api/terminal/list` and reattaches each.
+  onReconnected: () => {
+    void import('./terminal.js').then(({ loadAndRenderTerminalTabs }) => loadAndRenderTerminalTabs());
   },
 });
 

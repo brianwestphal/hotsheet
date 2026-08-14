@@ -114,6 +114,7 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
   const onActiveDeviceChanged = vi.fn();
   const onWorkerPartitionProposed = vi.fn();
   const setConnectivity = vi.fn();
+  const onReconnected = vi.fn();
   const loaded = new Set<number>(loadedIds);
   const ws = createWsSync({
     createSocket: (url) => { urls.push(url); const s = new FakeSocket(); sockets.push(s); return s; },
@@ -134,9 +135,10 @@ function harness(initialSecret: string | null = 'sec', loadedIds: number[] = [])
     onActiveDeviceChanged,
     onWorkerPartitionProposed,
     setConnectivity,
+    onReconnected,
   });
   return {
-    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged, onWorkerPartitionProposed, setConnectivity,
+    ws, sockets, urls, refreshData, refreshDetail, refreshStats, refreshClaims, refreshFeedback, removeTicket, optimisticUpdate, showHint, onActiveDeviceChanged, onWorkerPartitionProposed, setConnectivity, onReconnected,
     last: () => sockets[sockets.length - 1],
     runTimers: () => { const pending = timers.splice(0); for (const t of pending) t(); },
     setNow: (n: number) => { now = n; },
@@ -165,6 +167,18 @@ describe('createWsSync flow', () => {
     h.runTimers();
     expect(h.ws.isActive()).toBe(false); // → the poll fallback stops being suppressed
     expect(socket.closed).toBe(true);    // the dead socket is torn down (then reconnect is scheduled)
+  });
+
+  it('fires onReconnected on a RECONNECT but not on the first connect (HS-9662)', () => {
+    const h = harness();
+    h.ws.start();
+    h.last().push({ type: 'connected', seq: 1 });
+    expect(h.onReconnected).not.toHaveBeenCalled(); // first connect must NOT fire it
+    // Server drops (restart / crash), then the backoff reconnect fires + reconnects.
+    h.last().onclose?.();
+    h.runTimers();
+    h.last().push({ type: 'connected', seq: 2 });
+    expect(h.onReconnected).toHaveBeenCalledTimes(1); // rebuild terminal tabs on the way back
   });
 
   it('does not connect when there is no active project secret', () => {
