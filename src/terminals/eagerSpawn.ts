@@ -1,7 +1,7 @@
 import { prestartProjectDriveService } from '../aiTools/serverCapabilities.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
 import { listTerminalConfigs } from './config.js';
-import { ensureSpawned } from './registry.js';
+import { ensureSpawned, readoptProjectBrokerSessions } from './registry.js';
 
 /**
  * Best-effort eager spawn of every non-lazy configured terminal for a project
@@ -28,6 +28,16 @@ export function eagerSpawnTerminals(secret: string, dataDir: string): void {
   // HS-9493 — ready the drive's backing service, if this project's tool has one.
   // A no-op for every tool that doesn't (docs/132 §132.1.1).
   prestartProjectDriveService(dataDir);
+  // HS-9662 — re-adopt any of THIS project's terminals that survived an accidental
+  // server death in the broker (lazy + dynamic included, which the eager loop below
+  // would skip). Done per-project as it registers, so it can't race the async
+  // project restore the way a single post-restore sweep did.
+  try {
+    const n = readoptProjectBrokerSessions(secret, dataDir);
+    if (n > 0) console.log(`[terminals] re-adopted ${String(n)} surviving terminal(s) for project`);
+  } catch (err) {
+    console.warn(`[terminals] broker re-adopt failed: ${getErrorMessage(err)}`);
+  }
   let configs;
   try {
     configs = listTerminalConfigs(dataDir);

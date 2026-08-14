@@ -27,6 +27,7 @@ export {
   killTerminal,
   listProjectTerminalIds,
   readoptBrokerSessions,
+  readoptProjectBrokerSessions,
   restartTerminal,
   scrubParentEnv,
   setPtyFactory,

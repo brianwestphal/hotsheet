@@ -251,10 +251,29 @@ export function adoptSurvivedSession(secret: string, dataDir: string, terminalId
 }
 
 /**
+ * HS-9662 — re-adopt ALL survived broker sessions for ONE project (lazy, dynamic,
+ * and non-lazy alike). Called from `eagerSpawnTerminals` as each project registers,
+ * so re-adoption happens per-project as restore completes rather than in a single
+ * post-restore sweep that races the async project restore (the bug that left the
+ * `claude`/dynamic — i.e. lazy — sessions un-adopted). Returns the count adopted.
+ */
+export function readoptProjectBrokerSessions(secret: string, dataDir: string): number {
+  if (!isBrokerMode()) return 0;
+  const prefix = `${secret}::`;
+  let adopted = 0;
+  for (const info of remainingSurvivedSessions()) {
+    if (!info.sessionId.startsWith(prefix)) continue;
+    const terminalId = info.sessionId.slice(prefix.length);
+    if (adoptSurvivedSession(secret, dataDir, terminalId)) adopted++;
+  }
+  return adopted;
+}
+
+/**
  * HS-9662 / docs/136 phase 2 — sweep the remaining survived broker sessions after
- * projects are restored (the ones no eager-spawn adopted, e.g. lazy terminals), so
- * their tabs come back too. `dataDirForSecret` maps a project secret → its dataDir;
- * sessions whose project isn't registered this run are left in the broker.
+ * projects are restored (a backstop for any project whose registration path didn't
+ * re-adopt). `dataDirForSecret` maps a project secret → its dataDir; sessions whose
+ * project isn't registered this run are left in the broker.
  */
 export function readoptBrokerSessions(dataDirForSecret: (secret: string) => string | null): number {
   if (!isBrokerMode()) return 0;

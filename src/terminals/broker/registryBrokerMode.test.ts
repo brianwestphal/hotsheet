@@ -99,9 +99,11 @@ describe('registry ↔ broker (broker mode, fake pty)', () => {
     reg.destroyAllTerminals();
     expect(broker.ptyForTest('secA::claude')).not.toBeNull(); // pty survived in the broker
 
-    // Fresh server: re-init + re-adopt.
+    // Fresh server: re-init + re-adopt via the PER-PROJECT path (the one
+    // eager-spawn uses as each project registers — covers lazy terminals, unlike a
+    // post-restore sweep that races async restore).
     await brokerMode.initBrokerMode();
-    const n = reg.readoptBrokerSessions((s) => (s === 'secA' ? dataDir : null));
+    const n = reg.readoptProjectBrokerSessions('secA', dataDir);
     expect(n).toBe(1);
     // A new attach replays the survived scrollback as history.
     const res = reg.attach('secA', dataDir, { onData: () => { /* */ }, onExit: () => { /* */ } }, { configOverride: CFG }, 'claude');
