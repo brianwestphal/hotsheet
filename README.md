@@ -119,11 +119,7 @@ The loop stays tight because the AI always knows what to work on next — and yo
 </p>
 
 <p align="center">
-  <img src="docs/demo-11.svg" alt="Embedded terminal in the footer drawer with named tabs for dev server, tests, and Claude" width="900">
-</p>
-
-<p align="center">
-  <img src="docs/demo-12.svg" alt="Terminal dashboard view showing every terminal across every registered project as a tile grid" width="900">
+  <img src="docs/demo-12.svg" alt="Terminal flow: a project terminal in the footer drawer, then the terminal dashboard grid of every terminal across every project, magnifying one tile and dropping into its full view" width="900">
 </p>
 
 **Multi-project tabs** — open multiple projects in a single window. Each project remembers its own sidebar view, settings, sort preferences, and layout. Tabs appear automatically when you register a second project via Open Folder (`Cmd+O`). Drag tabs to reorder, right-click for close options and "Show in Finder," switch with `Cmd+Shift+[/]`.

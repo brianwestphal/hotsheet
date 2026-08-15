@@ -102,7 +102,7 @@ const DEMO_META: Record<number, DemoMeta> = {
   9: { verb: 'focus', heroSelector: '#channel-play-section, [id^="channel-play"]', caption: 'Send a ticket straight to Claude Code', captionPosition: 'top-center' },
   10: { verb: 'focus', heroSelector: '.project-tabs-inner', caption: 'Switch projects without leaving Hot Sheet', captionPosition: 'bottom-center', focusScale: 1.55, highlight: true },
   11: { verb: 'focus', heroSelector: '#footer-drawer, [id^="drawer-"]', caption: 'Terminals, built right in', captionPosition: 'top-center' },
-  12: { verb: 'dolly', caption: 'Every terminal at once', captionPosition: 'top-center' },
+  12: { verb: 'dolly', caption: 'Every terminal, one click away', captionPosition: 'top-center' },
   13: { verb: 'focus', heroSelector: '#telemetry-dashboard-cost-over-time, .cross-project-stats-page', caption: 'Track Claude Code costs over time', captionPosition: 'top-center' },
   14: { verb: 'focus', heroSelector: '.announcer-pip', caption: 'Hear what shipped — narrated, with diffs', captionPosition: 'top-center' },
 };
@@ -333,6 +333,43 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
       }));
       return [open, ...steps];
     },
+  },
+  // demo-12 — combined terminal flow (HS-9674, replaces the old drawer + static
+  // dashboard demos): start on a project terminal in the drawer, click into the
+  // terminal dashboard (grid of every terminal across every project), click a
+  // tile to magnify it, then double-click to drop back into the full terminal on
+  // the project tab.
+  12: {
+    posterAtMs: 4600,
+    frames: (url) => [
+      // 1. Drawer open on the Claude terminal (seeded active), content showing.
+      { input: url, waitFor: '#terminal-dashboard-toggle', wait: 1500, duration: 1900 },
+      // 2. Open the terminal dashboard — grid of every terminal.
+      {
+        continue: true,
+        actions: [{ type: 'click', selector: '#terminal-dashboard-toggle' }, { type: 'wait', ms: 1600 }],
+        duration: 2400,
+        transition: { type: 'crossfade', duration: 250 },
+      },
+      // 3. Click a tile → magnify it (~70% viewport, keyboard-focusable).
+      {
+        continue: true,
+        actions: [{ type: 'click', selector: '.terminal-dashboard-tile[data-terminal-id="claude"]' }, { type: 'wait', ms: 700 }],
+        duration: 2000,
+        transition: { type: 'crossfade', duration: 200 },
+      },
+      // 4. Double-click → drop into the full terminal back on the project tab
+      //    (HS-9625 routes a dashboard double-click to the drawer).
+      {
+        continue: true,
+        actions: [
+          { type: 'evaluate', script: "var t=document.querySelector('.terminal-dashboard-tile[data-terminal-id=\"claude\"]'); if(t){t.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));}" },
+          { type: 'wait', ms: 1400 },
+        ],
+        duration: 2600,
+        transition: { type: 'crossfade', duration: 250 },
+      },
+    ],
   },
 };
 
@@ -1041,9 +1078,13 @@ async function captureScenario(scenario: Scenario): Promise<void> {
 async function main(): Promise<void> {
   // Optional filter: `tsx scripts/capture-demos.ts 8 13`
   const filterArgs = process.argv.slice(2).map(Number).filter((n) => !isNaN(n));
+  // HS-9674 — scenario 11 (drawer terminals) is folded into the demo-12 combined
+  // terminal flow, so it's no longer captured as its own README asset. Still
+  // reachable explicitly (`tsx scripts/capture-demos.ts 11`) + as a --demo:11 run.
+  const CAPTURE_EXCLUDE = new Set<number>([11]);
   const scenarios = filterArgs.length > 0
     ? DEMO_SCENARIOS.filter((s) => filterArgs.includes(s.id))
-    : DEMO_SCENARIOS;
+    : DEMO_SCENARIOS.filter((s) => !CAPTURE_EXCLUDE.has(s.id));
 
   if (scenarios.length === 0) {
     console.error(`No matching scenarios. Available ids: ${DEMO_SCENARIOS.map((s) => s.id).join(', ')}`);

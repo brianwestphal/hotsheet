@@ -800,7 +800,11 @@ const SCENARIO_12_PRIMARY_TERMINALS = [
     id: 'claude',
     name: 'Claude',
     command: "stty -echoctl 2>/dev/null; while :; do printf '\\033[H\\033[2J\\033[36mClaude Code\\033[0m \\033[2mv2.0.0  (opus-4-7)\\033[0m\\n\\n\\033[33m>\\033[0m implement dark mode toggle in the settings dialog\\n\\n\\033[32m●\\033[0m Reading project layout\\n  \\033[2m└─ src/client/settingsDialog.tsx\\033[0m\\n  \\033[2m└─ src/client/styles.scss\\033[0m\\n\\n\\033[32m●\\033[0m Adding theme toggle to General tab\\n  \\033[2m└─ Edit(src/client/settingsDialog.tsx) +18 -2\\033[0m\\n  \\033[2m└─ Edit(src/client/styles.scss) +24 -0\\033[0m\\n\\n\\033[32m●\\033[0m Running tests \\033[32m✓ 12 passed\\033[0m\\n\\nDark mode toggle is live in General → Theme.\\n\\n\\033[33m>\\033[0m \\033[7m \\033[0m\\n'; sleep 10; done",
-    lazy: false,
+    // HS-9674 — the drawer opens on this terminal at load; `lazy` so it spawns on
+    // attach (after the resize branch) and its first print SURVIVES the HS-6799
+    // Ctrl-L, showing content immediately in the drawer. It's alive by the time
+    // the dashboard opens, so its tile shows content there too.
+    lazy: true,
     ...DEMO_TERMINAL_APPEARANCE,
   },
 ];
@@ -1041,11 +1045,14 @@ export async function seedDemoData(scenario: number): Promise<void> {
     // the view — the screenshot workflow then captures all ~7 terminals
     // as a single grid.
     //
-    // HS-8688 — uses `SCENARIO_12_PRIMARY_TERMINALS` (eager / no printf)
-    // instead of `SCENARIO_11_TERMINALS` (lazy / printf). See the
-    // SCENARIO_12_PRIMARY_TERMINALS comment for the rationale.
+    // HS-8688 — uses `SCENARIO_12_PRIMARY_TERMINALS` (eager, redraw-loop printf
+    // that survives the HS-6799 Ctrl-L) so every dashboard tile shows content.
+    // HS-9674 — open the drawer on the Claude terminal so the combined demo
+    // STARTS on a project terminal, then clicks into the dashboard.
     writeProjectSettings(dataDir, {
       terminals: JSON.stringify(SCENARIO_12_PRIMARY_TERMINALS),
+      drawer_open: 'true',
+      drawer_active_tab: 'terminal:claude',
     });
   }
 }
