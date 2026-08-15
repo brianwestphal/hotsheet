@@ -779,15 +779,20 @@ async function captureInteractionDemo(id: number, port: number, secret: string, 
 
 /** HS-9664 — a purple rounded-rect emphasis ring around `box`, injected into the
  *  app SVG just before `</svg>` (app-space coords, viewBox 0 0 W H). A soft wide
- *  translucent halo behind a crisp inner stroke reads as emphasis, not a border. */
+ *  translucent halo behind a crisp inner stroke reads as emphasis, not a border.
+ *  HS-9673 — the ring is baked into the app SVG (so it scales with the camera push
+ *  automatically), but starts hidden and FADES IN partway through the push, so it
+ *  clearly reads as an added highlight rather than part of the UI. */
 function injectHighlightRect(appSvg: string, box: { x: number; y: number; width: number; height: number }): string {
   const P = 7;
   const x = (box.x - P).toFixed(1);
   const y = (box.y - P).toFixed(1);
   const w = (box.width + P * 2).toFixed(1);
   const h = (box.height + P * 2).toFixed(1);
+  const delay = MOVE_START_MS + Math.round(MOVE_DUR_MS * 0.55); // ~mid-push
   const ring =
-    `<g>` +
+    `<style>@keyframes hsHiRing{from{opacity:0}to{opacity:1}}</style>` +
+    `<g style="opacity:0;animation:hsHiRing 450ms ease-out ${String(delay)}ms both">` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="13" ry="13" fill="none" stroke="#a855f7" stroke-opacity="0.28" stroke-width="12"/>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="13" ry="13" fill="none" stroke="#8b5cf6" stroke-width="4"/>` +
     `</g>`;
