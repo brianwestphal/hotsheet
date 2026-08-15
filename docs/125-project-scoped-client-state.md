@@ -163,6 +163,19 @@ matter of time.
 | HS-9415 | Fix (d) + claims: `buildScopeKey` project term, `claimsStore` refresh on switch |
 | HS-9416 | Build the `projectScoped<T>()` primitive + self-registration + the generic A→B→A test (layers 1–2) |
 | HS-9417 | ESLint backstop rule + allowlist (layer 3), after HS-9416 |
+| HS-9648 | Fix the stale-`loadDetail`-on-switch race (below) |
 
 HS-9412 – HS-9414 are worth fixing directly rather than waiting for the primitive: (b) and (c) show
 another project's data to the user, and each is a small keying change.
+
+### 125.6.1 HS-9648 — stale `loadDetail` across a switch (fixed)
+
+Not a module-level cache leak but the same *captured-id-outlives-the-switch* class: the attachment
+**drop** (`app.tsx`) and **paste** (`pasteAttachments.ts`) flows capture a ticket id, then run async
+(create + upload). A project switch mid-upload leaves the post-await `selectAndOpenDetail(<old-id>)`
+running with the new project active → `loadDetail` fires `GET /tickets/<old-id>?project=<new-secret>`
+→ 404 (logged, trips `STRICT_E2E_ERRORS`). Fixed by capturing the owning project secret **before** the
+awaits and skipping the select + refresh if it changed — the async-caller half of the §125.5 discipline
+(a `loadDetail`-entry secret-pin can't help: by then `getActiveProject()` is already the new project).
+`loadDetail` additionally guards its **response** (skip applying the payload if the project changed
+between request and response, since `reloadAppState` does not clear `activeTicketId`).
