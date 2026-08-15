@@ -28,8 +28,12 @@ import type { PtyLike, SpawnArgs } from './types.js';
  * DEFAULT ON (so beta / packaged users get survival), with an escape hatch and two
  * carve-outs:
  * - `HOTSHEET_PTY_BROKER=0` → off (escape hatch); `=1` → on (forces it, e.g. tests).
- * - **Windows** → off until the named-pipe port (HS-9666); the unix-socket spawn
- *   would just fail + fall back, so skip it to avoid the connect-retry startup delay.
+ * - **Windows** → the named-pipe transport IS implemented (HS-9666:
+ *   `brokerSocketPathFor` + `brokerSpawnOptions`), but the DEFAULT stays off until
+ *   it's verified on a real Windows host — an unverified pipe/spawn bug would cost
+ *   the full connect-retry window (~4s) before the in-process fallback. Verify with
+ *   `HOTSHEET_PTY_BROKER=1` (which forces it on, checked above), then remove this
+ *   gate. Follow-up ticket tracks the verify-then-enable step.
  * - **Unit suite** opts out via `vitest.setup.ts` (sets `=0`), so `registry.test.ts`
  *   etc. keep using the in-process factory; e2e sets `=0` too (HS-9666 adds a broker
  *   e2e). If the broker can't be reached at runtime, spawn falls back to in-process.
@@ -41,9 +45,38 @@ export function isBrokerMode(): boolean {
   return true;
 }
 
+/** HS-9666 — stable 32-bit FNV-1a hash of a string, hex. Used to derive a unique
+ *  Windows named-pipe name per `HOTSHEET_HOME` (pipes share one global namespace,
+ *  so the per-instance scoping the unix socket gets from its directory path has to
+ *  come from the pipe NAME instead). Deterministic + dependency-free → testable. */
+function hashForPipe(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
+ * HS-9666 — the broker control-socket path for a platform + instance dir. Pure +
+ * exported so BOTH OS branches are testable on any host (the `build_kill_command`
+ * pattern). node's `net` transports a Windows **named pipe** through the same
+ * `connect(path)` / `createServer().listen(path)` API as a unix socket, so only
+ * the path shape differs:
+ * - **win32** → `\\.\pipe\hotsheet-pty-broker-<hash>` (hash of the instance dir,
+ *   since the pipe namespace is global — a fixed name would collide across
+ *   `HOTSHEET_HOME`s / test instances).
+ * - **else** → `<dir>/pty-broker.sock` (a real file, scoped by its own path).
+ */
+export function brokerSocketPathFor(platform: NodeJS.Platform, dir: string): string {
+  if (platform === 'win32') return `\\\\.\\pipe\\hotsheet-pty-broker-${hashForPipe(dir)}`;
+  return join(dir, 'pty-broker.sock');
+}
+
 /** Per-instance broker socket path (scoped by `HOTSHEET_HOME` via globalHotsheetDir). */
 export function brokerSocketPath(): string {
-  return join(globalHotsheetDir(), 'pty-broker.sock');
+  return brokerSocketPathFor(process.platform, globalHotsheetDir());
 }
 
 interface Sink { onData(chunk: Buffer): void; onExit(code: number): void; pty: BrokerBackedPty }
@@ -185,20 +218,34 @@ function envToRecord(env: NodeJS.ProcessEnv): Record<string, string> {
  * runs the entry via tsx; prod runs the bundled entry. Best-effort: the client
  * retries the connect after this.
  */
+/**
+ * HS-9666 — platform detach options for the broker spawn. Pure + exported so both
+ * OS branches are testable on any host (the `build_kill_command` pattern).
+ * - **unix** → `detached: true` puts the child in its own process group (setsid),
+ *   so Tauri's `kill(-nodePid)` of the node group doesn't take it down.
+ * - **win32** → `detached: true` gives the child its own process group too (it's
+ *   not tied to the parent's console), and `windowsHide` keeps a console window
+ *   from flashing. Combined with `.unref()` the broker outlives the node server.
+ */
+export function brokerSpawnOptions(platform: NodeJS.Platform): { detached: true; windowsHide?: true } {
+  return platform === 'win32' ? { detached: true, windowsHide: true } : { detached: true };
+}
+
 function spawnDetachedBroker(socketPath: string): void {
   try {
     const here = fileURLToPath(import.meta.url);
     const isSource = here.endsWith('.ts');
     const logFd = openLogFd();
     const stdio = ['ignore', logFd ?? 'ignore', logFd ?? 'ignore'] as const;
+    const opts = brokerSpawnOptions(process.platform);
     if (isSource) {
       // dev: src/terminals/registry/brokerMode.ts → ../broker/ptyBrokerEntry.ts
       const entry = join(dirname(here), '..', 'broker', 'ptyBrokerEntry.ts');
-      spawn(process.execPath, ['--import', 'tsx', entry, socketPath], { detached: true, stdio: [...stdio], env: process.env }).unref();
+      spawn(process.execPath, ['--import', 'tsx', entry, socketPath], { ...opts, stdio: [...stdio], env: process.env }).unref();
     } else {
       // prod: the bundled entry sits next to dist/cli.js.
       const entry = join(dirname(here), 'ptyBrokerEntry.js');
-      spawn(process.execPath, [entry, socketPath], { detached: true, stdio: [...stdio], env: process.env }).unref();
+      spawn(process.execPath, [entry, socketPath], { ...opts, stdio: [...stdio], env: process.env }).unref();
     }
   } catch (e) {
     console.error('[pty-broker] failed to spawn broker:', e instanceof Error ? e.message : String(e));
