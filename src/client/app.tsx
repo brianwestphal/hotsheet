@@ -50,7 +50,7 @@ import { loadAppName, loadCategories, loadSettings, rebuildCategoryUI, setRestor
 import { initShare } from './share.js';
 import { bindKeyboardShortcuts } from './shortcuts.js';
 import { bindSearchInput, bindSidebar, bindSortControls, syncSearchInputFromState, syncSidebarActiveState } from './sidebar.js';
-import { refreshAllKnownTags, state } from './state.js';
+import { getActiveProject, refreshAllKnownTags, state } from './state.js';
 import { showTagsDialog } from './tagsDialog.js';
 import { bindExternalLinkHandler, checkForUpdate, requestNativeNotificationPermission } from './tauriIntegration.js';
 import { loadTelemetryCostMode } from './telemetryCostMode.js';
@@ -319,6 +319,10 @@ function bindFileDropListeners(): void {
       if (target.closest('.detail-body') || target.closest('.custom-view-editor-overlay') || target.closest('.feedback-dialog-overlay')) return;
       e.preventDefault();
       setFileDropRow(null);
+      // HS-9648 (docs/125) — the drop belongs to whatever project is active NOW;
+      // the upload + ticket-create below are async, so capture the owning secret
+      // to detect a project switch before we act on the (old-project) ticket id.
+      const dropSecret = getActiveProject()?.secret;
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
       // HS-9465 — check the bytes are actually there BEFORE creating a ticket or
@@ -351,6 +355,12 @@ function bindFileDropListeners(): void {
       if (unreadable.length > 0) {
         showErrorPopup(describeUnreadableDrop(unreadable), { title: 'Some files were skipped' });
       }
+      // HS-9648 (docs/125) — if the user switched projects during the async
+      // upload, this drop's ticket belongs to the OLD project. Selecting/opening
+      // it now would fire `loadDetail(<old-id>)` as `?project=<new-secret>` → 404
+      // (the stale-detail-on-switch race). Skip the select + refresh; the new
+      // project already loaded its own list on switch.
+      if (getActiveProject()?.secret !== dropSecret) return;
       // HS-8742 — when the drop created a fresh "Attachment" ticket (no row under
       // the cursor, no single selection), select + open it so the user lands on
       // it ready to retitle and see the attached files. Mirrors the paste flow.

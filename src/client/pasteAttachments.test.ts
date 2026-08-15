@@ -95,6 +95,38 @@ describe('handlePastedFiles (HS-8662)', () => {
     expect(createTicketMock).not.toHaveBeenCalled();
     expect(uploadAttachmentMock).not.toHaveBeenCalled();
   });
+
+  // HS-9648 (docs/125) — a project switch DURING the async upload must not leave
+  // the paste selecting/opening the old project's ticket in the new project
+  // (that fires loadDetail(<old-id>) as ?project=<new-secret> → 404).
+  it('switches project mid-paste → skips select + refresh (no stale open)', async () => {
+    const { setActiveProject } = await import('./state.js');
+    setActiveProject({ name: 'A', secret: 'a'.repeat(32), dataDir: '/tmp/a' });
+    // Flip to project B while the upload is in flight.
+    uploadAttachmentMock.mockImplementationOnce(() => {
+      setActiveProject({ name: 'B', secret: 'b'.repeat(32), dataDir: '/tmp/b' });
+      return Promise.resolve({} as unknown as Awaited<ReturnType<typeof uploadAttachment>>);
+    });
+
+    const id = await handlePastedFiles([file('a.png')]); // 0 selected → creates a ticket
+
+    expect(id).toBe(4242); // the (old-project) ticket was created + uploaded to
+    expect(uploadAttachmentMock).toHaveBeenCalled();
+    // Guard: don't open the old project's ticket, don't refresh into the new one.
+    expect(selectAndOpenDetailMock).not.toHaveBeenCalled();
+    expect(loadTicketsMock).not.toHaveBeenCalled();
+  });
+
+  it('project unchanged → still selects the new ticket + refreshes', async () => {
+    const { setActiveProject } = await import('./state.js');
+    setActiveProject({ name: 'A', secret: 'a'.repeat(32), dataDir: '/tmp/a' });
+
+    const id = await handlePastedFiles([file('a.png')]); // 0 selected → creates + opens
+
+    expect(id).toBe(4242);
+    expect(selectAndOpenDetailMock).toHaveBeenCalledExactlyOnceWith(4242);
+    expect(loadTicketsMock).toHaveBeenCalled();
+  });
 });
 
 describe('extractClipboardFiles (HS-8662)', () => {

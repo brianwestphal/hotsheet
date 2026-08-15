@@ -1,5 +1,5 @@
 import { createTicket, uploadAttachment } from '../api/index.js';
-import { state } from './state.js';
+import { getActiveProject, state } from './state.js';
 import { loadTickets } from './ticketList.js';
 import { showToast } from './toast.js';
 
@@ -66,6 +66,10 @@ export function extractClipboardFiles(data: DataTransfer | null): File[] {
 export async function handlePastedFiles(files: File[]): Promise<number | null> {
   if (files.length === 0) return null;
 
+  // HS-9648 (docs/125) — the paste belongs to the project active NOW; the
+  // create + upload below are async, so capture the owning secret to skip the
+  // (old-project) ticket select if the user switches projects mid-paste.
+  const pasteSecret = getActiveProject()?.secret;
   const selectedCount = state.selectedIds.size;
   if (selectedCount > 1) {
     showToast("Pasting attachments to multiple tickets at once isn't supported", { variant: 'warning' });
@@ -84,6 +88,10 @@ export async function handlePastedFiles(files: File[]): Promise<number | null> {
   for (const file of files) {
     await uploadAttachment(ticketId, file);
   }
+  // HS-9648 (docs/125) — if the user switched projects during the async upload,
+  // this ticket belongs to the OLD project; selecting it now would fire
+  // loadDetail(<old-id>) as ?project=<new-secret> → 404. Skip the select + refresh.
+  if (getActiveProject()?.secret !== pasteSecret) return ticketId;
   // HS-8742 — when we created a fresh "Attachment(s)" ticket, select + open it
   // so the user lands on it ready to retitle and see the attached files.
   if (createdNew) {

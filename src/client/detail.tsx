@@ -16,7 +16,7 @@ import { renderPluginDetailElements } from './pluginUI.js';
 import { effect, morph, signal } from './reactive.js';
 import { syncDetailReaderButton } from './readerOverlay.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
-import { getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
+import { getActiveProject, getCategoryColor, getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_LABELS, state, STATUS_LABELS } from './state.js';
 import { parseTags, renderDetailTags } from './tags.js';
 import { linkifyWithCachedPrefixes } from './ticketRefs.js';
 import { ticketsStore } from './ticketsStore.js';
@@ -433,10 +433,16 @@ export function refreshFeedbackDrafts(ticketId: number): void {
 }
 
 async function loadDetail(id: number, forceTextFields = false) {
+  // HS-9648 (docs/125) — pin the project this load belongs to. If the user
+  // switches projects between the request and its response, the id belongs to
+  // the OLD project, so applying the payload would show a stale ticket in the
+  // new project's panel (and `getActiveProject()` — which `api()` reads to build
+  // `?project=` — would already point at the new project). Skip on mismatch.
+  const owningSecret = getActiveProject()?.secret;
   // HS-8642 — typed detail payload (ticket + attachments + syncInfo) via the
   // shared `TicketDetailSchema`; the wire shape is validated by `apiCall`.
   const ticket = await getTicketDetail(id);
-  if (state.activeTicketId !== id) return;
+  if (state.activeTicketId !== id || getActiveProject()?.secret !== owningSecret) return;
 
   // Mark ticket as read — only if it's currently unread (prevents unnecessary PATCHes on poll refresh).
   // HS-8419 — route through `ticketsStore.actions.applyServerUpdate` so the
