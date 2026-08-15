@@ -147,22 +147,37 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
   // demo-2 — quick capture: type a ticket title key-by-key, press Enter, the new
   // card appears at the top of NOT STARTED (and the detail panel opens on it).
   2: {
-    posterAtMs: 4200,
+    posterAtMs: 5400,
+    // Explicit, legible sequence (HS-9669 round 2): the cursor rests over the
+    // board, MOVES up to the new-ticket field and clicks, THEN types (smooth
+    // `typing` overlay — the old typeResample left a white tail + read word-by-
+    // word), THEN presses Enter and the new card appears in the collection.
     frames: (url) => [
+      // 1. Establish — park the cursor on the search bar (a click target, since
+      //    cursor:auto animates between CLICKS, not hovers), so the move to the
+      //    new-ticket field in step 2 is a clearly visible travel.
       {
-        // Standard `typing` overlay (smooth char-by-char, anchored to the input)
-        // instead of `typeResample` — the per-key re-capture left a ~800ms white
-        // tail and read as word-by-word (HS-9669). One static base capture with
-        // the overlay drawn on top of the (empty) input.
         input: url,
         waitFor: 'input.draft-input',
-        wait: 700,
+        wait: 500,
+        actions: [{ type: 'click', selector: 'input[placeholder*="Search"], .search-input, #search-input' }, { type: 'wait', ms: 250 }],
+        duration: 1100,
+      },
+      // 2. Move to the field and click (cursor travels up from the card).
+      {
+        continue: true,
         actions: [
           { type: 'click', selector: 'input.draft-input' },
-          // Clear the "New ticket…" placeholder so the typing overlay draws on a
-          // clean field (otherwise the placeholder shows through the typed text).
+          // Clear the "New ticket…" placeholder so the typing overlay draws clean.
           { type: 'evaluate', script: "var i=document.querySelector('input.draft-input'); if(i){i.placeholder='';}" },
+          { type: 'wait', ms: 250 },
         ],
+        duration: 900,
+        transition: { type: 'crossfade', duration: 150 },
+      },
+      // 3. Type the ticket title (smooth overlay anchored to the input).
+      {
+        continue: true,
         overlays: [{
           kind: 'typing',
           text: 'Add dark mode support to the settings dialog',
@@ -175,11 +190,10 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
           caret: true,
           holdToFrameEnd: true,
         }],
-        duration: 2800,
+        duration: 2700,
       },
+      // 4. Press Enter → the new card appears at the top of NOT STARTED.
       {
-        // Actually submit: fill the input (so the app's Enter handler creates the
-        // ticket), press Enter, wait for the new card to render.
         continue: true,
         actions: [
           { type: 'fill', selector: 'input.draft-input', value: 'Add dark mode support to the settings dialog' },
@@ -251,16 +265,24 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
         continue: true,
         actions: [
           { type: 'hover', selector: '.ticket-row:has(.ticket-checkbox:checked)' },
-          { type: 'evaluate', script: "var row=document.querySelector('.ticket-row:has(.ticket-checkbox:checked)'); if(row){var r=row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:Math.round(r.left+150),clientY:Math.round(r.top+18)})); var items=[].slice.call(document.querySelectorAll('.context-menu .context-menu-item.has-submenu')); var pri=items.filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='Priority';})[0]; if(pri){pri.id='demoPriItem'; var sm=pri.querySelector('.context-submenu'); if(sm){sm.style.display='block';} var opt=[].slice.call(pri.querySelectorAll('.context-submenu .context-menu-item')).filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='High';})[0]; if(opt){opt.id='demoHighItem';}}}" },
+          // Open the menu + TAG the Priority item & its High option, but DON'T
+          // reveal the submenu yet — it should only open once the cursor reaches
+          // Priority (below), not the moment the menu appears.
+          { type: 'evaluate', script: "var row=document.querySelector('.ticket-row:has(.ticket-checkbox:checked)'); if(row){var r=row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:Math.round(r.left+150),clientY:Math.round(r.top+18)})); var items=[].slice.call(document.querySelectorAll('.context-menu .context-menu-item.has-submenu')); var pri=items.filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='Priority';})[0]; if(pri){pri.id='demoPriItem'; var opt=[].slice.call(pri.querySelectorAll('.context-submenu .context-menu-item')).filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='High';})[0]; if(opt){opt.id='demoHighItem';}}}" },
           { type: 'wait', ms: 300 },
         ],
         duration: 1200,
         transition: { type: 'crossfade', duration: 200 },
       },
-      // Cursor moves up into the menu, onto the Priority item (submenu visible).
+      // Cursor moves up into the menu, onto the Priority item — NOW reveal the
+      // submenu (hover triggers CSS :hover; force it visible belt-and-braces).
       {
         continue: true,
-        actions: [{ type: 'hover', selector: '#demoPriItem' }, { type: 'wait', ms: 300 }],
+        actions: [
+          { type: 'hover', selector: '#demoPriItem' },
+          { type: 'evaluate', script: "var pri=document.getElementById('demoPriItem'); if(pri){var sm=pri.querySelector('.context-submenu'); if(sm){sm.style.display='block';}}" },
+          { type: 'wait', ms: 300 },
+        ],
         duration: 1000,
       },
       // Cursor moves to "High" and clicks → applyToSelected('priority','high').
@@ -277,62 +299,60 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
   // Next ticket (HS-4) and starting work. The terminal is lazy, so opening the
   // tab spawns it and the canned session streams in "in response" to the play.
   9: {
-    posterAtMs: 3600,
-    // Opens straight on the Claude terminal tab (seeded active). Establish, then
-    // click the channel play button; the terminal is already showing the session
-    // Claude ran on the ticket.
+    posterAtMs: 6400,
+    // Opens on the Claude terminal (seeded active + streaming). Establish (Claude
+    // ready) → click the channel play button → the terminal STREAMS the response
+    // as Claude picks up HS-4 and works, captured across several frames so the
+    // response visibly builds up.
     frames: (url) => [
-      {
-        input: url,
-        waitFor: '#channel-play-btn',
-        wait: 1400,
-        duration: 2000,
-      },
+      // 1. Establish — Claude ready (welcome banner), play button visible.
+      { input: url, waitFor: '#channel-play-btn', wait: 1300, duration: 1700 },
+      // 2. Click play — the response starts streaming in.
       {
         continue: true,
-        actions: [{ type: 'click', selector: '#channel-play-btn' }, { type: 'wait', ms: 800 }],
-        duration: 2400,
-        transition: { type: 'crossfade', duration: 220 },
+        actions: [{ type: 'click', selector: '#channel-play-btn' }, { type: 'wait', ms: 1500 }],
+        duration: 2000,
+        transition: { type: 'crossfade', duration: 200 },
       },
+      // 3. Claude picks up HS-4 + marks it started (more of the response).
+      { continue: true, actions: [{ type: 'wait', ms: 1600 }], duration: 2000 },
+      // 4. Claude reads the code + starts comparing (response mostly complete).
+      { continue: true, actions: [{ type: 'wait', ms: 1700 }], duration: 2200 },
     ],
   },
   // demo-6 — the full story: open a ticket, then really scroll its Details panel
   // (bottom orientation) down through details → tags → notes.
   6: {
-    posterAtMs: 4300,
+    posterAtMs: 3800,
     // HS-1 (mixed-shipping bug) is the content-rich ticket — long details + notes
-    // — so #detail-body overflows and there's a real story to scroll through.
+    // — so the Details panel overflows and there's a real story to scroll through.
     //
-    // NOTE (HS-9671): domotion's dedicated `scroll` frame (even scoped via
-    // `scroll.selector: '#detail-body'`, prescroll off) translates the whole
-    // viewport for this nested fixed-height panel — the window chrome ghosts. So
-    // we scroll #detail-body directly in MANY small steps with overlapping
-    // crossfades: the chrome stays fixed and the panel content cross-dissolves as
-    // a smooth, continuous scroll (not the earlier 3 distinct jumps).
-    frames: (url) => {
-      const open = {
+    // HS-9671 round 2 — TRUE smooth scroll: domotion's dedicated `scroll` frame
+    // ghosts a nested panel, and stepped scrollTop reads as jumps. Instead we wrap
+    // the panel's content in an inner div and animate its `translateY` with a
+    // domotion frame `animations` entry — that writes a real CSS keyframe into the
+    // output SVG, so the content glides continuously while the chrome stays fixed.
+    frames: (url) => [
+      {
         input: url,
         waitFor: '.column-card[data-id="1"], .ticket-row[data-id="1"]',
         wait: 500,
         actions: [
           { type: 'click', selector: '.column-card[data-id="1"], .ticket-row[data-id="1"]' },
           { type: 'wait', ms: 800 },
-          { type: 'evaluate', script: "var b=document.getElementById('detail-body'); if(b){b.scrollTop=0;}" },
+          // Wrap #detail-body's content in a single translatable inner div and
+          // clip the panel, so translating the inner scrolls the content.
+          { type: 'evaluate', script: "var b=document.getElementById('detail-body'); if(b && !document.getElementById('demoScrollInner')){var inner=document.createElement('div'); inner.id='demoScrollInner'; while(b.firstChild){inner.appendChild(b.firstChild);} b.appendChild(inner); b.style.overflow='hidden';}" },
         ],
         duration: 1200,
-      };
-      // Fractions of scrollHeight → adapts to whatever the content height is.
-      const steps = [0.14, 0.28, 0.42, 0.56, 0.70, 0.85, 1.0].map((f) => ({
+      },
+      {
         continue: true,
-        actions: [
-          { type: 'evaluate', script: `var b=document.getElementById('detail-body'); if(b){b.scrollTop=b.scrollHeight*${String(f)};}` },
-          { type: 'wait', ms: 110 },
-        ],
-        duration: 420,
-        transition: { type: 'crossfade', duration: 340 },
-      }));
-      return [open, ...steps];
-    },
+        // Continuous glide from top to bottom of the panel's overflow.
+        animations: [{ property: 'translateY', selector: '#demoScrollInner', from: '0px', to: '-660px', duration: 2600, easing: 'cubic-bezier(0.4,0,0.2,1)' }],
+        duration: 2900,
+      },
+    ],
   },
   // demo-12 — combined terminal flow (HS-9674, replaces the old drawer + static
   // dashboard demos): start on a project terminal in the drawer, click into the
@@ -824,7 +844,7 @@ function injectHighlightRect(appSvg: string, box: { x: number; y: number; width:
   const y = (box.y - P).toFixed(1);
   const w = (box.width + P * 2).toFixed(1);
   const h = (box.height + P * 2).toFixed(1);
-  const delay = MOVE_START_MS + Math.round(MOVE_DUR_MS * 0.55); // ~mid-push
+  const delay = MOVE_START_MS + MOVE_DUR_MS + 350; // AFTER the push fully settles
   const ring =
     `<style>@keyframes hsHiRing{from{opacity:0}to{opacity:1}}</style>` +
     `<g style="opacity:0;animation:hsHiRing 450ms ease-out ${String(delay)}ms both">` +

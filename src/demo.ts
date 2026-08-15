@@ -718,20 +718,18 @@ const SCENARIO_9_TERMINALS = [
   {
     id: 'claude-work',
     name: 'Claude',
+    // HS-9672 round 2 — stream the response PROGRESSIVELY (printf + sleeps) so the
+    // demo shows Claude actually responding + picking up the ticket over time,
+    // rather than the whole session appearing at once. Lazy, so the first bytes
+    // survive the HS-6799 Ctrl-L; the stream starts a beat after spawn so the
+    // response lands around the play-button click.
     command:
-      "printf '\\033[38;5;213m✻\\033[0m \\033[1mWelcome to Claude Code\\033[0m\\n" +
-      "\\033[90m  ~/dev/store · main\\033[0m\\n\\n" +
-      "\\033[90m> run the worklist\\033[0m\\n\\n" +
-      "\\033[38;5;213m●\\033[0m Reading the Hot Sheet worklist — 3 tickets Up Next. Starting the top one:\\n" +
-      "  \\033[1mHS-4 · Evaluate Stripe vs Square for payment processing\\033[0m\\n\\n" +
-      "\\033[38;5;213m●\\033[0m \\033[38;5;180mhotsheet\\033[0m - update_ticket \\033[90m(HS-4 → started)\\033[0m\\n" +
-      "  \\033[90m⎿  Marked started, added a plan note\\033[0m\\n\\n" +
-      "\\033[38;5;213m●\\033[0m Read(src/payments/gateway.ts)\\n" +
-      "  \\033[90m⎿  Read 142 lines\\033[0m\\n\\n" +
-      "\\033[38;5;213m●\\033[0m The gateway hardcodes Stripe. I will compare fees, API quality, and dispute\\n" +
-      "  handling across both providers, then write up a recommendation on HS-4.\\n\\n" +
-      "\\033[38;5;114m●\\033[0m Comparing payment providers\\033[38;5;114m…\\033[0m\\n" +
-      "'; exec sleep 3600",
+      "printf '\\033[38;5;213m✻\\033[0m \\033[1mWelcome to Claude Code\\033[0m\\n\\033[90m  ~/dev/store · main\\033[0m\\n\\n'; sleep 1.7; " +
+      "printf '\\033[90m> work the next ticket\\033[0m\\n\\n'; sleep 1.3; " +
+      "printf '\\033[38;5;213m●\\033[0m Reading the Hot Sheet worklist — HS-4 is up next:\\n  \\033[1mEvaluate Stripe vs Square for payment processing\\033[0m\\n\\n'; sleep 1.5; " +
+      "printf '\\033[38;5;213m●\\033[0m \\033[38;5;180mhotsheet\\033[0m - update_ticket \\033[90m(HS-4 → started)\\033[0m\\n  \\033[90m⎿  Marked started, added a plan note\\033[0m\\n\\n'; sleep 1.5; " +
+      "printf '\\033[38;5;213m●\\033[0m Read(src/payments/gateway.ts)\\n  \\033[90m⎿  142 lines\\033[0m\\n\\n'; sleep 1.5; " +
+      "printf '\\033[38;5;114m●\\033[0m Comparing providers — fees, API quality, dispute handling\\033[38;5;114m…\\033[0m\\n'; exec sleep 3600",
     lazy: true,
     ...DEMO_TERMINAL_APPEARANCE,
   },
