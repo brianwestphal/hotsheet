@@ -243,32 +243,30 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
       { continue: true, actions: [{ type: 'click', selector: '.ticket-row[data-id] .ticket-checkbox:not(:checked)' }, { type: 'wait', ms: 200 }], duration: 650, transition: { type: 'crossfade', duration: 180 } },
       { continue: true, actions: [{ type: 'click', selector: '.ticket-row[data-id] .ticket-checkbox:not(:checked)' }, { type: 'wait', ms: 200 }], duration: 650, transition: { type: 'crossfade', duration: 180 } },
       { continue: true, actions: [{ type: 'click', selector: '.ticket-row[data-id] .ticket-checkbox:not(:checked)' }, { type: 'wait', ms: 200 }], duration: 900, transition: { type: 'crossfade', duration: 180 } },
-      // Right-click a selected row → context menu (positioned via a real MouseEvent).
+      // Right-click a selected row → context menu. The menu items have no stable
+      // selectors, so after dispatching the (positioned) contextmenu we TAG the
+      // Priority item + its High option with ids and force the submenu visible —
+      // then the cursor can visibly move to them via hover/click actions.
       {
         continue: true,
         actions: [
-          { type: 'evaluate', script: "var row=document.querySelector('.ticket-row:has(.ticket-checkbox:checked)'); if(row){var r=row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:Math.round(r.left+140),clientY:Math.round(r.top+16)}));}" },
+          { type: 'hover', selector: '.ticket-row:has(.ticket-checkbox:checked)' },
+          { type: 'evaluate', script: "var row=document.querySelector('.ticket-row:has(.ticket-checkbox:checked)'); if(row){var r=row.getBoundingClientRect(); row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:Math.round(r.left+150),clientY:Math.round(r.top+18)})); var items=[].slice.call(document.querySelectorAll('.context-menu .context-menu-item.has-submenu')); var pri=items.filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='Priority';})[0]; if(pri){pri.id='demoPriItem'; var sm=pri.querySelector('.context-submenu'); if(sm){sm.style.display='block';} var opt=[].slice.call(pri.querySelectorAll('.context-submenu .context-menu-item')).filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='High';})[0]; if(opt){opt.id='demoHighItem';}}}" },
           { type: 'wait', ms: 300 },
         ],
         duration: 1200,
         transition: { type: 'crossfade', duration: 200 },
       },
-      // Open the Priority submenu (force it visible at its CSS position).
+      // Cursor moves up into the menu, onto the Priority item (submenu visible).
       {
         continue: true,
-        actions: [
-          { type: 'evaluate', script: "var it=[].slice.call(document.querySelectorAll('.context-menu .context-menu-item.has-submenu')).filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='Priority';})[0]; if(it){var sm=it.querySelector('.context-submenu'); if(sm){sm.style.display='block';}}" },
-          { type: 'wait', ms: 250 },
-        ],
-        duration: 1100,
+        actions: [{ type: 'hover', selector: '#demoPriItem' }, { type: 'wait', ms: 300 }],
+        duration: 1000,
       },
-      // Click "High" → applyToSelected('priority','high') updates all three.
+      // Cursor moves to "High" and clicks → applyToSelected('priority','high').
       {
         continue: true,
-        actions: [
-          { type: 'evaluate', script: "var it=[].slice.call(document.querySelectorAll('.context-menu .context-menu-item.has-submenu')).filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='Priority';})[0]; if(it){var opt=[].slice.call(it.querySelectorAll('.context-submenu .context-menu-item')).filter(function(el){var l=el.querySelector('.context-menu-label');return l&&l.textContent.trim()==='High';})[0]; if(opt){opt.click();}}" },
-          { type: 'wait', ms: 500 },
-        ],
+        actions: [{ type: 'click', selector: '#demoHighItem' }, { type: 'wait', ms: 500 }],
         duration: 1700,
         transition: { type: 'crossfade', duration: 200 },
       },
