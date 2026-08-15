@@ -147,20 +147,47 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
   // demo-2 — quick capture: type a ticket title key-by-key, press Enter, the new
   // card appears at the top of NOT STARTED (and the detail panel opens on it).
   2: {
-    posterAtMs: 5200,
+    posterAtMs: 4200,
     frames: (url) => [
       {
+        // Standard `typing` overlay (smooth char-by-char, anchored to the input)
+        // instead of `typeResample` — the per-key re-capture left a ~800ms white
+        // tail and read as word-by-word (HS-9669). One static base capture with
+        // the overlay drawn on top of the (empty) input.
         input: url,
         waitFor: 'input.draft-input',
         wait: 700,
-        actions: [{ type: 'click', selector: 'input.draft-input' }],
-        typeResample: { selector: 'input.draft-input', text: 'Add dark mode support to the settings dialog', speed: 22, caret: true },
-        duration: 2400,
+        actions: [
+          { type: 'click', selector: 'input.draft-input' },
+          // Clear the "New ticket…" placeholder so the typing overlay draws on a
+          // clean field (otherwise the placeholder shows through the typed text).
+          { type: 'evaluate', script: "var i=document.querySelector('input.draft-input'); if(i){i.placeholder='';}" },
+        ],
+        overlays: [{
+          kind: 'typing',
+          text: 'Add dark mode support to the settings dialog',
+          anchor: { selector: 'input.draft-input', at: 'left', dx: 34, baseline: true },
+          fontSize: 15,
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+          color: '#1f2328',
+          speed: 20,
+          jitter: 0.35,
+          caret: true,
+          holdToFrameEnd: true,
+        }],
+        duration: 2800,
       },
       {
+        // Actually submit: fill the input (so the app's Enter handler creates the
+        // ticket), press Enter, wait for the new card to render.
         continue: true,
-        actions: [{ type: 'focus', selector: 'input.draft-input' }, { type: 'press', key: 'Enter' }, { type: 'wait', ms: 1300 }],
-        duration: 2600,
+        actions: [
+          { type: 'fill', selector: 'input.draft-input', value: 'Add dark mode support to the settings dialog' },
+          { type: 'focus', selector: 'input.draft-input' },
+          { type: 'press', key: 'Enter' },
+          { type: 'wait', ms: 1300 },
+        ],
+        duration: 2500,
         transition: { type: 'crossfade', duration: 300 },
       },
     ],
