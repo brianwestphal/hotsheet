@@ -279,28 +279,22 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
   // Next ticket (HS-4) and starting work. The terminal is lazy, so opening the
   // tab spawns it and the canned session streams in "in response" to the play.
   9: {
-    posterAtMs: 5600,
+    posterAtMs: 3600,
+    // Opens straight on the Claude terminal tab (seeded active). Establish, then
+    // click the channel play button; the terminal is already showing the session
+    // Claude ran on the ticket.
     frames: (url) => [
       {
         input: url,
         waitFor: '#channel-play-btn',
-        wait: 600,
-        duration: 1400,
+        wait: 1400,
+        duration: 2000,
       },
       {
         continue: true,
-        actions: [{ type: 'click', selector: '#channel-play-btn' }, { type: 'wait', ms: 600 }],
-        duration: 1200,
-        transition: { type: 'crossfade', duration: 200 },
-      },
-      {
-        continue: true,
-        actions: [
-          { type: 'click', selector: '.drawer-tab[data-drawer-tab="terminal:claude-work"]' },
-          { type: 'wait', ms: 2000 },
-        ],
-        duration: 3200,
-        transition: { type: 'crossfade', duration: 250 },
+        actions: [{ type: 'click', selector: '#channel-play-btn' }, { type: 'wait', ms: 800 }],
+        duration: 2400,
+        transition: { type: 'crossfade', duration: 220 },
       },
     ],
   },

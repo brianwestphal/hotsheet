@@ -987,7 +987,9 @@ export async function seedDemoData(scenario: number): Promise<void> {
       channel_enabled: 'true',
       custom_commands: JSON.stringify(SCENARIO_9_COMMANDS),
       drawer_open: 'true',
-      drawer_active_tab: 'commands-log',
+      // HS-9672 — open straight onto the Claude terminal (the Commands Log intro
+      // wasn't adding anything). Lazy, so it spawns on first attach at load.
+      drawer_active_tab: 'terminal:claude-work',
       terminals: JSON.stringify(SCENARIO_9_TERMINALS),
     });
   }
