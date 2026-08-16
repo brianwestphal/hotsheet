@@ -913,6 +913,87 @@ async function buildDynamicDemo(id: number, appSvg: string, screenW: number, scr
   }
 }
 
+/**
+ * HS-9651 — the one demo that isn't an in-app capture: a short terminal cast of
+ * `npx hotsheet` starting the server + opening the browser, so the README can
+ * show the zero-config launch. A synthesized asciinema v2 cast → `domotion term`
+ * (animated terminal SVG) → the same light window chrome + caption as the rest of
+ * the set. No live server needed. Writes `docs/demo-cli-launch.svg` (+ poster).
+ */
+function buildCliLaunchCast(): string {
+  // asciinema v2: a JSON header line, then `[time, "o", data]` output events.
+  const header = { version: 2, width: 74, height: 11, timestamp: 1_700_000_000, env: { SHELL: '/bin/zsh', TERM: 'xterm-256color' } };
+  const events: Array<[number, 'o', string]> = [];
+  let t = 0.4;
+  events.push([t, 'o', '[2m~/my-app[0m $ ']);
+  for (const ch of 'npx hotsheet') { t += 0.06; events.push([t, 'o', ch]); } // typed
+  t += 0.55; events.push([t, 'o', '\r\n\r\n']); // Enter
+  const out = [
+    '  [2mData directory:[0m .hotsheet',
+    '  [32m✓[0m Database ready [2m· migrations up to date[0m',
+    '  [32m✓[0m Worklist synced [2m→ .hotsheet/worklist.md[0m',
+    '  [32m✓[0m Hot Sheet running at [36mhttp://localhost:4174[0m',
+    '  [35m→[0m Opening your browser…',
+  ];
+  for (const line of out) { t += 0.5; events.push([t, 'o', line + '\r\n']); }
+  return [JSON.stringify(header), ...events.map((e) => JSON.stringify(e))].join('\n') + '\n';
+}
+
+/** Read the loop duration (ms) of a domotion-animated SVG — see the interaction
+ *  demos; reused for the term cast's animated output. */
+function svgLoopMs(svg: string): number {
+  const m = /animation:\s*[\w-]+\s+([\d.]+)s/.exec(svg);
+  return m !== null ? Math.round(parseFloat(m[1]) * 1000) : 6000;
+}
+
+async function buildCliLaunchDemo(): Promise<void> {
+  const tmp = mkdtempSync(join(tmpdir(), 'hs-demo-cli-'));
+  try {
+    // 1. Synthesized cast → animated terminal SVG.
+    const castPath = join(tmp, 'launch.cast');
+    writeFileSync(castPath, buildCliLaunchCast());
+    const termPath = join(tmp, 'term.svg');
+    await runDomotion(['term', '--cast', castPath, '--theme', 'dark', '--font-size', '16',
+      '--cursor', 'bar', '--min-frame-ms', '260', '--tail-ms', '2200', '-o', termPath]);
+    const termSvg = readFileSync(termPath, 'utf8');
+    const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(termSvg);
+    const termW = vb !== null ? Math.round(parseFloat(vb[1])) : 800;
+    const termH = vb !== null ? Math.round(parseFloat(vb[2])) : 320;
+
+    // 2. Frame it in the same light window bezel as the rest of the set.
+    const framed = wrapInDeviceChrome(termSvg, 'window', termW, termH, { theme: 'light', label: 'Terminal' });
+    const { width: FW, height: FH } = framed;
+    const windowPath = join(tmp, 'window.svg');
+    writeFileSync(windowPath, framed.svg);
+    const W = FW + PAD_X * 2;
+    const H = FH + PAD_TOP + PAD_BOTTOM;
+    const totalMs = svgLoopMs(termSvg);
+
+    // 3. Caption, fading in as the launch settles.
+    const captionPath = join(tmp, 'caption.svg');
+    const holdMs = Math.max(1200, totalMs - 1650);
+    await runDomotion(['template', 'caption', '--text', 'Launch from your terminal — one command',
+      '--position', 'bottom-center', '--motion', 'slide', '--width', String(W), '--height', String(H),
+      '--textColor', '#ffffff', '--bgOpacity', '0.82', '--inMs', '500', '--outMs', '450',
+      '--holdMs', String(holdMs), '-o', captionPath]);
+
+    // 4. Composite on a transparent padded canvas → the demo SVG + poster.
+    const outPath = join(DOCS_DIR, 'demo-cli-launch.svg');
+    writeFileSync(join(tmp, 'composite.json'), JSON.stringify({
+      width: W, height: H, background: 'transparent', output: outPath, duration: totalMs,
+      layers: [
+        { svg: windowPath, x: PAD_X, y: PAD_TOP, width: FW, height: FH },
+        { svg: captionPath, x: 0, y: 0, width: W, height: H, start: 700 },
+      ],
+    }));
+    await runDomotion(['composite', join(tmp, 'composite.json')]);
+    await runBin(SVG_TO_IMAGE_BIN, [outPath, '-o', join(DOCS_DIR, 'demo-cli-launch.png'), '--width', '1200', '--at', String(Math.min(totalMs - 300, 4600))]);
+    console.log(`  ✓ SVG (cli-launch): ${outPath}`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function captureScenario(scenario: Scenario): Promise<void> {
   const port = pickRandomPort();
   const homeDir = mkdtempSync(join(tmpdir(), 'hs-capture-home-'));
@@ -1096,6 +1177,16 @@ async function captureScenario(scenario: Scenario): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const rawArgs = process.argv.slice(2);
+  // HS-9651 — the CLI-launch demo is cast-based (no live server). `… cli` builds
+  // ONLY it; a full no-arg run also rebuilds it alongside the scenarios (below).
+  const cliOnly = rawArgs.includes('cli');
+  if (cliOnly) {
+    console.log('Building the CLI-launch demo…');
+    await buildCliLaunchDemo();
+    console.log('\n✓ CLI-launch demo complete.');
+    return;
+  }
   // Optional filter: `tsx scripts/capture-demos.ts 8 13`
   const filterArgs = process.argv.slice(2).map(Number).filter((n) => !isNaN(n));
   // HS-9674 — scenario 11 (drawer terminals) is folded into the demo-12 combined
@@ -1124,9 +1215,20 @@ async function main(): Promise<void> {
     }
   }
 
+  // HS-9651 — a full run (no numeric filter) also rebuilds the cast-based
+  // CLI-launch demo so it stays in sync with the set.
+  if (filterArgs.length === 0) {
+    try {
+      await buildCliLaunchDemo();
+    } catch (e) {
+      console.error(`[demo-cli-launch] FAILED: ${e instanceof Error ? e.message : String(e)}`);
+      failures.push({ id: -1, error: e });
+    }
+  }
+
   if (failures.length > 0) {
     console.error(`\n${failures.length} scenario(s) failed:`);
-    for (const f of failures) console.error(`  demo-${f.id}: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
+    for (const f of failures) console.error(`  demo-${f.id === -1 ? 'cli-launch' : f.id}: ${f.error instanceof Error ? f.error.message : String(f.error)}`);
     process.exit(1);
   }
 
