@@ -69,7 +69,13 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // guidance (`hotsheet_get_worker_pool` / `_set_worker_target` / `_dispatch_tickets` /
 // `_drain_workers` / `_propose_partition` + the `alwaysPreviewAgentPlans` preview
 // path), since the worker pool + those MCP tools were retired (HS-9686).
-export const SKILL_VERSION = 27;
+// HS-9690 — bumped 27 → 28: reworded the worker story for the post-pool world
+// (maintainer decision — keep a self-claim skill). `/hotsheet-worker` is now a
+// SELF-claim worker (pick your own id; no launcher `HOTSHEET_WORKER_ID` injection,
+// no `drain`/pool-manager/`POST /api/workers/ready` machinery), and the main skill's
+// integration section uses plain `git merge` of `pending_integration` branches
+// instead of the deleted `/api/workers/integrate*` endpoints.
+export const SKILL_VERSION = 28;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -399,44 +405,42 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
     // the agent to prefer the MCP path when it's available.
     '**MCP tools (`hotsheet_*`) are preferred over curl when the channel is connected** — see the worklist for per-operation guidance. The 14-tool surface covers ticket lifecycle (`hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_get_ticket`, `hotsheet_delete_ticket`, `hotsheet_restore_ticket`, `hotsheet_toggle_up_next`, `hotsheet_duplicate_tickets`), bulk operations (`hotsheet_batch`), notes (`hotsheet_edit_note`, `hotsheet_delete_note`), attachments (`hotsheet_add_attachment`), channel signaling (`hotsheet_signal_done`), feedback sugar (`hotsheet_request_feedback`), and query (`hotsheet_query_tickets`). Curl stays supported as the universal fallback for non-Claude AI agents and human terminal callers.',
     '',
-    '## Git: keep the target current + integrate worker branches',
+    '## Git: keep the target current + integrate ready branches',
     '',
-    'You run on the **target branch** (usually `main`) in the main worktree, so you are the **single integrator** for parallel worktree workers (docs/89). Distributed workers (`/hotsheet-worker`) commit their work on their own branches and rebase onto the target to stay current, but they never write the target — that\'s your job:',
+    'You run on the **target branch** (usually `main`) in the main worktree, so you are the **integrator**: a self-claim worker (`/hotsheet-worker`, working in its own git worktree) commits its work on its own branch and marks its ticket `pending_integration` with the `integration_branch` it landed on — you merge those into the target (a worker never writes the target itself). When no such workers are in play this section is simply unused.',
     '',
-    '- **Stay current** — before integrating, bring the target up to date: `git fetch` then `git pull --rebase` (or rebase onto the upstream) when the repo has a remote, so you build on the latest. Commit or stash your own in-progress changes first so a merge doesn\'t tangle with them.',
-    '- **Integrate ready worker branches** — periodically (e.g. when a batch of workers has finished, or the pool drains). Use the **integration helpers** (HS-9048) rather than hand-rolling the git: `GET /api/workers/integratable` returns the detected **target** branch + the **ready** worker branches (`hotsheet/*` ahead of the target, with ahead/behind counts); then for each, in ticket-priority order, `POST /api/workers/integrate` with `{ "branch": "<name>" }` does a guarded merge into the target. It returns a `status`: `merged` (success), `conflict` (it captured the conflicted files + **aborted** cleanly — resolve them by hand or, if non-trivial, ask the maintainer), `dirty-tree` (commit/stash your own changes first), `not-on-target` / `nothing-to-integrate`. The helper **never pushes** — pushing still needs explicit permission.',
-    '- **A ready branch may carry a BATCH of several tickets.** Workers batch small/related tickets onto one branch and refresh + gate once at the batch boundary (docs/98), so the "branch ready" signal fires **once per batch**, not per ticket — one `integrateBranch` call + one gate run covers the whole batch. When you integrate it, clear `pending_integration` for **every** ticket whose work it carried (next bullet), not just one.',
-    '- **Gates after a merge (and the optional in-helper gate, HS-9091).** After a `merged` result with **no** `gate` field, run the project\'s gates yourself (type-check, lint, the relevant tests). If the project configured the opt-in **`integrationGate`** shared setting, the helper ran that command *inside* the merge and you\'ll get either: `merged` **with `result.gate.ran: true`** (the gate already passed — you do **not** need to re-run those gates for this branch); **`gate-failed`** (the gate command failed and **the merge was already rolled back to the pre-merge target** — do **NOT** re-merge blindly; read `result.gate.output` to decide whether to quickly fix-and-retry or, if non-trivial, ask the maintainer); or **`gate-timeout`** (same rolled-back state, but the gate exceeded its time limit). On `gate-failed`/`gate-timeout` the branch is **unmerged** — leave its ticket\'s `pending_integration` marker set (don\'t clear it).',
-    '- For each ticket whose work you just integrated, clear its "merge pending" marker: `hotsheet_update_ticket` with `{ "id": <id>, "pending_integration": false }` (the tickets marked `pending_integration` are the ones awaiting integration).',
-    '- **Sensible conflict resolution, ask on the hard ones** — auto-resolve trivial/mechanical conflicts; if a conflict is non-trivial or ambiguous, or the gates fail in a way you can\'t quickly and safely fix, **stop and ask the maintainer** rather than force it (leave the branch unmerged). Integrate only from committed branch state — never disturb a worker mid-ticket.',
+    '- **Stay current** — `git fetch` then `git pull --rebase` (when the repo has a remote) before integrating; commit or stash your own in-progress changes first so a merge doesn\'t tangle with them.',
+    '- **Integrate ready branches** — for each ticket marked `pending_integration` (its `integration_branch` names the branch to merge), in ticket-priority order, `git merge` that branch into the target from committed state. Auto-resolve trivial/mechanical conflicts; if a conflict is non-trivial or ambiguous, **stop and ask the maintainer** rather than force it.',
+    '- **Run the gates after each merge** — type-check, lint, and the relevant tests — before moving on; if they fail in a way you can\'t quickly and safely fix, stop and ask.',
+    '- **Clear the marker** — for each ticket you integrated, `hotsheet_update_ticket` with `{ "id": <id>, "pending_integration": false }`.',
     '- **NEVER `git push`** without the maintainer\'s explicit permission — local integration only.',
   ].join('\n');
 }
 
 /**
- * HS-8863 — the distributed worker skill (`/hotsheet-worker`, Claude-only). A
- * worker runs this in its own git worktree terminal and loops: `claim-next` the
+ * The self-claim worker skill (`/hotsheet-worker`, Claude-only). An agent runs
+ * this — typically in its own git worktree terminal — and loops: `claim-next` the
  * top Up Next ticket → work it → mark `completed` + release → claim again, until
- * the pool is empty. This is the prose mirror of `src/workers/workerLoop.ts` (the
- * programmatic reference for the same invariants); both build on the HS-8862
- * claim/lease MCP tools. Claude-only because it depends on the `hotsheet_*` MCP
- * surface. The durable pool that launches N of these is HS-8962.
+ * the backlog is drained. Several agents can run it in parallel against ONE Hot
+ * Sheet; the atomic claim/lease primitive (HS-8862 MCP tools) guarantees no two
+ * grab the same ticket. Claude-only because it depends on the `hotsheet_*` MCP
+ * surface. (The launcher-driven worker pool that once spawned N of these was
+ * retired in HS-9686; this is now a manual self-claim workflow.)
  */
 function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot, '.hotsheet')): string {
   // HS-9475 — no port lookup: it is machine-local and no longer embedded here.
   const settingsRel = relative(projectRoot, join(dataDir, 'settings.json'));
   return [
-    'You are a **distributed worker** draining the Hot Sheet **Up Next** pool. Multiple workers run in parallel against ONE shared Hot Sheet, each in its own git worktree, coordinated by the atomic claim/lease primitive (docs/90 §90.5) — so you never need to worry about another worker grabbing the same ticket.',
+    'You are a **self-claim worker**: you continuously claim tickets from the Hot Sheet **Up Next** backlog, work them one at a time, and release them. If you are one of several agents working the same Hot Sheet in parallel (each in its own git worktree), the atomic claim/lease primitive (docs/90) guarantees no two of you ever grab the same ticket — so just claim and go.',
     '',
-    '**Your worker identity (use exactly what the launcher gave you):** your launcher stated your `worker` id verbatim in the prompt that started you (e.g. `worker-1`) and exported it as the `HOTSHEET_WORKER_ID` environment variable (`echo $HOTSHEET_WORKER_ID` to read it). Use THAT exact id as both your `worker` and your `label` for every claim / renew / release / update call below — it is your stable **lease identity**, and the pool dispatches tickets to it. If `HOTSHEET_WORKER_ID` is somehow unset, fall back to your branch: `git branch --show-current` gives `hotsheet/<id>` (e.g. `hotsheet/worker-1` → strip the `hotsheet/` prefix → `worker-1`). **Never** derive your id from the worktree folder name or the tab title — those carry a generated instance suffix (e.g. `hotsheet-worker-1-12`) that increments on reuse and is a *display label only*; claiming under it means the tickets the pool dispatched to `worker-1` won\'t be recognized as yours.',
+    '**Pick a stable id for yourself.** Choose a short id (e.g. `worker-1`, or your worktree/branch name) and use THAT same id as both your `worker` and your `label` for every claim / renew / release / update call below. Keep it consistent for the whole session so your claims stay attributed to you and write-protected against any *other* actor. (You can also export it as the `HOTSHEET_WORKER_ID` env var — the server reads it to attribute your auto-claim-on-write to the same id.)',
     '',
     '## The loop',
     '',
-    'Repeat the following until the pool is empty:',
+    'Repeat the following until the backlog is drained:',
     '',
     '1. **Claim the next ticket.** Call the `hotsheet_claim_next` MCP tool with `{ "worker": "<your-id>", "label": "<your-label>" }`. The default lease is **30 minutes** — plenty for most tickets. Once you\'ve read the ticket and judge it **high-effort** (a big or multi-step change you expect to take a while), claim or immediately renew with a longer `ttlSeconds` (seconds, up to **3600** = 1 hour) so the lease comfortably covers the work.',
-    '   - If the response has **`drain: true`**, the worker-pool manager has asked you to shut down (a scale-down). Go straight to **Finishing** — do not claim anything more.',
-    '   - If it returns **no ticket** (nothing claimable), the pool is drained — go to **Finishing** below.',
+    '   - If it returns **no ticket** (nothing claimable), the backlog is drained — go to **Finishing** below.',
     '   - If it returns a ticket, you now hold an exclusive, time-limited **lease** on it. Continue.',
     '2. **Mark it started.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "started" }`.',
     '   - Setting status to `started` also **auto-affirms your claim** under your worker id (HS-9198/9208 — `started` is the *sole* auto-claim trigger; metadata-only edits no longer claim). You already hold the claim from `claim-next`, so this just keeps the ticket attributed to you and write-protected against any *other* actor while you work it. Keep the lease alive by renewing on long work (step 3) and release it when you finish (step 6).',
@@ -446,31 +450,21 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
     '5. **Complete it.** Call `hotsheet_update_ticket` with `{ "id": <id>, "status": "completed", "notes": "<what you did>" }`. Notes are REQUIRED — describe the specific changes (see the worklist\'s note-formatting guidance). **If you committed code for this ticket (step 4), also pass `"pending_integration": true` AND `"integration_branch": "<your branch>"`** (your worktree\'s branch, e.g. `hotsheet/worker-1` — run `git branch --show-current` if unsure) — `pending_integration` marks the ticket "merge pending" in the owner\'s UI, and `integration_branch` lets the owner review exactly what your branch added before merging. Omit both for tickets with no committed code.',
     '   - **File follow-up tickets** for any incomplete work BEFORE completing (per the project\'s incomplete-work checklist).',
     '6. **Release the claim.** Call `hotsheet_release` with `{ "id": <id>, "worker": "<your-id>" }` so the slot is freed.',
-    '7. **Go back to step 1** and claim the next ticket — **batching small, related tickets** onto the SAME branch (see below) instead of refreshing after every one.',
+    '7. **Go back to step 1.** You can claim several small, related tickets onto the SAME branch before rebasing — see **Staying current** below.',
     '',
-    '## Batching: amortize the refresh + gates across small, related tickets',
+    '## Staying current + handoff',
     '',
-    'Rebasing, reinstalling deps, and running the full gate suite (type-check / lint / the relevant tests) costs about the same whether a ticket is one line or one hundred. So **don\'t pay it per ticket** — pay it once per **batch**:',
+    'Your worktree is on its own branch off the **target** (usually `main`). You do **not** write the target — the main Hot Sheet agent (`/hotsheet`, in the main worktree) is the integrator that merges your ready branch. Keep your branch clean and current so integration stays trivial, and amortize the rebase/gates cost by batching:',
     '',
-    '- **Keep claiming small, RELATED tickets onto your current branch.** After you commit a ticket (step 4), if the next claimable ticket is **small and related** — shares files/area, the same tag or category, or is a sibling of the same investigation — and your batch is still modest in size/risk, claim it onto the **same** branch and keep working. Do **not** rebase or run the full gates between them.',
-    '- **Isolate large or risky tickets.** A big or open-ended change, a migration, or anything touching a hot/shared module gets its **own** branch (a batch of one), so a failure or a nasty conflict stays contained.',
-    '- **Keep dependency chains separate.** Never put a ticket in the same batch as one of its own `blocked_by` dependencies — the dependency must integrate first. (`claim-next` already skips blocked tickets, so what you claim is ready to work; just don\'t co-batch a chain.)',
-    '- **Default: batch small/related, isolate large/risky.** Bigger batches save overhead but drift further from the target (a larger conflict surface at integration); smaller batches stay fresher but churn more. Lean toward batching the long tail of small tickets.',
-    '',
-    'At the **batch boundary** — the next claimable ticket is large/unrelated, the pool drains, or the batch has grown enough — refresh + gate **once** (next section), then hand the branch off.',
-    '',
-    '## Staying in sync with the target branch — refresh ONCE at the batch boundary',
-    '',
-    'Your worktree is on its own branch, spun off from the **target branch** (usually `main`). You are **not** the writer of the target — git won\'t even let your worktree update the target while the owner has it checked out. The main Hot Sheet agent (`/hotsheet`) is the **single integrator** that merges ready worker branches into the target. Your job is to keep your branch current and committed so that integration is clean:',
-    '',
-    '- **Refresh once per batch, on a CLEAN tree** — at the batch boundary (your batch is committed and you\'re between tickets), bring your branch current in one deterministic pulse: clean-tree guard → `git fetch` (if the repo has a remote) → `git rebase <target>` (e.g. `git rebase main`) → **reinstall deps ONLY if the rebase changed `package-lock.json`/`package.json`** (otherwise your gates run against stale `node_modules` — silently green-but-wrong). This is the §99 `refreshWorktree` routine; do it **once per batch, never mid-ticket** (a dirty tree means commit first).',
-    '- **Then run the gates once** over the whole batch (type-check / lint / the relevant tests) before handing off — so the overhead is paid once for the batch, not once per ticket.',
-    '- **Resolve trivial rebase conflicts and continue** — for an obvious/mechanical conflict (two unrelated additions, a moved import, a doc line), resolve it sensibly and `git rebase --continue`. For anything non-trivial or ambiguous, **`git rebase --abort`**, leave a `FEEDBACK NEEDED:` note on the relevant ticket describing the conflict, signal done, and wait — do **not** force a risky resolution.',
-    '- **Hand off, don\'t merge** — leave your committed batch on your branch; the owner (`/hotsheet`) is the single integrator and picks up worker branches ahead of the target. You never merge into the target yourself. **Signal the branch ready once per batch** (not per ticket): call `POST /api/workers/ready` with `{ "worker": "<your-id>", "branch": "<your-branch>" }` so the owner integrates it promptly (the owner also scans `hotsheet/*` as a fallback, so this is an optimization, not required).',
+    '- **Batch small, related tickets onto one branch.** After committing a ticket, if the next claimable one is small and related (shared files/area, same tag/category, a sibling of the same investigation), claim it onto the **same** branch and keep going — don\'t rebase or run the full gates between them. Isolate a large/risky ticket (a migration, a hot/shared module) onto its **own** branch. Never co-batch a ticket with one of its own `blocked_by` dependencies.',
+    '- **Rebase once at the boundary, on a CLEAN tree** — when the next claimable ticket is large/unrelated or the backlog drains, bring your branch current: `git fetch` (if the repo has a remote) → `git rebase <target>` (e.g. `git rebase main`) → reinstall deps **only if** the rebase changed `package-lock.json`/`package.json` (else your gates run against stale `node_modules`). Never rebase mid-ticket (a dirty tree means commit first).',
+    '- **Then run the gates once** over the batch (type-check / lint / the relevant tests) before handing off.',
+    '- **Resolve trivial rebase conflicts** and `git rebase --continue`; for anything non-trivial or ambiguous, `git rebase --abort`, leave a `FEEDBACK NEEDED:` note on the relevant ticket, signal done, and wait — do **not** force a risky resolution.',
+    '- **Hand off, don\'t merge.** Leave your committed work on your branch; you marked each ticket `pending_integration` with its `integration_branch` (loop step 5), which is exactly how the integrator finds and merges it. You never write the target yourself.',
     '',
     '## Finishing',
     '',
-    'When `hotsheet_claim_next` returns nothing claimable, the pool is drained — that\'s a batch boundary. Make sure your work is committed, run the refresh pulse + gates once over the batch (above), signal the branch ready, then call `hotsheet_signal_done` and stop. (The owner / worker-pool manager re-triggers you when there is new work — you do not need to poll.)',
+    'When `hotsheet_claim_next` returns nothing claimable, the backlog is drained. Make sure your work is committed + your branch is current (rebase + gates once over the batch, above), then call `hotsheet_signal_done` and stop. (You are re-triggered when there is new work — no need to poll.)',
     '',
     '## Notes',
     '',
@@ -624,10 +618,10 @@ function writeSkillTree(skillsDir: string, cwd: string, dataDir: string, include
   write('hotsheet', 'Read the Hot Sheet worklist and work through the current priority items',
     'Read, Grep, Glob, Edit, Write, Bash', mainSkillBody(cwd, dataDir));
 
-  // HS-8863 — the distributed worker skill (depends on the `hotsheet_*` MCP
-  // claim/lease tools). Not generated for Cursor/Copilot/Windsurf (no curl-only
-  // equivalent loop); agy gets it since it drives the same MCP tools.
-  write('hotsheet-worker', 'Run as a distributed worker — continuously claim, work, and release Up Next tickets',
+  // The self-claim worker skill (depends on the `hotsheet_*` MCP claim/lease
+  // tools). Not generated for Cursor/Copilot/Windsurf (no curl-only equivalent
+  // loop); agy gets it since it drives the same MCP tools.
+  write('hotsheet-worker', 'Run as a self-claim worker — continuously claim, work, and release Up Next tickets',
     'Read, Grep, Glob, Edit, Write, Bash', workerSkillBody(cwd, dataDir));
 
   for (const skill of buildTicketSkills()) {

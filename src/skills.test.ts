@@ -137,25 +137,18 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('worklist.md');
     expect(content).toContain(`hotsheet-skill-version: ${SKILL_VERSION}`);
     expect(content).toContain('allowed-tools: Read, Grep, Glob, Edit, Write, Bash');
-    // HS-9044 — the main skill is the single integrator for worker branches.
-    expect(content).toContain('single integrator');
+    // HS-9690 — the main skill is the integrator for ready branches, via plain
+    // `git merge` of `pending_integration` branches (the deleted /api/workers/*
+    // helpers were retired with the worker pool).
+    expect(content).toContain('integrator');
     expect(content).toContain('git fetch');
     expect(content).toMatch(/NEVER `git push`/);
-    // HS-9045 — the owner clears the merge-pending flag when it integrates.
     expect(content).toContain('pending_integration');
-    // HS-9048 — the owner integrates via the helper endpoints.
-    expect(content).toContain('/api/workers/integrate');
-    // HS-9098 — the owner skill explains the HS-9091 in-helper gate statuses.
-    expect(content).toContain('gate-failed');
-    expect(content).toContain('gate-timeout');
-    expect(content).toContain('integrationGate');
-    // HS-9072 (docs/98 §98.6) — the owner skill notes a ready branch may carry a
-    // batch of several tickets (the "branch ready" signal fires once per batch).
-    expect(content).toContain('BATCH of several tickets');
-    expect(content).toContain('once per batch');
+    expect(content).toContain('git merge');
+    expect(content).toContain('integrate ready branches');
   });
 
-  it('HS-8863 — creates the distributed worker skill (Claude-only)', () => {
+  it('creates the self-claim worker skill (Claude-only)', () => {
     ensureSkills();
     const workerSkill = join(tempDir, '.claude', 'skills', 'hotsheet-worker', 'SKILL.md');
     expect(existsSync(workerSkill)).toBe(true);
@@ -167,21 +160,20 @@ describe('ensureClaudeSkills', () => {
     expect(content).toContain('hotsheet_renew_lease');
     expect(content).toContain('hotsheet_release');
     expect(content).toContain('hotsheet_signal_done');
-    // HS-9044 — workers commit + rebase onto the target to stay current and hand
-    // off to the owner-integrator; they never write the target, never push.
-    expect(content).toContain('Staying in sync');
+    // HS-9690 — a self-claim worker picks its own id, commits + rebases onto the
+    // target to stay current, and hands off to the owner-integrator; it never
+    // writes the target, never pushes.
+    expect(content).toContain('self-claim worker');
+    expect(content).toContain('Staying current');
     expect(content).toContain('git rebase');
     expect(content).toMatch(/NEVER `git push`/);
-    expect(content).toContain('single integrator');
-    // HS-9045 — the worker sets the merge-pending flag on completion.
+    expect(content).toContain('integrator');
+    // The worker sets the merge-pending flag on completion.
     expect(content).toContain('pending_integration');
-    // HS-9072 (docs/98 §98.6) — the batch-then-pulse cadence: batch small/related
-    // tickets onto one branch, refresh + gate ONCE at the batch boundary.
-    expect(content).toContain('Batching');
-    expect(content).toContain('batch boundary');
-    expect(content).toContain('once per batch');
-    expect(content).toContain('isolate large/risky');
-    expect(content).toContain('/api/workers/ready');
+    // Batch small/related, isolate large/risky, rebase once at the boundary.
+    expect(content).toContain('Batch small');
+    expect(content).toContain('Isolate a large/risky');
+    expect(content).toContain('boundary');
     // HS-9288 — the "Mark it started" step notes that `started` auto-affirms the claim.
     expect(content).toContain('auto-affirms your claim');
   });
