@@ -71,7 +71,9 @@ describe('POST /api/workers/launch — real git (HS-8969)', () => {
     // (so the worker's permission prompts route to Hot Sheet); assert against the
     // canonical builder rather than a stale bare `claude "/hotsheet-worker"` literal
     // (HS-9269). `workerLaunchCommand` keys the channel slug off the owner dataDir.
-    expect(spec.command).toBe(workerLaunchCommand(ownerData));
+    // HS-9676 — the command also injects the canonical worker id (here 'feature-x')
+    // as HOTSHEET_WORKER_ID + a verbatim prompt line, so pass the worker id too.
+    expect(spec.command).toBe(workerLaunchCommand(ownerData, 'feature-x'));
     expect(spec.worktreeCreated).toBe(true);
     expect(spec.cwd).not.toBe(repoRoot);
 

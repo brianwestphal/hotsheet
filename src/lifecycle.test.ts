@@ -35,6 +35,11 @@ vi.mock('./db/connection.js', () => ({
 const destroyAllTerminalsMock = vi.fn();
 vi.mock('./terminals/registry.js', () => ({
   destroyAllTerminals: () => { destroyAllTerminalsMock(); },
+  // HS-9662 — `destroyTerminals` now consults broker mode; default these tests to
+  // the non-broker path (the behavior they were written for), where
+  // `destroyAllTerminals` runs normally and no detached broker is torn down.
+  isBrokerMode: () => false,
+  brokerShutdownForQuit: () => {},
 }));
 
 // HS-8040 — shell-routes module is dynamically imported by the pipeline
