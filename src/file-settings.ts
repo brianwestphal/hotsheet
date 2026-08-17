@@ -37,13 +37,6 @@ export const FileSettingsSchema = z.object({
   // property, like committing `.pr-notes/`) — falls through `defaultScope` to
   // `shared`.
   aiReviewNotes: z.boolean().optional(),
-  // HS-9112 (docs/101 §101.7) — when true, the main agent PROPOSES a worker
-  // partition for the owner to review in the UI (via `hotsheet_propose_partition`)
-  // instead of dispatching directly. Default off (today's direct dispatch). §95:
-  // Shared-by-default with a Local override (a team may want it on repo-wide, or a
-  // single machine may opt in) — not in `LOCAL_SCOPE_KEYS`, so `defaultScope` →
-  // `shared`.
-  alwaysPreviewAgentPlans: z.boolean().optional(),
   // HS-8009 (docs/113 §113.3) — the project's preferred AI tool. `auto` (default,
   // absent) preserves today's detect-everything behavior. When an explicit CLI
   // agent (`claude`/`codex`/`gemini`/`opencode`/`goose`) is set, terminal command
@@ -270,9 +263,6 @@ export interface FileSettings {
   worktreeSetup?: string;
   /** HS-9221 — opt into inducing Glassbox `.pr-notes/` review notes (docs/110). */
   aiReviewNotes?: boolean;
-  /** HS-9112 — agent proposes a worker partition for review instead of dispatching
-   *  directly (docs/101 §101.7). */
-  alwaysPreviewAgentPlans?: boolean;
   [key: string]: unknown;
 }
 

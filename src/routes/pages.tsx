@@ -1161,16 +1161,6 @@ pageRoutes.get('/', (c) => {
                 <label><input type="checkbox" id="settings-ai-review-notes" /> Induce AI review notes (<code>.pr-notes/</code>)</label>
                 <span className="settings-hint">When on, the worklist tells the coding agents Hot Sheet drives to leave line-anchored review notes under <code>.pr-notes/</code> for non-obvious changes, attributed to the ticket. <strong>Requires Glassbox</strong> — the <code>glassbox</code> CLI on PATH (Hot Sheet injects its canonical instructions) and a committed <code>.pr-notes/</code> directory Glassbox renders. Off by default; shared with your team (a repo property), overridable per-machine under Local.</span>
               </div>
-              {/* HS-9112 (docs/101 §101.7) — "always preview agent plans" toggle
-                  (`alwaysPreviewAgentPlans`). Scope-aware Shared/Local (registered
-                  in `settingsScope.tsx` SCOPED_FIELDS). When on, the worklist tells
-                  the main agent to call `hotsheet_propose_partition` instead of
-                  dispatching directly, so the owner reviews the plan in the
-                  partition editor before any tickets are claimed. */}
-              <div className="settings-field" style="margin-top:16px">
-                <label><input type="checkbox" id="settings-always-preview-agent-plans" /> Always preview agent worker plans</label>
-                <span className="settings-hint">When on, an AI agent that parallelizes work across the worker pool <strong>proposes</strong> its plan for you to review, edit, or cancel in the partition editor first — instead of dispatching (claiming) the tickets directly. Off by default; shared with your team, overridable per-machine under Local.</span>
-              </div>
               {/* HS-8162 — Diagnostics subsection. HS-8446 collapsed the
                   former per-project UI-hang-toast toggle into a single
                   GLOBAL "Enable diagnostic UI surfaces" checkbox that

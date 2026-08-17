@@ -407,17 +407,6 @@ async function syncWorklist(state: SyncState): Promise<void> {
     const aiReviewNotes = settings.aiReviewNotes === true;
     pushAll(sections, buildReviewNotesSection(aiReviewNotes, aiReviewNotes ? getGlassboxNoteInstructions() : null));
 
-    // HS-9112 (docs/101 §101.7) — when this project opts into "always preview agent
-    // plans" (`alwaysPreviewAgentPlans`), tell the agent to PROPOSE a worker
-    // partition for owner review instead of dispatching it directly. Off by
-    // default → nothing is added and today's direct dispatch is unchanged.
-    if (settings.alwaysPreviewAgentPlans === true) {
-      sections.push('## Preview worker plans before dispatch');
-      sections.push('');
-      sections.push('This project has **"always preview agent plans"** ON. When you parallelize work across the worker pool, call **`hotsheet_propose_partition`** with your whole proposed assignment (one entry per worker with its `ticket_ids`) **instead of** `hotsheet_dispatch_tickets`. This surfaces the plan in the owner\'s partition editor for them to review, edit, or cancel — the UI dispatches (claims) the tickets on accept. Do **NOT** claim/dispatch the tickets yourself while this setting is on.');
-      sections.push('');
-    }
-
     if (tickets.length === 0) {
       pushAll(sections, await buildAutoPrioritizeSection(port, secretHeader));
     } else {

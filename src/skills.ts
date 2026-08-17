@@ -65,7 +65,11 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // `hotsheet/<id>` branch fallback, instead of deriving the id from the generated
 // worktree folder name — which carried an instance suffix and made reused workers
 // claim under the wrong identity.
-export const SKILL_VERSION = 26;
+// HS-9689 — bumped 26 → 27: removed the "Parallelizing work across the worker pool"
+// guidance (`hotsheet_get_worker_pool` / `_set_worker_target` / `_dispatch_tickets` /
+// `_drain_workers` / `_propose_partition` + the `alwaysPreviewAgentPlans` preview
+// path), since the worker pool + those MCP tools were retired (HS-9686).
+export const SKILL_VERSION = 27;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -394,8 +398,6 @@ function mainSkillBody(projectRoot: string, dataDir: string = join(projectRoot, 
     // documents the full per-operation two-form layout; this line tells
     // the agent to prefer the MCP path when it's available.
     '**MCP tools (`hotsheet_*`) are preferred over curl when the channel is connected** — see the worklist for per-operation guidance. The 14-tool surface covers ticket lifecycle (`hotsheet_update_ticket`, `hotsheet_create_ticket`, `hotsheet_get_ticket`, `hotsheet_delete_ticket`, `hotsheet_restore_ticket`, `hotsheet_toggle_up_next`, `hotsheet_duplicate_tickets`), bulk operations (`hotsheet_batch`), notes (`hotsheet_edit_note`, `hotsheet_delete_note`), attachments (`hotsheet_add_attachment`), channel signaling (`hotsheet_signal_done`), feedback sugar (`hotsheet_request_feedback`), and query (`hotsheet_query_tickets`). Curl stays supported as the universal fallback for non-Claude AI agents and human terminal callers.',
-    '',
-    '**Parallelizing work across the worker pool:** `hotsheet_get_worker_pool` / `hotsheet_set_worker_target` / `hotsheet_dispatch_tickets` / `hotsheet_drain_workers`. When the project has **"always preview agent plans"** on (the worklist says so), call **`hotsheet_propose_partition`** with your whole proposed assignment INSTEAD of `hotsheet_dispatch_tickets` — it surfaces the plan in the owner\'s partition editor for review, and the UI dispatches on accept (you do not claim the tickets yourself).',
     '',
     '## Git: keep the target current + integrate worker branches',
     '',

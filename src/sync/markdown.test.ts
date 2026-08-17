@@ -133,29 +133,6 @@ describe('worklist sync', () => {
     expect(content).not.toContain('## AI Review Notes');
   });
 
-  // HS-9112 (docs/101 §101.7) — the `alwaysPreviewAgentPlans` opt-in injects the
-  // "propose don't dispatch" worklist section (gating the agent's tool choice);
-  // off by default it's absent.
-  it('injects the "preview worker plans" section only when alwaysPreviewAgentPlans is on', async () => {
-    // Default off → no section, no propose instruction.
-    let content = await syncedWorklist();
-    expect(content).not.toContain('## Preview worker plans before dispatch');
-    expect(content).not.toContain('hotsheet_propose_partition');
-
-    writeFileSettings(tempDir, { alwaysPreviewAgentPlans: true });
-    scheduleWorklistSync();
-    content = await syncedWorklist();
-    expect(content).toContain('## Preview worker plans before dispatch');
-    expect(content).toContain('hotsheet_propose_partition');
-    expect(content).toContain('instead of');
-
-    // Turning it off removes the section again.
-    writeFileSettings(tempDir, { alwaysPreviewAgentPlans: false });
-    scheduleWorklistSync();
-    content = await syncedWorklist();
-    expect(content).not.toContain('## Preview worker plans before dispatch');
-  });
-
   it('includes workflow section with curl examples', () => {
     const content = readFileSync(join(tempDir, 'worklist.md'), 'utf-8');
     expect(content).toContain('## Workflow');

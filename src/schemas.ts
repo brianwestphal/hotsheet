@@ -383,21 +383,6 @@ const SYNC_EVENT_INPUT_VARIANTS = [
     deviceId: z.string().nullable(),
     expiresAt: z.number().nullable(),
   }),
-  // HS-9112 (docs/101 §101.7) — the main agent proposed a worker partition for
-  // human review (via `hotsheet_propose_partition`, gated on the per-project
-  // `alwaysPreviewAgentPlans` setting) instead of dispatching directly. Carries
-  // the full proposed assignment so a live client opens the §92 partition editor
-  // straight off the event; on accept the client dispatches (the human commits
-  // the work), on cancel nothing dispatches.
-  z.object({
-    type: z.literal('worker-partition-proposed'),
-    assignments: z.array(z.object({
-      worker: z.string(),
-      label: z.string(),
-      ticketIds: z.array(z.number()),
-      ticketNumbers: z.array(z.string()),
-    })),
-  }),
 ] as const;
 
 /** The event a mutation handler passes to `emitEvent` (no `seq` yet). */
