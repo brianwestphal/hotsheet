@@ -174,11 +174,6 @@ beforeAll(async () => {
     await next();
   });
   app.route('/api', apiRoutes);
-  // HS-8962 — worker routes are mounted directly under /api in server.ts (like
-  // worktreeRoutes), not inside apiRoutes; mirror that here so the pool endpoints
-  // are reachable in this harness.
-  const { workerRoutes } = await import('./workers.js');
-  app.route('/api', workerRoutes);
 });
 
 afterAll(async () => {

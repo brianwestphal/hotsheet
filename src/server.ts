@@ -29,8 +29,6 @@ import { projectRoutes } from './routes/projects.js';
 import { remotesRoutes } from './routes/remotes.js';
 import { createRequestGuards } from './routes/requestGuards.js';
 import { telemetryRoutes } from './routes/telemetry.js';
-import { workerRoutes } from './routes/workers.js';
-import { worktreeRoutes } from './routes/worktrees.js';
 import { wireSyncWebSocket } from './routes/wsSync.js';
 import { getProjectSecret } from './secret-file.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
@@ -180,10 +178,6 @@ export async function startServer(
   app.route('/api/projects', projectRoutes);
   // HS-7954 — git status chip. `GET /api/git/status` returns `GitStatus | null`.
   app.route('/api', gitRoutes);
-  // HS-8935 — git worktree management (docs/89-git-worktrees.md Phase B).
-  app.route('/api', worktreeRoutes);
-  // HS-8863 — distributed worker launch (docs/90 §90.5 / §90.7).
-  app.route('/api', workerRoutes);
   // HS-9302 — the machine-global remotes store (docs/112 §112.3).
   app.route('/api', remotesRoutes);
 
