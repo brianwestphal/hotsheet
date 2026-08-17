@@ -184,8 +184,14 @@ export interface AiToolPlugin {
      *
      * `ownerDataDir` is the OWNER's `.hotsheet` (the shared instance the worker
      * reports into), NOT the worktree's — the worktree is a follower.
+     *
+     * `workerId` (HS-9676) is the canonical LEASE identity (e.g. `worker-1`). When
+     * given, the plugin injects it into the launch — `HOTSHEET_WORKER_ID=<id>` +
+     * a verbatim line in the prompt — so the agent uses it for claim/renew/release
+     * instead of guessing from the generated worktree folder name. Optional so
+     * older/manual callers still work.
      */
-    launchCommand(ownerDataDir: string): string;
+    launchCommand(ownerDataDir: string, workerId?: string): string;
     /**
      * The executable the launch line starts, so the pool can verify it exists
      * BEFORE registering a slot.

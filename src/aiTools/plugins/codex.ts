@@ -1,6 +1,7 @@
 // HS-9490 (docs/132) — Codex. MCP-native (no ACP mode in codex-cli); driven over its
 // app-server JSON-RPC protocol (docs/121) with model-B terminal hosting (docs/129).
 
+import { workerIdEnvPrefix, workerIdPromptLine } from '../../workerIdentity.js';
 import type { AiToolPlugin } from '../types.js';
 
 export const codexPlugin: AiToolPlugin = {
@@ -29,8 +30,10 @@ export const codexPlugin: AiToolPlugin = {
   // note that bridge is opt-in (`codex_interactive_permissions`); with it off a
   // worker's approvals prompt in its own terminal rather than the Hot Sheet UI.
   worker: {
-    launchCommand: () =>
-      'codex "Read .agents/skills/hotsheet-worker/SKILL.md and follow it exactly, starting now."',
+    // HS-9676 — inject the canonical lease id (env + verbatim prompt line) so the
+    // worker doesn't claim under the generated worktree folder name.
+    launchCommand: (_ownerDataDir: string, workerId?: string) =>
+      `${workerIdEnvPrefix(workerId)}codex "Read .agents/skills/hotsheet-worker/SKILL.md and follow it exactly, starting now.${workerIdPromptLine(workerId)}"`,
     binary: 'codex',
   },
   // HS-9604 — codex's counters are NESTED, so the inclusive parents are

@@ -3,11 +3,11 @@ name: hotsheet-worker
 description: Run as a distributed worker — continuously claim, work, and release Up Next tickets
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ---
-<!-- hotsheet-skill-version: 25 -->
+<!-- hotsheet-skill-version: 26 -->
 
 You are a **distributed worker** draining the Hot Sheet **Up Next** pool. Multiple workers run in parallel against ONE shared Hot Sheet, each in its own git worktree, coordinated by the atomic claim/lease primitive (docs/90 §90.5) — so you never need to worry about another worker grabbing the same ticket.
 
-**Your worker identity:** derive a stable `worker` id and `label` from your current working directory — use the worktree folder name (the last path segment of your cwd, e.g. `my-repo-feature-x`) for both. This makes your claims attributable in the maintainer's UI.
+**Your worker identity (use exactly what the launcher gave you):** your launcher stated your `worker` id verbatim in the prompt that started you (e.g. `worker-1`) and exported it as the `HOTSHEET_WORKER_ID` environment variable (`echo $HOTSHEET_WORKER_ID` to read it). Use THAT exact id as both your `worker` and your `label` for every claim / renew / release / update call below — it is your stable **lease identity**, and the pool dispatches tickets to it. If `HOTSHEET_WORKER_ID` is somehow unset, fall back to your branch: `git branch --show-current` gives `hotsheet/<id>` (e.g. `hotsheet/worker-1` → strip the `hotsheet/` prefix → `worker-1`). **Never** derive your id from the worktree folder name or the tab title — those carry a generated instance suffix (e.g. `hotsheet-worker-1-12`) that increments on reuse and is a *display label only*; claiming under it means the tickets the pool dispatched to `worker-1` won't be recognized as yours.
 
 ## The loop
 

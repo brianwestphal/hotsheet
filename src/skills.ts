@@ -60,7 +60,12 @@ import { isExecutableOnPath } from './utils/isExecutableOnPath.js';
 // tree (`.agents/skills`, Antigravity/Codex) is written as THIN ADAPTERS that
 // reference the canonical `.claude/skills/<name>/SKILL.md` instead of
 // duplicating the body; the bump rewrites existing full-content copies.
-export const SKILL_VERSION = 25; // HS-9475 — forces a rewrite of every file that baked in the secret or the port
+// HS-9676 — bumped 25 → 26: the `hotsheet-worker` identity section now uses the
+// launcher-injected id (`HOTSHEET_WORKER_ID` / the verbatim prompt line), with a
+// `hotsheet/<id>` branch fallback, instead of deriving the id from the generated
+// worktree folder name — which carried an instance suffix and made reused workers
+// claim under the wrong identity.
+export const SKILL_VERSION = 26;
 
 /**
  * HS-8390 — every long-lived mutable lifecycle ref this module owns lives
@@ -421,7 +426,7 @@ function workerSkillBody(projectRoot: string, dataDir: string = join(projectRoot
   return [
     'You are a **distributed worker** draining the Hot Sheet **Up Next** pool. Multiple workers run in parallel against ONE shared Hot Sheet, each in its own git worktree, coordinated by the atomic claim/lease primitive (docs/90 §90.5) — so you never need to worry about another worker grabbing the same ticket.',
     '',
-    '**Your worker identity:** derive a stable `worker` id and `label` from your current working directory — use the worktree folder name (the last path segment of your cwd, e.g. `my-repo-feature-x`) for both. This makes your claims attributable in the maintainer\'s UI.',
+    '**Your worker identity (use exactly what the launcher gave you):** your launcher stated your `worker` id verbatim in the prompt that started you (e.g. `worker-1`) and exported it as the `HOTSHEET_WORKER_ID` environment variable (`echo $HOTSHEET_WORKER_ID` to read it). Use THAT exact id as both your `worker` and your `label` for every claim / renew / release / update call below — it is your stable **lease identity**, and the pool dispatches tickets to it. If `HOTSHEET_WORKER_ID` is somehow unset, fall back to your branch: `git branch --show-current` gives `hotsheet/<id>` (e.g. `hotsheet/worker-1` → strip the `hotsheet/` prefix → `worker-1`). **Never** derive your id from the worktree folder name or the tab title — those carry a generated instance suffix (e.g. `hotsheet-worker-1-12`) that increments on reuse and is a *display label only*; claiming under it means the tickets the pool dispatched to `worker-1` won\'t be recognized as yours.',
     '',
     '## The loop',
     '',

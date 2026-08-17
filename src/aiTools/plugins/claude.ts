@@ -6,6 +6,7 @@
 // `channelSlug.js`, NOT `channel-config.js` — the latter imports `fs` / `path` and the
 // whole server graph, and this module is client-reachable (HS-9615).
 import { claudeWithChannelCommand } from '../../channelSlug.js';
+import { workerIdEnvPrefix, workerIdPromptLine } from '../../workerIdentity.js';
 import type { AiToolPlugin } from '../types.js';
 
 export const claudePlugin: AiToolPlugin = {
@@ -29,7 +30,12 @@ export const claudePlugin: AiToolPlugin = {
   // — MCP tools worked, but Claude never sent `permission_request`, so every
   // worker permission fell back to its terminal and the worker blocked forever.
   worker: {
-    launchCommand: (ownerDataDir: string) => `${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker"`,
+    // HS-9676 — inject the canonical lease id: `HOTSHEET_WORKER_ID=<id>` env +
+    // a verbatim line in the prompt, so the agent doesn't derive its id from the
+    // generated worktree folder name (`hotsheet-worker-1-12`) and claim under the
+    // wrong identity.
+    launchCommand: (ownerDataDir: string, workerId?: string) =>
+      `${workerIdEnvPrefix(workerId)}${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker${workerIdPromptLine(workerId)}"`,
     binary: 'claude',
   },
   // HS-9605 — `claude_code.cost.usage`; the whole cost UI was built on it.

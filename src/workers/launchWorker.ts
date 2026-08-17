@@ -66,8 +66,11 @@ export function workerBinary(ownerDataDir: string): string {
   return workerCapabilityFor(ownerDataDir).binary;
 }
 
-export function workerLaunchCommand(ownerDataDir: string): string {
-  return workerCapabilityFor(ownerDataDir).launchCommand(ownerDataDir);
+/** The worker launch line. HS-9676 — pass the canonical `workerId` (e.g.
+ *  `worker-1`) so the plugin injects it (env + prompt) and the agent claims under
+ *  the right identity instead of the generated worktree folder name. */
+export function workerLaunchCommand(ownerDataDir: string, workerId?: string): string {
+  return workerCapabilityFor(ownerDataDir).launchCommand(ownerDataDir, workerId);
 }
 
 /**
@@ -177,5 +180,9 @@ export async function prepareWorker(
   const worker = opts.worker ?? slugify(label);
   // HS-9036 — the channel flag is keyed to the OWNER data dir (the channel
   // server the worker registers under + the maintainer is watching).
-  return { worker, label, cwd, command: workerLaunchCommand(ownerDataDir), worktreeCreated };
+  // HS-9676 — inject `worker` (the canonical lease id, e.g. `worker-1`) into the
+  // command so the agent doesn't derive its id from the generated worktree folder
+  // (`hotsheet-worker-1-12`); `worker` is the SAME id `registerWorker` records, so
+  // the launched agent's claims match the pool's dispatched tickets.
+  return { worker, label, cwd, command: workerLaunchCommand(ownerDataDir, worker), worktreeCreated };
 }

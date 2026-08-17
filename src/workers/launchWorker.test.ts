@@ -2,9 +2,9 @@
 // command, the reuse-existing-worktree path, and the validation guards. The
 // create-a-new-worktree path delegates to `createWorktree` (covered in
 // `worktrees.test.ts`).
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { _resetSettingsCacheForTests } from '../file-settings.js';
@@ -45,7 +45,42 @@ describe('worker launcher (HS-8863)', () => {
     expect(spec.worktreeCreated).toBe(false);
     expect(spec.label).toBe('feature-x');
     expect(spec.worker).toBe('feature-x');           // slug of the label
-    expect(spec.command).toBe(`${claudeWithChannelCommand(join(repoRoot, '.hotsheet'))} "/hotsheet-worker"`);
+    // HS-9676 — the command now injects the canonical id (env + verbatim prompt).
+    expect(spec.command).toContain('HOTSHEET_WORKER_ID=feature-x ');
+    expect(spec.command).toContain('"/hotsheet-worker');
+    expect(spec.command).toContain('canonical worker id is feature-x');
+  });
+
+  it('HS-9676: workerLaunchCommand injects the canonical worker id (env + verbatim prompt); omitting it keeps the bare command', () => {
+    const dataDir = join(repoRoot, '.hotsheet');
+    const cmd = workerLaunchCommand(dataDir, 'worker-1');
+    expect(cmd.startsWith('HOTSHEET_WORKER_ID=worker-1 ')).toBe(true);
+    expect(cmd).toContain('canonical worker id is worker-1');
+    expect(cmd).toMatch(/Do NOT derive your id from the worktree folder/);
+    // Older/manual callers that pass no id still get the unchanged bare command.
+    expect(workerLaunchCommand(dataDir)).toBe(`${claudeWithChannelCommand(dataDir)} "/hotsheet-worker"`);
+  });
+
+  it('HS-9676: a reused worker whose worktree folder carries a numeric instance suffix still launches under the canonical lease id, NOT the folder name', async () => {
+    // The pool reuses slot `worker-1`; its worktree folder is the generated
+    // `hotsheet-worker-1-12` (the suffix increments on reuse). The pool passes the
+    // canonical label, so the injected id must be `worker-1` — the id it registers
+    // and dispatches tickets to — and must never be the folder basename.
+    const suffixedDir = join(tmpdir(), `hotsheet-worker-1-12-${String(Date.now())}`);
+    mkdirSync(suffixedDir);
+    try {
+      const git = gitWith([repoRoot, suffixedDir]);
+      const spec = await prepareWorker(
+        repoRoot, join(repoRoot, '.hotsheet'),
+        { worktreePath: suffixedDir, label: 'worker-1' }, git,
+      );
+      expect(spec.worker).toBe('worker-1');
+      expect(spec.command).toContain('HOTSHEET_WORKER_ID=worker-1 ');
+      expect(spec.command).toContain('canonical worker id is worker-1');
+      expect(spec.command).not.toContain(basename(suffixedDir)); // never the instance folder name
+    } finally {
+      rmSync(suffixedDir, { recursive: true, force: true });
+    }
   });
 
   it('honors an explicit label/worker over the derived defaults', async () => {

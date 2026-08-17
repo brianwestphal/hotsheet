@@ -18,6 +18,7 @@
  * the only cost is a ~1 ms localhost hop dwarfed by the LLM round-trip
  * the tool call sits inside. See §63.3.
  */
+import { execFileSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { basename, join } from 'path';
 import { z } from 'zod';
@@ -28,6 +29,7 @@ import {
   TicketStatusSchema,
 } from './routes/validation.js';
 import { getProjectSecret } from './secret-file.js';
+import { resolveWorkerActor, WORKER_ID_ENV } from './workerIdentity.js';
 
 /** Shape of the MCP `tools/list` response entry per the MCP spec. */
 export interface ToolListEntry {
@@ -47,26 +49,57 @@ export interface ToolCallResult {
 interface ChannelSettings {
   port: number;
   secret: string;
-  /** HS-9198 — the claim actor identity injected on write requests (the worktree
-   *  folder name for a distributed worker; undefined for the owner / main agent,
-   *  which the REST layer defaults to `owner`). */
+  /** HS-9198 / HS-9676 — the claim actor identity injected on write requests: the
+   *  worker's canonical lease id (from `HOTSHEET_WORKER_ID`, else the `hotsheet/<id>`
+   *  branch, else the worktree folder) for a distributed worker; undefined for the
+   *  owner / main agent, which the REST layer defaults to `owner`. See
+   *  `deriveChannelActor`. */
   actor?: string;
 }
 
-/** HS-9198 — derive this channel server's claim actor. When it runs inside a
- *  follower worktree (a distributed worker — detected by the `authoritativeDataDir`
- *  pointer in the cwd's `.hotsheet/settings.json`, like `isFollowerCwd` in
- *  channel.ts), the actor is `basename(cwd)` — the worktree folder name, which is
- *  EXACTLY the `worker` id the `/hotsheet-worker` skill uses for hotsheet_claim_next
- *  (skills.ts §"Your worker identity"). So a worker's auto-claim-on-write matches
- *  its explicit claims (renew, not self-conflict). The main agent → undefined → the
- *  REST layer treats it as `owner`. */
+/** HS-9676 — read the current git branch of `cwd`, or null. Only used by
+ *  `deriveChannelActor`'s fallback (when `HOTSHEET_WORKER_ID` is unset), so it runs
+ *  rarely. Safe sync child (timeout + SIGKILL + fail-fast git env) per the §"sync
+ *  child processes" rule; any failure (not a repo, detached HEAD, timeout) → null. */
+function currentGitBranch(cwd: string): string | null {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 2000,
+      killSignal: 'SIGKILL',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+    }).trim();
+    return out === '' || out === 'HEAD' ? null : out;
+  } catch {
+    return null;
+  }
+}
+
+/** HS-9198 / HS-9676 — derive this channel server's claim actor. When it runs
+ *  inside a follower worktree (a distributed worker — detected by the
+ *  `authoritativeDataDir` pointer in the cwd's `.hotsheet/settings.json`, like
+ *  `isFollowerCwd` in channel.ts), the actor must equal the `worker` id the
+ *  `/hotsheet-worker` skill uses for its explicit claims, so a worker's
+ *  auto-claim-on-write matches its claim/renew (no self-conflict). It therefore
+ *  mirrors the skill's identity chain (skills.ts §"Your worker identity"):
+ *    1. `HOTSHEET_WORKER_ID` — the canonical lease id the launcher injected (the
+ *       normal path; the launched Claude's channel-server child inherits the env).
+ *    2. else the worker branch `hotsheet/<id>` → `<id>`.
+ *    3. else (legacy / manual launch) the worktree folder name.
+ *  The main agent → undefined → the REST layer treats it as `owner`.
+ *  Pre-HS-9676 this returned `basename(cwd)` unconditionally, which for a reused
+ *  worker was the generated instance name (`hotsheet-worker-1-12`), not the lease
+ *  id (`worker-1`) — so the auto-claim landed under the wrong actor. */
 function deriveChannelActor(): string | undefined {
+  let isFollower = false;
   try {
     const ptr = readFileSettings(join(process.cwd(), '.hotsheet')).authoritativeDataDir;
-    if (typeof ptr === 'string' && ptr !== '') return basename(process.cwd());
+    isFollower = typeof ptr === 'string' && ptr !== '';
   } catch { /* read error → treat as the owner/main connection */ }
-  return undefined;
+  if (!isFollower) return undefined;
+  return resolveWorkerActor(process.cwd(), process.env[WORKER_ID_ENV], () => currentGitBranch(process.cwd()));
 }
 
 // HS-8567 — strict zod schema for the resolved file settings. Only `port` is

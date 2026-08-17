@@ -161,11 +161,17 @@ write. It does **two orthogonal jobs** (HS-9208 split them apart):
 
 **Caller identity.** The actor comes from the `X-Hotsheet-Actor` request header.
 The channel server injects it automatically: a **worker** (follower-worktree channel
-server, `deriveChannelActor` in `channel.tools.ts`) sends `basename(cwd)` — the
-worktree folder name, which is EXACTLY the `worker` id the `/hotsheet-worker` skill
-uses for `claim_next`, so a worker's auto-claim-on-write matches its explicit claims
-(renew, never self-conflict). The owner UI + main agent send no header → the server
-defaults the actor to **`owner`**.
+server, `deriveChannelActor` in `channel.tools.ts`) sends its **canonical lease id**,
+which is EXACTLY the `worker` id the `/hotsheet-worker` skill uses for `claim_next`,
+so a worker's auto-claim-on-write matches its explicit claims (renew, never
+self-conflict). **HS-9676** — that id is the launcher-injected `HOTSHEET_WORKER_ID`
+(e.g. `worker-1`), falling back to the `hotsheet/<id>` branch, and only as a last
+resort the worktree folder basename. It is *not* the folder name in the normal case:
+the generated worktree/tab name carries an instance suffix (`hotsheet-worker-1-12`,
+incrementing on reuse), and deriving the id from it made a reused worker claim under
+the wrong actor and never recognize the tickets the pool dispatched to `worker-1`.
+The owner UI + main agent send no header → the server defaults the actor to
+**`owner`**.
 
 **Chokepoint scope.** The primary `PATCH /api/tickets/:id` route (HS-9198) —
 what `hotsheet_update_ticket` proxies AND the UI's main edit path (status,
