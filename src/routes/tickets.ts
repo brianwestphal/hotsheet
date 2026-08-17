@@ -44,7 +44,6 @@ import { readReviewProofArtifact, readReviewProofForTicket } from '../reviewNote
 import { discoverTicketCommits } from '../reviewNotes/ticketCommits.js';
 import { parseJsonOrNull, type SyncEventInput, TagsArraySchema } from '../schemas.js';
 import type { AppEnv, Ticket, TicketFilters, TicketStatus } from '../types.js';
-import { isQueueOnly, onClaimNext, touch as touchPoolWorker } from '../workers/poolManager.js';
 import { parseIntParam } from './helpers.js';
 import { notifyMutation } from './notify.js';
 import { isPluginEnabledForProject } from './plugins.js';
@@ -274,21 +273,13 @@ ticketRoutes.post('/tickets/claim-next', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ClaimSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  // HS-8962 — drain-aware: a pool worker marked draining is told to stop (and
-  // flipped to `stopped`) instead of claiming, so it exits its loop *after*
-  // finishing the ticket it was already on (docs/91 §91.4). Non-pool workers are
-  // unaffected (drain is always false for them).
   const dataDir = c.get('dataDir');
-  const { drain } = onClaimNext(dataDir, parsed.data.worker);
-  if (drain) return c.json({ ticket: null, drain: true });
-  // HS-8975 — a queue-only worker is served only its dispatched tickets, then null.
-  const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, { ownOnly: isQueueOnly(dataDir, parsed.data.worker) });
+  const ticket = await claimNext(parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds);
   if (ticket !== null) { notifyMutation(c.get('dataDir')); emitSync(c, { type: 'claims-changed' }); }
-  // HS-9597 (docs/6 §6.6) — the single most important place for this. The
-  // `hotsheet-worker` loop is claim → work `details` → complete; a pool worker
-  // NEVER reads `worklist.md`, so without this it gets strictly less standing
-  // guidance than the main agent working the identical ticket, and has no
-  // fallback path to the file.
+  // HS-9597 (docs/6 §6.6) — a claiming agent gets the ticket's auto-context
+  // inline: the claim → work `details` → complete loop never reads `worklist.md`,
+  // so without this it gets strictly less standing guidance than the main agent
+  // working the identical ticket, and has no fallback path to the file.
   return c.json({ ticket: ticket === null ? null : await withAutoContext(dataDir, ticket) });
 });
 
@@ -300,7 +291,6 @@ ticketRoutes.post('/tickets/:id/claim', async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const result = await claimById(id, parsed.data.worker, parsed.data.label ?? null, parsed.data.ttlSeconds, parsed.data.force);
   if (result.ok) {
-    touchPoolWorker(c.get('dataDir'), parsed.data.worker); // HS-8972 liveness
     notifyMutation(c.get('dataDir'));
     emitSync(c, { type: 'claims-changed' });
     return c.json(result);
@@ -320,9 +310,6 @@ ticketRoutes.post('/tickets/:id/renew-lease', async (c) => {
   const raw: unknown = await c.req.json().catch(() => ({}));
   const parsed = parseBody(ClaimSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
-  // HS-8972 — a heartbeat is the primary liveness signal for a worker that's
-  // heads-down on a long ticket (not calling claim-next). Bump its pool slot.
-  touchPoolWorker(c.get('dataDir'), parsed.data.worker);
   const result = await renewLease(id, parsed.data.worker, parsed.data.ttlSeconds);
   // HS-8973 — push the extended lease so the chip's countdown stays accurate
   // without waiting for the 5 s claims poll.

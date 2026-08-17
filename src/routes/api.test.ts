@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { Hono } from 'hono';
 import { join } from 'path';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _resetSettingsCacheForTests, _settingsParseCountForTests } from '../file-settings.js';
 import type { PtyFactory } from '../terminals/registry.js';
@@ -2247,7 +2247,7 @@ describe('claim/lease endpoints (HS-8862)', () => {
     return (await r.json() as TicketResponse).id;
   }
 
-  it('POST /tickets/claim-next claims the top ticket then returns null when drained', async () => {
+  it('POST /tickets/claim-next claims the top up-next ticket', async () => {
     const hi = await createUpNext('claim hi', 'highest');
     const res = await app.request('/api/tickets/claim-next', post({ worker: 'w1', label: 'W1' }));
     expect(res.status).toBe(200);
@@ -2602,103 +2602,6 @@ describe('claim-before-work enforcement (HS-9198)', () => {
     await app.request(`/api/tickets/${id}`, patch({ status: 'started' }, { 'X-Hotsheet-Actor': 'worker-A' })); // A holds it
     const res = await app.request(`/api/tickets/${id}`, patch({ last_read_at: '2026-06-29T00:00:00Z' }, { 'X-Hotsheet-Actor': 'worker-B' }));
     expect(res.status).toBe(200); // marking-read isn't "work"
-  });
-});
-
-describe('worker-pool endpoints + drain-aware claim-next (HS-8962)', () => {
-  // HS-9316 — reset per-test (not per-describe). Under CI load the heavy first
-  // test can exhaust its timeout; vitest then RETRIES it. With a `beforeAll`
-  // reset the retry inherited the failed attempt's leaked `pw1: stopped` state,
-  // so the fresh-registration `expect('idle')` tripped on `'stopped'` — a
-  // misleading assertion that masked the real failure (the timeout). Resetting
-  // in `beforeEach`/`afterEach` gives every attempt a clean pool, so a retry can
-  // genuinely pass, and a real failure still surfaces as the timeout it is. The
-  // `afterEach` also stops a draining worker leaking into other describes that
-  // share this file's one dataDir.
-  beforeEach(async () => {
-    const { _resetPoolsForTesting } = await import('../workers/poolManager.js');
-    _resetPoolsForTesting();
-  });
-  afterEach(async () => {
-    const { _resetPoolsForTesting } = await import('../workers/poolManager.js');
-    _resetPoolsForTesting();
-  });
-
-  it('register → GET pool → drain → drain-aware claim-next → stopped → remove', async () => {
-    // HS-9355 — slow-vs-hang discriminator instrumentation. This test flaked at
-    // the (deliberate, HS-9316) 60s timeout on CI with no way to tell WHICH of
-    // its ~12 sequential round-trips stalled vs. everything being uniformly
-    // CPU-starved. `onTestFailed` stays silent on green runs and prints the full
-    // per-step timing trace on ANY failure (including a timeout, whose hung
-    // await never reaches a final log line) — the next CI flake tells us
-    // "one call hung at step X" (a real bug to chase) vs. "every step crawled"
-    // (starvation → bump the timeout like HS-9351). Do not remove on a green
-    // streak; it only speaks when something is wrong.
-    const t0 = Date.now();
-    const stepTrace: string[] = [];
-    const mark = (name: string): void => { stepTrace.push(`${name}@+${String(Date.now() - t0)}ms`); };
-    onTestFailed(() => {
-      console.error(`[HS-9355] worker-pool test failed after ${String(Date.now() - t0)}ms; completed steps: ${stepTrace.join(' | ')} <- the NEXT step after the last one listed is where it stalled/failed`);
-    });
-
-    // Deterministic claim pool: only this test's ticket is claimable.
-    const { getDb } = await import('../db/connection.js');
-    await (await getDb()).query("UPDATE tickets SET up_next = FALSE, claimed_by = NULL, claim_lease_expires_at = NULL");
-    mark('reset-claims-update');
-    const r = await app.request('/api/tickets', post({ title: 'pool work', defaults: { up_next: true } }));
-    const ticketId = (await r.json() as TicketResponse).id;
-    mark('create-ticket');
-
-    // Register a pool worker.
-    const reg = await app.request('/api/workers/pool/register', post({ label: 'worker-1', worker: 'pw1', worktreePath: '/wt/pw1', branch: 'hotsheet/worker-1', terminalId: 't-pw1' }));
-    expect(reg.status).toBe(200);
-    expect((await reg.json() as { state: string; label: string }).state).toBe('idle');
-    mark('register');
-
-    // It appears in the pool.
-    const pool1 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string; state: string }[] };
-    expect(pool1.workers.find(w => w.worker === 'pw1')?.state).toBe('idle');
-    mark('get-pool-1');
-
-    // Before drain, the worker claims normally and shows as working.
-    const claim1 = await (await app.request('/api/tickets/claim-next', post({ worker: 'pw1', label: 'worker-1' }))).json() as { ticket: { id: number } | null; drain?: boolean };
-    expect(claim1.ticket?.id).toBe(ticketId);
-    expect(claim1.drain).toBeUndefined();
-    mark('claim-next-1');
-    const pool2 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string; state: string; currentTicket: { id: number } | null }[] };
-    const working = pool2.workers.find(w => w.worker === 'pw1')!;
-    expect(working.state).toBe('working');
-    expect(working.currentTicket?.id).toBe(ticketId);
-    mark('get-pool-2');
-
-    // Finish the ticket + release so the next pull is the drain check.
-    await app.request(`/api/tickets/${ticketId}`, patch({ status: 'completed' }));
-    mark('complete-ticket');
-    await app.request(`/api/tickets/${ticketId}/release`, post({ worker: 'pw1' }));
-    mark('release-ticket');
-
-    // Request drain → the worker's next claim-next is told to stop.
-    const drain = await app.request('/api/workers/pool/drain', post({ worker: 'pw1' }));
-    expect((await drain.json() as { ok: boolean }).ok).toBe(true);
-    mark('drain');
-    const claim2 = await (await app.request('/api/tickets/claim-next', post({ worker: 'pw1', label: 'worker-1' }))).json() as { ticket: unknown; drain?: boolean };
-    expect(claim2.ticket).toBeNull();
-    expect(claim2.drain).toBe(true);
-    mark('claim-next-2');
-
-    // The pool now shows it stopped; remove unregisters it.
-    const pool3 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string; state: string }[] };
-    expect(pool3.workers.find(w => w.worker === 'pw1')?.state).toBe('stopped');
-    mark('get-pool-3');
-    await app.request('/api/workers/pool/remove', post({ worker: 'pw1' }));
-    const pool4 = await (await app.request('/api/workers/pool')).json() as { workers: { worker: string }[] };
-    expect(pool4.workers.find(w => w.worker === 'pw1')).toBeUndefined();
-    mark('remove');
-  }, 60000); // HS-9316 — this test drives ~12 sequential server round-trips (register/claim/drain/remove + DB UPDATEs); under the full parallel coverage run on GH's 2-CPU runner it can exceed the 30s default purely from CPU starvation. 60s headroom keeps the transient-slow case green while a genuine hang still fails; the HS-9355 step trace above identifies the culprit when it does.
-
-  it('drain of an unknown worker → 404', async () => {
-    const res = await app.request('/api/workers/pool/drain', post({ worker: 'ghost' }));
-    expect(res.status).toBe(404);
   });
 });
 
