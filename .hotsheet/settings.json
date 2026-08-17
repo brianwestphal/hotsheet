@@ -179,10 +179,11 @@
     {
       "id": "default",
       "command": "{{aiCommand}}",
-      "name": "Claude",
+      "name": "AI",
       "lazy": false
     }
   ],
   "hotsheet_skill_clear_context": true,
-  "custom_views": []
+  "custom_views": [],
+  "ai_tool_enabled:codex": "true"
 }
