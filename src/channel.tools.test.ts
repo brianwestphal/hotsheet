@@ -53,7 +53,7 @@ function fakeFetch(handler: (input: string, init?: { method?: string; headers?: 
 // ---------------------------------------------------------------------------
 
 describe('listTools (HS-8346 + HS-8347)', () => {
-  it('returns the 24 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by + HS-9031 worker-pool + HS-9112 propose)', () => {
+  it('returns the 19 tools by name (Phase 1 + Phase 2 + HS-8771 announce + HS-8862 claim/lease + HS-8865 blocked_by)', () => {
     const tools = listTools();
     const names = tools.map(t => t.name).sort();
     expect(names).toEqual([
@@ -64,20 +64,15 @@ describe('listTools (HS-8346 + HS-8347)', () => {
       'hotsheet_create_ticket',
       'hotsheet_delete_note',
       'hotsheet_delete_ticket',
-      'hotsheet_dispatch_tickets',
-      'hotsheet_drain_workers',
       'hotsheet_duplicate_tickets',
       'hotsheet_edit_note',
       'hotsheet_get_ticket',
-      'hotsheet_get_worker_pool',
-      'hotsheet_propose_partition',
       'hotsheet_query_tickets',
       'hotsheet_release',
       'hotsheet_renew_lease',
       'hotsheet_request_feedback',
       'hotsheet_restore_ticket',
       'hotsheet_set_blocked_by',
-      'hotsheet_set_worker_target',
       'hotsheet_signal_done',
       'hotsheet_toggle_up_next',
       'hotsheet_update_ticket',
@@ -96,7 +91,7 @@ describe('listTools (HS-8346 + HS-8347)', () => {
 
   it('the catalog count matches the internal `TOOLS` array', () => {
     expect(listTools()).toHaveLength(_toolsForTesting.length);
-    expect(_toolsForTesting).toHaveLength(24);
+    expect(_toolsForTesting).toHaveLength(19);
   });
 
   // HS-8771 — the announce tool proxies to the announcer endpoint.
@@ -853,162 +848,6 @@ describe('hotsheet_set_blocked_by (HS-8865)', () => {
 
   it('Zod rejection — missing ticket_id', async () => {
     const result = await callTool('hotsheet_set_blocked_by', { blocker_ids: [1] }, tmpDataDir, vi.fn());
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('validation failed');
-  });
-});
-
-describe('worker-pool management tools (HS-9031)', () => {
-  it('hotsheet_get_worker_pool — GETs /api/workers/pool', async () => {
-    const poolJson = JSON.stringify({ targetN: 2, workers: [] });
-    const fetchSpy = vi.fn();
-    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: poolJson }; });
-    const result = await callTool('hotsheet_get_worker_pool', {}, tmpDataDir, fetchFn);
-    expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toBe(poolJson);
-    const call = fetchSpy.mock.calls[0] as [string, { method: string }];
-    expect(call[0]).toBe('http://localhost:4174/api/workers/pool');
-    expect(call[1].method).toBe('GET');
-  });
-
-  it('hotsheet_set_worker_target — POSTs /api/workers/pool/target with {targetN}', async () => {
-    const fetchSpy = vi.fn();
-    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true}' }; });
-    const result = await callTool('hotsheet_set_worker_target', { targetN: 3 }, tmpDataDir, fetchFn);
-    expect(result.isError).toBeUndefined();
-    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
-    expect(call[0]).toBe('http://localhost:4174/api/workers/pool/target');
-    expect(call[1].method).toBe('POST');
-    expect(JSON.parse(call[1].body)).toEqual({ targetN: 3 });
-    // HS-9076 — after setting the target it reconciles server-side so the change
-    // actually scales the pool with no UI open.
-    const reconcileCall = fetchSpy.mock.calls[1] as [string, { method: string }];
-    expect(reconcileCall[0]).toBe('http://localhost:4174/api/workers/pool/reconcile');
-    expect(reconcileCall[1].method).toBe('POST');
-  });
-
-  it('hotsheet_set_worker_target — does NOT reconcile when the target POST fails', async () => {
-    const fetchSpy = vi.fn();
-    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: false, status: 400, text: 'bad target' }; });
-    const result = await callTool('hotsheet_set_worker_target', { targetN: 3 }, tmpDataDir, fetchFn);
-    expect(result.isError).toBe(true);
-    // Only the /target call was made — no reconcile after a failed set.
-    expect(fetchSpy.mock.calls).toHaveLength(1);
-    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/target');
-  });
-
-  it('hotsheet_set_worker_target — rejects an out-of-range target', async () => {
-    const result = await callTool('hotsheet_set_worker_target', { targetN: 999 }, tmpDataDir, vi.fn());
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('validation failed');
-  });
-
-  it('hotsheet_dispatch_tickets — claims each id and aggregates dispatched/failed', async () => {
-    // Ticket 2 is already live-claimed elsewhere → 409 → lands in `failed`.
-    const fetchFn = fakeFetch((url) =>
-      url.endsWith('/api/tickets/2/claim')
-        ? { ok: false, status: 409, text: 'already claimed' }
-        : { ok: true, status: 200, text: '{"ok":true}' });
-    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'worker-2', ticket_ids: [1, 2, 3] }, tmpDataDir, fetchFn);
-    expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ worker: 'worker-2', dispatched: [1, 3], failed: [{ id: 2 }] });
-  });
-
-  /**
-   * HS-9594 — dispatching to a worker that is not in the pool succeeds at the DB
-   * level and reads as a successful dispatch. That is how the Rockwell Club
-   * report ended with tickets leased to workers that had never started: the pool
-   * said "spawned", dispatch said "dispatched", and nothing ever ran.
-   */
-  it('hotsheet_dispatch_tickets — warns when the worker is not in the pool', async () => {
-    const fetchFn = fakeFetch((url) =>
-      url.endsWith('/api/workers/pool')
-        ? { ok: true, status: 200, text: '{"workers":[{"worker":"worker-1"}]}' }
-        : { ok: true, status: 200, text: '{"ok":true}' });
-    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'ghost-worker', ticket_ids: [1] }, tmpDataDir, fetchFn);
-    const body = JSON.parse(result.content[0].text) as { dispatched: number[]; warning?: string };
-    // The claim still happens — this is a warning, not a gate: a hand-opened
-    // worker terminal outside the pool registry is a legitimate target.
-    expect(body.dispatched).toEqual([1]);
-    expect(body.warning).toContain('ghost-worker');
-    expect(body.warning).toContain('worker-1');
-  });
-
-  it('hotsheet_dispatch_tickets — says the pool is EMPTY when it is', async () => {
-    // The exact reported shape: set_worker_target claimed success, no worker
-    // actually exists, and dispatch quietly accepted the assignment anyway.
-    const fetchFn = fakeFetch((url) =>
-      url.endsWith('/api/workers/pool')
-        ? { ok: true, status: 200, text: '{"workers":[]}' }
-        : { ok: true, status: 200, text: '{"ok":true}' });
-    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'worker-1', ticket_ids: [7] }, tmpDataDir, fetchFn);
-    expect((JSON.parse(result.content[0].text) as { warning?: string }).warning).toContain('pool is empty');
-  });
-
-  it('hotsheet_dispatch_tickets — stays silent for a real pool worker', async () => {
-    const fetchFn = fakeFetch((url) =>
-      url.endsWith('/api/workers/pool')
-        ? { ok: true, status: 200, text: '{"workers":[{"worker":"worker-2"}]}' }
-        : { ok: true, status: 200, text: '{"ok":true}' });
-    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'worker-2', ticket_ids: [1] }, tmpDataDir, fetchFn);
-    expect((JSON.parse(result.content[0].text) as { warning?: string }).warning).toBeUndefined();
-  });
-
-  it('hotsheet_dispatch_tickets — an unreadable pool never blocks the dispatch', async () => {
-    // The warning is a diagnostic; it must not be able to break dispatching.
-    const fetchFn = fakeFetch((url) =>
-      url.endsWith('/api/workers/pool')
-        ? { ok: false, status: 500, text: 'boom' }
-        : { ok: true, status: 200, text: '{"ok":true}' });
-    const result = await callTool('hotsheet_dispatch_tickets', { worker: 'w', ticket_ids: [1] }, tmpDataDir, fetchFn);
-    expect(result.isError).toBeUndefined();
-    expect((JSON.parse(result.content[0].text) as { dispatched: number[] }).dispatched).toEqual([1]);
-  });
-
-  it('hotsheet_drain_workers — drains one, drains all with all:true, errors on neither', async () => {
-    const fetchSpy = vi.fn();
-    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true}' }; });
-    await callTool('hotsheet_drain_workers', { worker: 'worker-1' }, tmpDataDir, fetchFn);
-    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/drain');
-    await callTool('hotsheet_drain_workers', { all: true }, tmpDataDir, fetchFn);
-    expect((fetchSpy.mock.calls[1] as [string])[0]).toBe('http://localhost:4174/api/workers/pool/drain-all');
-    const neither = await callTool('hotsheet_drain_workers', {}, tmpDataDir, vi.fn());
-    expect(neither.isError).toBe(true);
-  });
-
-  // HS-9112 — the propose tool posts the assignment (snake ticket_ids → camel
-  // ticketIds) to /api/workers/propose-partition and tells the agent it was NOT
-  // dispatched.
-  it('hotsheet_propose_partition — POSTs the assignment + reports "not dispatched"', async () => {
-    const fetchSpy = vi.fn();
-    const fetchFn = fakeFetch((url, init) => { fetchSpy(url, init); return { ok: true, status: 200, text: '{"ok":true,"proposed":3}' }; });
-    const result = await callTool(
-      'hotsheet_propose_partition',
-      { assignments: [{ worker: 'worker-1', label: 'W1', ticket_ids: [1, 2] }, { worker: 'worker-2', ticket_ids: [3] }] },
-      tmpDataDir, fetchFn,
-    );
-    expect(result.isError).toBeUndefined();
-    const call = fetchSpy.mock.calls[0] as [string, { method: string; body: string }];
-    expect(call[0]).toBe('http://localhost:4174/api/workers/propose-partition');
-    expect(call[1].method).toBe('POST');
-    expect(JSON.parse(call[1].body)).toEqual({
-      assignments: [
-        { worker: 'worker-1', label: 'W1', ticketIds: [1, 2] },
-        { worker: 'worker-2', ticketIds: [3] }, // label omitted → server defaults to the worker id
-      ],
-    });
-    expect(result.content[0].text).toContain('NOT dispatched');
-  });
-
-  it('hotsheet_propose_partition — surfaces a server error (does not claim to have proposed)', async () => {
-    const fetchFn = fakeFetch(() => ({ ok: false, status: 400, text: 'bad assignment' }));
-    const result = await callTool('hotsheet_propose_partition', { assignments: [{ worker: 'w1', ticket_ids: [1] }] }, tmpDataDir, fetchFn);
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).not.toContain('NOT dispatched');
-  });
-
-  it('hotsheet_propose_partition — rejects an empty assignment list', async () => {
-    const result = await callTool('hotsheet_propose_partition', { assignments: [] }, tmpDataDir, vi.fn());
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('validation failed');
   });

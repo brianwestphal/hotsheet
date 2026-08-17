@@ -316,35 +316,6 @@ const SetBlockedByInputSchema = z.object({
   blocker_ids: z.array(z.number().int()).describe('Ticket ids this one waits on (flat, replaces the existing set; [] clears). Rejected on self/cycle/unknown ticket.'),
 });
 
-// HS-9031 — worker-pool management tools so an AI tool (Claude) can parallelize
-// work across the distributed worker pool ("parallelize all tickets tagged X").
-const GetWorkerPoolInputSchema = z.object({});
-const SetWorkerTargetInputSchema = z.object({
-  targetN: z.number().int().min(0).max(64).describe('Desired number of running workers. The owner Hot Sheet UI reconciles toward this (launches/drains). NOTE: new workers only actually START while the owner window is open — launch is client-driven (docs/89 Phase C) — so setting the target with no UI open just records the intent.'),
-});
-const DispatchTicketsInputSchema = z.object({
-  worker: z.string().min(1).describe('The worker to assign these tickets to (its stable id, e.g. "worker-2"; see hotsheet_get_worker_pool). That worker claims them first, before the shared pool.'),
-  label: z.string().nullish().describe('Optional human-friendly worker label shown in the UI'),
-  ticket_ids: z.array(z.number().int()).min(1).describe('Ticket ids to dispatch (claim) for this worker — e.g. one partition\'s chunk. Each is claimed on the worker\'s behalf; an already-live-claimed ticket is reported in `failed` and left with its current owner.'),
-});
-const DrainWorkersInputSchema = z.object({
-  worker: z.string().min(1).nullish().describe('The worker to drain gracefully (it finishes its current ticket, then stops). Omit and set `all:true` to drain every worker.'),
-  all: z.boolean().optional().describe('Drain EVERY active worker (a graceful pool stop). Ignores `worker` when true.'),
-});
-// HS-9112 (docs/101 §101.7) — propose a partition for the owner to review in the
-// UI INSTEAD of dispatching it directly. Use this in place of
-// hotsheet_dispatch_tickets when the project's `alwaysPreviewAgentPlans` setting
-// is on (the worklist tells you). The owner accepts / edits / cancels in the
-// partition editor; on accept the UI dispatches (claims) the tickets — you do NOT
-// claim them yourself.
-const ProposePartitionInputSchema = z.object({
-  assignments: z.array(z.object({
-    worker: z.string().min(1).describe('The worker to propose these tickets for (its stable id, e.g. "worker-2"; see hotsheet_get_worker_pool).'),
-    label: z.string().nullish().describe('Optional human-friendly worker label shown in the editor.'),
-    ticket_ids: z.array(z.number().int()).describe('Ticket ids proposed for this worker (one partition chunk). May be empty for a worker you propose no work for.'),
-  })).min(1).describe('The proposed assignment — one entry per worker, each with the ticket ids you propose it work. Nothing is claimed until the owner accepts in the UI.'),
-});
-
 const BatchInputSchema = z.object({
   ids: z.array(z.number().int()).min(1).describe('Ticket ids to operate on (one or more)'),
   action: z.enum(['delete', 'restore', 'category', 'priority', 'status', 'up_next', 'mark_read', 'mark_unread']).describe('Batch action to apply'),
@@ -602,133 +573,6 @@ async function dispatchSetBlockedBy(args: unknown, settings: ChannelSettings, fe
   return await proxyRequest(settings, `/api/tickets/${String(ticket_id)}/blocked-by`, { method: 'PUT', body: { blockerIds: blocker_ids } }, fetchFn);
 }
 
-// HS-9031 — worker-pool management.
-async function dispatchGetWorkerPool(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
-  const parsed = GetWorkerPoolInputSchema.safeParse(args);
-  if (!parsed.success) {
-    return errorResult(`hotsheet_get_worker_pool — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-  }
-  return await proxyRequest(settings, '/api/workers/pool', { method: 'GET' }, fetchFn);
-}
-
-async function dispatchSetWorkerTarget(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
-  const parsed = SetWorkerTargetInputSchema.safeParse(args);
-  if (!parsed.success) {
-    return errorResult(`hotsheet_set_worker_target — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-  }
-  const setRes = await proxyRequest(settings, '/api/workers/pool/target', { method: 'POST', body: parsed.data }, fetchFn);
-  if (setRes.isError === true) return setRes;
-  // HS-9076 — apply the new target SERVER-SIDE immediately so it scales the pool
-  // with no UI open (the headless path docs/100 §100.2.1 wants). The reconcile is
-  // best-effort: the target is already recorded, so a non-git project / reconcile
-  // hiccup just means the change takes effect when a client opens. Return the
-  // reconcile summary when it succeeds so the agent sees what changed.
-  const reconcileRes = await proxyRequest(settings, '/api/workers/pool/reconcile', { method: 'POST' }, fetchFn);
-  return reconcileRes.isError === true ? setRes : reconcileRes;
-}
-
-async function dispatchDrainWorkers(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
-  const parsed = DrainWorkersInputSchema.safeParse(args);
-  if (!parsed.success) {
-    return errorResult(`hotsheet_drain_workers — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-  }
-  const { worker, all } = parsed.data;
-  if (all === true) {
-    return await proxyRequest(settings, '/api/workers/pool/drain-all', { method: 'POST', body: {} }, fetchFn);
-  }
-  if (worker == null || worker === '') {
-    return errorResult('hotsheet_drain_workers — provide `worker` to drain one, or set `all:true` to drain every worker.');
-  }
-  return await proxyRequest(settings, '/api/workers/pool/drain', { method: 'POST', body: { worker } }, fetchFn);
-}
-
-/** Dispatch (claim-by-id) a chunk of tickets to one worker. Loops the per-ticket
- *  claim endpoint and aggregates a dispatched/failed summary — partition a set,
- *  then hand each worker its chunk so it works that first (before the shared pool).
- *  A ticket already live-claimed by someone else lands in `failed` (409), not an error. */
-async function dispatchDispatchTickets(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
-  const parsed = DispatchTicketsInputSchema.safeParse(args);
-  if (!parsed.success) {
-    return errorResult(`hotsheet_dispatch_tickets — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-  }
-  const { worker, label, ticket_ids } = parsed.data;
-  const dispatched: number[] = [];
-  const failed: { id: number; reason: string }[] = [];
-  // HS-9594 — claiming for a worker that is not a live pool slot succeeds at the
-  // DB level and looks like a successful dispatch, which is how the Rockwell Club
-  // report ended with tickets leased to workers that had never started. Say so.
-  // A warning rather than a refusal: a worker terminal opened by hand (outside
-  // the pool registry) is a legitimate dispatch target, so this must not become
-  // a gate on a flow that works.
-  const warning = await unknownWorkerWarning(worker, settings, fetchFn);
-  for (const id of ticket_ids) {
-    const result = await proxyRequest(
-      settings, `/api/tickets/${String(id)}/claim`,
-      { method: 'POST', body: { worker, label: label ?? undefined } }, fetchFn,
-    );
-    if (result.isError === true) {
-      failed.push({ id, reason: result.content[0]?.text ?? 'claim failed' });
-    } else {
-      dispatched.push(id);
-    }
-  }
-  return okResult(JSON.stringify({ worker, dispatched, failed, ...(warning !== null ? { warning } : {}) }));
-}
-
-/**
- * HS-9594 — null when `worker` is a live slot in the pool (or when the pool
- * cannot be read, which must never block a dispatch), otherwise a sentence
- * naming the mismatch.
- */
-async function unknownWorkerWarning(
-  worker: string,
-  settings: ChannelSettings,
-  fetchFn: FetchLike,
-): Promise<string | null> {
-  const res = await proxyRequest(settings, '/api/workers/pool', { method: 'GET' }, fetchFn);
-  if (res.isError === true) return null;
-  try {
-    const body: unknown = JSON.parse(res.content[0]?.text ?? '{}');
-    const workers: unknown = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).workers : undefined;
-    if (!Array.isArray(workers)) return null;
-    const known = workers.some(w =>
-      typeof w === 'object' && w !== null && (w as Record<string, unknown>).worker === worker);
-    if (known) return null;
-    const names = workers
-      .map(w => (typeof w === 'object' && w !== null ? (w as Record<string, unknown>).worker : undefined))
-      .filter((n): n is string => typeof n === 'string');
-    return `"${worker}" is not a worker in this project's pool`
-      + (names.length > 0 ? ` (pool has: ${names.join(', ')})` : ' (the pool is empty)')
-      + '. The tickets were claimed for it anyway, but nothing will work them unless that worker actually exists —'
-      + ' check hotsheet_get_worker_pool, and hotsheet_set_worker_target\'s `errors` if you expected workers to have started.';
-  } catch {
-    return null;
-  }
-}
-
-/** HS-9112 — propose a partition for owner review instead of dispatching. Stores
- *  the plan server-side + pushes it to the open UI (the partition editor); the
- *  owner accepts/edits/cancels there and the UI dispatches on accept. Returns the
- *  server's `{ok, proposed}`; nothing is claimed by this call. */
-async function dispatchProposePartition(args: unknown, settings: ChannelSettings, fetchFn: FetchLike): Promise<ToolCallResult> {
-  const parsed = ProposePartitionInputSchema.safeParse(args);
-  if (!parsed.success) {
-    return errorResult(`hotsheet_propose_partition — validation failed: ${parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-  }
-  const body = {
-    assignments: parsed.data.assignments.map(a => ({
-      worker: a.worker,
-      label: a.label ?? undefined,
-      ticketIds: a.ticket_ids,
-    })),
-  };
-  const result = await proxyRequest(settings, '/api/workers/propose-partition', { method: 'POST', body }, fetchFn);
-  if (result.isError === true) return result;
-  // Make the "proposed, not dispatched — awaiting owner review" contract explicit
-  // to the agent so it doesn't also try to claim the tickets.
-  return okResult(`${result.content[0]?.text ?? '{}'}\nProposed for the owner's review in the worker-pool panel — NOT dispatched. The owner accepts/edits/cancels there; do not claim these tickets yourself.`);
-}
-
 // ---------------------------------------------------------------------------
 // Public tool catalog + top-level dispatcher.
 // ---------------------------------------------------------------------------
@@ -851,37 +695,6 @@ const TOOLS: ToolEntry[] = [
     description: 'Set a ticket\'s flat dependency gate: the list of ticket ids it waits on (replaces the existing set; [] clears). A blocked ticket is skipped by claim-next until every blocker is completed/verified. For a planning pass to express ordering. Rejected (400) on a self-block, an unknown ticket, or a dependency cycle. FLAT only — not a parent/child tree.',
     inputSchema: SetBlockedByInputSchema,
     call: dispatchSetBlockedBy,
-  },
-  // HS-9031 — worker-pool management (parallelize work across the distributed pool).
-  {
-    name: 'hotsheet_get_worker_pool',
-    description: 'List the distributed worker pool: the target worker count + each worker (id, label, state idle/working/draining/stopped, the ticket it\'s on). Use this to see capacity before dispatching/partitioning work, or to monitor progress.',
-    inputSchema: GetWorkerPoolInputSchema,
-    call: dispatchGetWorkerPool,
-  },
-  {
-    name: 'hotsheet_set_worker_target',
-    description: 'Scale the worker pool to a desired number of running workers. The owner Hot Sheet UI reconciles toward this target (launching new worktree workers or gracefully draining extras). IMPORTANT: new workers only actually start while the owner window is OPEN (launch is client-driven) — with no UI open this just records the intent. To parallelize a batch: set the target, then dispatch chunks with hotsheet_dispatch_tickets.',
-    inputSchema: SetWorkerTargetInputSchema,
-    call: dispatchSetWorkerTarget,
-  },
-  {
-    name: 'hotsheet_dispatch_tickets',
-    description: 'Assign (claim) a set of tickets to one specific worker, so it works that chunk first (before the shared Up Next pool). The core "parallelize across workers" primitive: query the tickets (e.g. by tag via hotsheet_query_tickets), split them into chunks, and dispatch one chunk per worker. Returns {worker, dispatched:[ids], failed:[{id,reason}]} — a ticket already live-claimed by another worker lands in `failed` (not reassigned). NOTE: when the project has `alwaysPreviewAgentPlans` on (the worklist tells you), use hotsheet_propose_partition instead so the owner reviews the plan first.',
-    inputSchema: DispatchTicketsInputSchema,
-    call: dispatchDispatchTickets,
-  },
-  {
-    name: 'hotsheet_propose_partition',
-    description: 'Propose a worker partition for the owner to REVIEW in the UI instead of dispatching it directly — use this in place of hotsheet_dispatch_tickets when the project\'s `alwaysPreviewAgentPlans` setting is on (the worklist tells you). Pass the whole proposed assignment (one entry per worker with its ticket_ids). The owner accepts/edits/cancels in the partition editor; on accept the UI claims the tickets — you do NOT claim them yourself. Returns {ok, proposed:<ticket count>}.',
-    inputSchema: ProposePartitionInputSchema,
-    call: dispatchProposePartition,
-  },
-  {
-    name: 'hotsheet_drain_workers',
-    description: 'Gracefully drain one worker (`worker`) or every worker (`all:true`): each finishes its current ticket, then stops — never killed mid-work. For scaling down or wrapping up a parallelized batch.',
-    inputSchema: DrainWorkersInputSchema,
-    call: dispatchDrainWorkers,
   },
   // HS-8771 — hybrid Announcer generation (§80).
   {

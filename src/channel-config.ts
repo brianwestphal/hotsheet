@@ -259,7 +259,7 @@ export async function cleanupStaleChannel(dataDir: string): Promise<void> {
 // for the codex warm-pool registry marker (set post-`initialize` from the MCP
 // client identity). A running v21 channel prompts the user to reconnect via
 // `/mcp` (or restart the codex session) so the marker applies to existing sessions.
-const EXPECTED_CHANNEL_VERSION = 22;
+const EXPECTED_CHANNEL_VERSION = 23;
 
 /** HS-8454 — shape of the `/health` response body the channel server
  *  returns. `pid` / `slug` / `startedAt` are present only on v8+; on a v7

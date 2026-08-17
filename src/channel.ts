@@ -90,7 +90,7 @@ import { getProjectSecret } from './secret-file.js';
 // so codex's structurally-warm connections are excluded from the multi-connection
 // warning count. A running v21 channel prompts the user to reconnect via `/mcp`
 // (or restart the codex session) so the marker takes effect on existing sessions.
-export const CHANNEL_VERSION = 22;
+export const CHANNEL_VERSION = 23;
 
 // Parse --data-dir argument
 let dataDir = '.hotsheet';
