@@ -180,16 +180,10 @@ export const ShellKillSchema = z.object({
 
 // --- Channel ---
 
-/** HS-9084 (docs/103 §103.3) — where a channel trigger is routed:
- *  - `main` (default) — the FIFO leader (today's `pickLeader` / play-button path).
- *  - `worker` — one worker's own channel server, addressed by its worktree root
- *    (matched against the registry's `worktree` marker, HS-9038 / HS-9036).
- *  - `all-workers` — broadcast to every live worker server (fire-and-forget). */
-export const ChannelTriggerTargetSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('main') }),
-  z.object({ kind: z.literal('worker'), worktree: z.string().min(1).max(MAX_DETAILS_CHARS) }),
-  z.object({ kind: z.literal('all-workers') }),
-]);
+/** Where a channel trigger is routed. The worker pool was retired (HS-9686), so
+ *  the only target is the FIFO leader (the play-button / worklist path); the field
+ *  is kept for wire/back-compat and future routing. */
+export const ChannelTriggerTargetSchema = z.object({ kind: z.literal('main') });
 export type ChannelTriggerTarget = z.infer<typeof ChannelTriggerTargetSchema>;
 
 export const ChannelTriggerSchema = z.object({

@@ -33,9 +33,6 @@ const LAZY_EXEC_MODULES = [
   ['systemMemoryPressure (docs/131 — the one that broke dashboard + shell)', () => import('../db/systemMemoryPressure.js')],
   ['git/status (docs/75 — the HS-8723 precedent)', () => import('../git/status.js')],
   ['db/repair (docs/42)', () => import('../db/repair.js')],
-  ['worktrees (docs/89)', () => import('../worktrees.js')],
-  ['workers/worktreeSetup (docs/99)', () => import('../workers/worktreeSetup.js')],
-  ['workers/provisionNodeModules (docs/105)', () => import('../workers/provisionNodeModules.js')],
   ['terminals/processInspect (docs/37)', () => import('../terminals/processInspect.js')],
 ] as const;
 

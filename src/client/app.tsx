@@ -61,8 +61,6 @@ import { canUseColumnView, focusDraftInput, loadTickets, renderTicketList } from
 import { bindTicketRefGlobalClickHandler } from './ticketRefDialog.js';
 import { loadTicketPrefixes, reloadTicketPrefixes } from './ticketRefs.js';
 import { maybeShowUpgradeNudge } from './upgradeNudge.js';
-import { initWorkerActionButtons } from './workerActionButtons.js';
-import { bindWorkerAutoToggle, syncWorkerAutoModeUI } from './workerAutoMode.js';
 import { reconnectWsForActiveProject, startWsSync } from './wsSync.js';
 
 // Wire up the restoreTicketList callback used by settingsLoader's category buttons
@@ -155,11 +153,10 @@ async function reloadAppState() {
   // chips showed the previous project's claims until the next 5 s poll tick.
   void import('./claimsStore.js').then(({ resetClaimsForProjectSwitch }) => resetClaimsForProjectSwitch());
   // Re-init channel for the new project context, then reflect this project's
-  // Auto-worker-pool switch (HS-9039) once the play section's visibility settles.
   // HS-9513 — the codex-drive Retry button lives beside the play surface; bind once
   // at boot, and re-init the channel on success so the surface returns immediately.
-  bindCodexDriveRetry(() => initChannel().then(() => { syncWorkerAutoModeUI(); }));
-  void initChannel().then(() => syncWorkerAutoModeUI());
+  bindCodexDriveRetry(() => { void initChannel(); });
+  void initChannel();
   // Reload plugin UI for the new project
   void reloadPluginToolbar();
   // HS-8758 / §78 — the announcer is cross-project now: it keeps playing across
@@ -227,10 +224,6 @@ function bindAllUiHandlers(): void {
   // HS-7954 — wire the sidebar git status chip. Initial fetch happens
   // immediately; subsequent refetches driven by `/api/poll` + `window.focus`.
   initGitStatusChip();
-  // HS-9068 — wire the sidebar worker-pool + in-flight-work buttons (moved out
-  // of the git-status popover). Visibility follows the play/auto section
-  // (toggled in `channelUI.tsx`).
-  initWorkerActionButtons();
   // HS-8147 — wire the per-project tab cost chip refresh loop.
   // Subscribes to the bell-state long-poll so chip refreshes piggyback
   // on the existing cadence (§67.10.1).
@@ -514,10 +507,7 @@ async function init() {
     bindAppLevelDocumentListeners();
 
     bindExternalLinkHandler();
-    // HS-9039 — bind the Auto worker-pool switch once, then sync it to the active
-    // project after the channel section's visibility is resolved.
-    bindWorkerAutoToggle();
-    void initChannel().then(() => syncWorkerAutoModeUI());
+    void initChannel();
 
     bindFileDropListeners();
     bindPasteAttachmentListener();

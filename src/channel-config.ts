@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { z } from 'zod';
@@ -6,9 +6,7 @@ import { z } from 'zod';
 import { resolveEffectiveTransport } from './agentTransport.js';
 import { driveFor, driveForTransport } from './aiTools/serverCapabilities.js';
 import { appendMainServerEvent } from './channelLog.js';
-import type { ChannelInfo } from './channelPortFile.js';
 import { readChannelInfo } from './channelPortFile.js';
-import { listAliveEntries } from './channelRegistry.js';
 import { slugifyDataDir } from './channelSlug.js';
 import { syncClaudeAllowRule, unsyncClaudeAllowRule } from './claude-allow-rule.js';
 import { readFileSettings } from './file-settings.js';
@@ -347,45 +345,19 @@ export async function isChannelAlive(dataDir: string): Promise<boolean> {
   }
 }
 
-/** HS-9084 — canonicalize a path for worktree-marker matching (resolves macOS
- *  `/var` → `/private/var` symlinks so the registry's `worktree` matches a
- *  pool slot's `worktreePath`). Falls back to `resolve` when the path is gone. */
-function canonicalizeForMatch(p: string): string {
-  try { return realpathSync.native(p); } catch { return resolve(p); }
-}
-
 /**
- * HS-9084 (docs/103 §103.3) — resolve the channel-server port(s) a trigger
- * `target` addresses:
- * - `main` / undefined → the FIFO leader (`getChannelPort`, the play-button /
- *   worklist path; unchanged).
- * - `worker` → the live worker server whose registry `worktree` matches the
- *   target's worktree root (HS-9036 per-server addressing + HS-9038 worker
- *   marker). Empty when no live server matches (e.g. the worker already exited).
- * - `all-workers` → every live worker server (registry entries that carry a
- *   `worktree`), deduped — the broadcast fan-out.
- *
- * `opts.isPidAlive` is injectable for tests (the registry GCs dead pids).
+ * Resolve the channel-server port(s) a trigger `target` addresses. Since the
+ * worker pool was retired (HS-9686) the only target is the FIFO leader
+ * (`getChannelPort`, the play-button / worklist path). `target`/`opts` are kept
+ * for signature stability (the drive-capability `run` context passes them).
  */
 export function resolveTriggerTargetPorts(
   dataDir: string,
-  target?: ChannelTriggerTarget,
-  opts: { isPidAlive?: (pid: number) => boolean } = {},
+  _target?: ChannelTriggerTarget,
+  _opts: { isPidAlive?: (pid: number) => boolean } = {},
 ): number[] {
-  if (target === undefined || target.kind === 'main') {
-    const leader = getChannelPort(dataDir);
-    return leader === null ? [] : [leader];
-  }
-  const workers = listAliveEntries(dataDir, opts.isPidAlive)
-    .filter((e): e is ChannelInfo & { worktree: string } => e.worktree != null);
-  if (target.kind === 'all-workers') {
-    return [...new Set(workers.map(e => e.port))];
-  }
-  // kind === 'worker' — match the requested worktree root.
-  const want = canonicalizeForMatch(target.worktree);
-  return [...new Set(
-    workers.filter(e => canonicalizeForMatch(e.worktree) === want).map(e => e.port),
-  )];
+  const leader = getChannelPort(dataDir);
+  return leader === null ? [] : [leader];
 }
 
 /** Build the trigger body: the message (or the default worklist instruction)

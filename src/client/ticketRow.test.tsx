@@ -134,9 +134,10 @@ describe('setupTicketRowEffects (HS-8335) — list-view reactivity', () => {
     dispose();
   });
 
-  // HS-9045 — a completed-but-unmerged ticket gets the .pending-merge class + a
-  // "merge pending" badge in the claimed slot; both clear once the owner integrates.
-  it('shows the pending-merge class + badge for a completed, unmerged ticket', () => {
+  // HS-9045 — a completed-but-unmerged ticket gets the .pending-merge row class,
+  // cleared once `pending_integration` is unset. (The clickable "merge pending"
+  // badge was worker-integration UX, retired with the worker pool in HS-9686.)
+  it('toggles the pending-merge class for a completed, unmerged ticket', () => {
     const t = makeTicket(1, { status: 'started', pending_integration: false });
     ticketsStore.actions.setTickets([t]);
     const row = buildMinimalListRow(t);
@@ -144,15 +145,11 @@ describe('setupTicketRowEffects (HS-8335) — list-view reactivity', () => {
     document.body.appendChild(row);
     const dispose = setupTicketRowEffects(row, t);
 
-    // Worker completes the ticket on its own branch (not yet merged).
     ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: true }));
     expect(row.classList.contains('pending-merge')).toBe(true);
-    expect(row.querySelector('.ticket-pending-merge')).not.toBeNull();
 
-    // Owner integrates the branch → flag cleared → indicator gone.
     ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: false }));
     expect(row.classList.contains('pending-merge')).toBe(false);
-    expect(row.querySelector('.ticket-pending-merge')).toBeNull();
 
     dispose();
   });
@@ -563,22 +560,6 @@ describe('setupColumnCardEffects (HS-8335) — column-view reactivity', () => {
 
     applyClaims([]);
     expect(card.querySelector('.column-card-claimed-slot .claimed-by-chip')).toBeNull();
-
-    dispose();
-  });
-
-  it('shows the merge-pending badge in the column card for a completed, unmerged ticket', () => {
-    const t = makeTicket(1, { status: 'started', pending_integration: false });
-    ticketsStore.actions.setTickets([t]);
-    const card = buildMinimalColumnCard(t);
-    document.body.appendChild(card);
-    const dispose = setupColumnCardEffects(card, t);
-
-    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: true }));
-    expect(card.querySelector('.column-card-claimed-slot .ticket-pending-merge')).not.toBeNull();
-
-    ticketsStore.actions.applyServerUpdate(makeTicket(1, { status: 'completed', pending_integration: false }));
-    expect(card.querySelector('.column-card-claimed-slot .ticket-pending-merge')).toBeNull();
 
     dispose();
   });

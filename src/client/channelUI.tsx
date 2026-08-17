@@ -9,7 +9,6 @@ import { channelStore } from './channelStore.js';
 import { shouldHideCodexDriveSurface } from './codexDriveGate.js';
 import { TIMERS } from './constants/timers.js';
 import { isDemoMode } from './demoMode.js';
-import { isDevEnabled } from './devFeatures.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { multiConnectionMessages } from './multiConnectionWarning.js';
 import {
@@ -440,7 +439,6 @@ function triggerChannelAndMarkBusy(message?: string, target?: ChannelTriggerTarg
   setChannelBusy(true);
   // Ensure AI tool skills are installed/up-to-date before triggering
   void ensureSkills();
-  // HS-9083 — `target` routes to a worker / all workers (omitted ⇒ main leader).
   void triggerChannel(message, target);
   // Timeout fallback: clear busy after 60s if Claude never calls /done
   if (channelBusyTimeout) clearTimeout(channelBusyTimeout);
@@ -562,15 +560,8 @@ export async function initChannel() {
   setChannelEnabledState(status.enabled);
   await reloadCustomCommands();
 
-  // HS-9039 — the "Auto worker pool" switch lives just above the play button and
-  // follows the same visibility (workers need a connected Claude to do anything).
-  // HS-9068 — the worker-pool + in-flight-work buttons share that same gate.
-  const autoRow = byIdOrNull('sidebar-worker-auto');
-  const workerActionsRow = byIdOrNull('sidebar-worker-actions');
   if (!status.enabled) {
     section.style.display = 'none';
-    if (autoRow) autoRow.style.display = 'none';
-    if (workerActionsRow) workerActionsRow.style.display = 'none';
     setChannelAlive(false);
     stopPermissionPolling();
     renderChannelCommands(); // Still render shell commands
@@ -583,8 +574,6 @@ export async function initChannel() {
   const codexFailedRow = byIdOrNull('codex-drive-failed-row');
   if (shouldHideCodexDriveSurface(status, state.settings.ai_tool)) {
     section.style.display = 'none';
-    if (autoRow) autoRow.style.display = 'none';
-    if (workerActionsRow) workerActionsRow.style.display = 'none';
     if (codexFailedRow) codexFailedRow.style.display = '';
     setChannelAlive(false);
     stopPermissionPolling();
@@ -593,13 +582,6 @@ export async function initChannel() {
   }
   if (codexFailedRow) codexFailedRow.style.display = 'none';
   section.style.display = '';
-  // HS-9411 (docs/124) — the worker surfaces are ALSO behind the "Parallel agent
-  // workers" In Development gate. The channel being enabled is necessary but no
-  // longer sufficient; `style.display` is set here rather than left to
-  // `applyDevFeatureGates` because this function owns these two rows' visibility.
-  const workersAllowed = isDevEnabled('dev_parallel_workers');
-  if (autoRow) autoRow.style.display = workersAllowed ? '' : 'none';
-  if (workerActionsRow) workerActionsRow.style.display = workersAllowed ? '' : 'none';
   setChannelAlive(status.alive);
   renderChannelCommands();
   startPermissionPolling(channelBusyTimeout, (t) => { channelBusyTimeout = t; });

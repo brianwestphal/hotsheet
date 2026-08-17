@@ -13,29 +13,29 @@ beforeEach(() => {
 
 describe('hydrateDevFeatures', () => {
   it('defaults every gate to off before any hydration', () => {
-    expect(isDevEnabled('dev_parallel_workers')).toBe(false);
+    expect(isDevEnabled('dev_remote_access')).toBe(false);
     expect(isDevEnabled('dev_remote_access')).toBe(false);
   });
 
   it('turns a gate on from the resolved settings', () => {
-    hydrateDevFeatures({ dev_parallel_workers: true });
-    expect(isDevEnabled('dev_parallel_workers')).toBe(true);
+    hydrateDevFeatures({ dev_remote_access: true });
+    expect(isDevEnabled('dev_remote_access')).toBe(true);
   });
 
   it('does NOT carry a gate across a project switch (HS-9407 class)', () => {
-    hydrateDevFeatures({ dev_parallel_workers: true, dev_remote_access: true });
-    expect(isDevEnabled('dev_parallel_workers')).toBe(true);
+    hydrateDevFeatures({ dev_unreleased_ai_tools: true, dev_remote_access: true });
+    expect(isDevEnabled('dev_unreleased_ai_tools')).toBe(true);
     // Project B enabled nothing.
     hydrateDevFeatures({});
-    expect(isDevEnabled('dev_parallel_workers')).toBe(false);
+    expect(isDevEnabled('dev_unreleased_ai_tools')).toBe(false);
     expect(isDevEnabled('dev_remote_access')).toBe(false);
   });
 
   it('restores the gate when switching back', () => {
-    hydrateDevFeatures({ dev_parallel_workers: true });
+    hydrateDevFeatures({ dev_remote_access: true });
     hydrateDevFeatures({});
-    hydrateDevFeatures({ dev_parallel_workers: true });
-    expect(isDevEnabled('dev_parallel_workers')).toBe(true);
+    hydrateDevFeatures({ dev_remote_access: true });
+    expect(isDevEnabled('dev_remote_access')).toBe(true);
   });
 
   it('fails closed on a non-boolean stored value', () => {
@@ -50,20 +50,20 @@ describe('hydrateDevFeatures', () => {
 
 describe('applyDevFeatureGates', () => {
   it('hides a marked element when its gate is off and reveals it when on', () => {
-    document.body.innerHTML = '<div id="w" data-dev-feature="dev_parallel_workers"></div>';
+    document.body.innerHTML = '<div id="w" data-dev-feature="dev_remote_access"></div>';
     const el = document.getElementById('w')!;
 
     applyDevFeatureGates();
     expect(el.hidden).toBe(true);
 
-    hydrateDevFeatures({ dev_parallel_workers: true });
+    hydrateDevFeatures({ dev_remote_access: true });
     applyDevFeatureGates();
     expect(el.hidden).toBe(false);
   });
 
   it('gates each marked element by its own key', () => {
     document.body.innerHTML =
-      '<div id="a" data-dev-feature="dev_parallel_workers"></div><div id="b" data-dev-feature="dev_remote_access"></div>';
+      '<div id="a" data-dev-feature="dev_unreleased_ai_tools"></div><div id="b" data-dev-feature="dev_remote_access"></div>';
     hydrateDevFeatures({ dev_remote_access: true });
     applyDevFeatureGates();
     expect(document.getElementById('a')!.hidden).toBe(true);
@@ -105,16 +105,16 @@ describe('applyDevFeatureGates', () => {
 
 describe('setDevEnabledLocal', () => {
   it('applies immediately so gated UI reacts without a settings round-trip', () => {
-    document.body.innerHTML = '<div id="w" data-dev-feature="dev_parallel_workers"></div>';
-    setDevEnabledLocal('dev_parallel_workers', true);
-    expect(isDevEnabled('dev_parallel_workers')).toBe(true);
+    document.body.innerHTML = '<div id="w" data-dev-feature="dev_remote_access"></div>';
+    setDevEnabledLocal('dev_remote_access', true);
+    expect(isDevEnabled('dev_remote_access')).toBe(true);
     expect(document.getElementById('w')!.hidden).toBe(false);
   });
 
   it('is overwritten by the next hydration (the server stays authoritative)', () => {
-    setDevEnabledLocal('dev_parallel_workers', true);
+    setDevEnabledLocal('dev_remote_access', true);
     hydrateDevFeatures({});
-    expect(isDevEnabled('dev_parallel_workers')).toBe(false);
+    expect(isDevEnabled('dev_remote_access')).toBe(false);
   });
 });
 

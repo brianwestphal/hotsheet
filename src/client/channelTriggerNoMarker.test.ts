@@ -51,7 +51,7 @@ describe('HS-9248 — channel trigger carries no selection-derived ticket marker
   });
 
   it('passes an explicit target through unchanged', () => {
-    triggerChannelAndMarkBusy('x', { kind: 'all-workers' });
-    expect(triggerChannel).toHaveBeenCalledWith('x', { kind: 'all-workers' });
+    triggerChannelAndMarkBusy('x', { kind: 'main' });
+    expect(triggerChannel).toHaveBeenCalledWith('x', { kind: 'main' });
   });
 });

@@ -1,13 +1,12 @@
 import type { SafeHtml } from 'kerfjs';
 import { raw } from 'kerfjs';
 
-import { duplicateTickets, getBackends, getWorkerPool, pushTicketToBackend, releaseTicket, updateTicket, uploadAttachment } from '../api/index.js';
+import { duplicateTickets, getBackends, pushTicketToBackend, releaseTicket, updateTicket, uploadAttachment } from '../api/index.js';
 import { isSystemStatusNote } from '../systemNotes.js';
 import { claimForTicket } from './claimsStore.js';
-import { dispatchAndReport } from './dispatch.js';
 import { toElement } from './dom.js';
 import { buildFeedbackNav, getTicketFeedbackState, openFeedbackDialogForNote, suppressNextAutoShowFeedback } from './feedbackDialog.js';
-import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_SEND, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
+import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EXTERNAL_LINK, ICON_EYE, ICON_EYE_OFF, ICON_INBOX, ICON_STAR, ICON_STAR_FILLED, ICON_TAG, ICON_TRASH, ICON_X_CIRCLE } from './icons.js';
 import { parseNotesJson } from './noteRenderer.js';
 import { getPluginContextMenuItems } from './pluginUI.js';
 import { openLatestNoteReader } from './readLatestNote.js';
@@ -181,24 +180,6 @@ function addRecallClaimItem(menu: HTMLElement): void {
   }, { icon: ICON_X_CIRCLE });
 }
 
-/**
- * HS-8964 — "Dispatch to worker…" (docs/92 §92.2), the Tauri-safe fallback for
- * drag-to-tile. Only when a pool with live (idle/working) workers exists; dispatches
- * via claim-by-id (HS-8862). Async like the push block, so it inserts at the anchor.
- */
-function addDispatchToWorkerItem(menu: HTMLElement): void {
-  const dispatchIds = Array.from(state.selectedIds);
-  void getWorkerPool().then(pool => {
-    const live = pool.workers.filter(w => w.state === 'idle' || w.state === 'working');
-    if (live.length === 0 || dispatchIds.length === 0) return;
-    const subItems: SubItem[] = live.map(w => ({
-      label: w.currentTicket !== null ? `${w.label} (busy)` : w.label,
-      action: () => { void dispatchAndReport(w.worker, w.label, dispatchIds).then(() => { void loadTickets(); }); },
-    }));
-    insertAtBacklogAnchor(menu, buildSubmenuItem('Dispatch to worker', subItems, ICON_SEND));
-  }).catch(() => { /* fire-and-forget — no pool / transient miss → no submenu */ });
-}
-
 export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   e.preventDefault();
   closeContextMenu();
@@ -347,7 +328,6 @@ export function showTicketContextMenu(e: MouseEvent, ticketArg: Ticket) {
   addPushToBackendItems(menu, ticket);
 
   addRecallClaimItem(menu);
-  addDispatchToWorkerItem(menu);
 
   // Anchor for the Push-to-backend insertion below. The marker class
   // lets the async backends-fetch find this separator by name instead

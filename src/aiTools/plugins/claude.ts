@@ -3,10 +3,6 @@
 // the canonical `CLAUDE.md` + `.claude/skills` source every adapter-family tool
 // references (docs/118). docs/132 §132.6 has it migrating LAST for exactly that reason.
 
-// `channelSlug.js`, NOT `channel-config.js` — the latter imports `fs` / `path` and the
-// whole server graph, and this module is client-reachable (HS-9615).
-import { claudeWithChannelCommand } from '../../channelSlug.js';
-import { workerIdEnvPrefix, workerIdPromptLine } from '../../workerIdentity.js';
 import type { AiToolPlugin } from '../types.js';
 
 export const claudePlugin: AiToolPlugin = {
@@ -21,23 +17,6 @@ export const claudePlugin: AiToolPlugin = {
   // here anyway so the metric is recognized as a routed token counter, with the
   // per-datapoint column coming from `type`.
   telemetryTokenMetrics: { 'claude_code.token.usage': 'by-type-attribute' },
-  // HS-9601 — the worker launch line, moved here out of `workers/launchWorker.ts`
-  // per §132's rule that tool-specific code lives in the tool's own module.
-  //
-  // HS-9036 — the development-channel flag is the load-bearing part: it routes
-  // the worker's PERMISSION PROMPTS to its channel server so they surface in the
-  // Hot Sheet UI. Pre-fix the worker launched as a bare `claude "/hotsheet-worker"`
-  // — MCP tools worked, but Claude never sent `permission_request`, so every
-  // worker permission fell back to its terminal and the worker blocked forever.
-  worker: {
-    // HS-9676 — inject the canonical lease id: `HOTSHEET_WORKER_ID=<id>` env +
-    // a verbatim line in the prompt, so the agent doesn't derive its id from the
-    // generated worktree folder name (`hotsheet-worker-1-12`) and claim under the
-    // wrong identity.
-    launchCommand: (ownerDataDir: string, workerId?: string) =>
-      `${workerIdEnvPrefix(workerId)}${claudeWithChannelCommand(ownerDataDir)} "/hotsheet-worker${workerIdPromptLine(workerId)}"`,
-    binary: 'claude',
-  },
   // HS-9605 — `claude_code.cost.usage`; the whole cost UI was built on it.
   telemetryReportsCost: true,
   tier: 'cli-agent',

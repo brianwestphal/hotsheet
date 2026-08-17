@@ -310,7 +310,7 @@ export function buildGlassboxReviewArgs(req: GlassboxReviewReq): string[] | null
 export async function resolveReviewWorktreeCwd(
   repoRoot: string,
   worktree: string,
-  list: (root: string) => Promise<{ path: string }[]> = async (root) => (await import('../worktrees.js')).listWorktrees(root),
+  list: (root: string) => Promise<{ path: string }[]> = async (root) => (await import('../git/runner.js')).listWorktreePaths(root),
 ): Promise<string | null> {
   const target = resolve(worktree);
   const worktrees = await list(repoRoot).catch(() => []);

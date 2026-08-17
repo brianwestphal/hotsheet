@@ -1,7 +1,6 @@
 // HS-9490 (docs/132) — Codex. MCP-native (no ACP mode in codex-cli); driven over its
 // app-server JSON-RPC protocol (docs/121) with model-B terminal hosting (docs/129).
 
-import { workerIdEnvPrefix, workerIdPromptLine } from '../../workerIdentity.js';
 import type { AiToolPlugin } from '../types.js';
 
 export const codexPlugin: AiToolPlugin = {
@@ -11,31 +10,6 @@ export const codexPlugin: AiToolPlugin = {
   // HS-9602 — measured against codex-cli 0.146.0: `codex.api_request`,
   // `codex.conversation.turn.count`, … over the standard OTLP exporter.
   telemetryMetricPrefix: 'codex.',
-  // HS-9601 — worker-pool support (maintainer decision 2026-08-05: option (a),
-  // a PTY worker like Claude's rather than a headless drive session).
-  //
-  // `codex [OPTIONS] [PROMPT]` takes a positional prompt to start an interactive
-  // session, so the shape matches Claude's. What does NOT match is how the skill
-  // is invoked: Claude takes `"/hotsheet-worker"` and resolves it to a skill.
-  // Codex discovers skills under `.agents/skills` (docs/118) but its
-  // slash-command syntax from a positional prompt is unverified, so the prompt
-  // NAMES THE FILE instead of guessing at an invocation syntax. Worse case that
-  // fails visibly in the worker's own terminal rather than silently doing
-  // nothing, which is the HS-9594 failure mode this ticket exists to avoid.
-  //
-  // No channel flag, and that is not an omission: codex reaches the `hotsheet_*`
-  // tools through its GLOBAL cwd-resolving MCP config (docs/115, `src/codex.ts`),
-  // so a worktree is served by cwd alone. Its permission bridge is
-  // `.codex/hooks.json`, written into the worktree by `ensureSkillsForDir` —
-  // note that bridge is opt-in (`codex_interactive_permissions`); with it off a
-  // worker's approvals prompt in its own terminal rather than the Hot Sheet UI.
-  worker: {
-    // HS-9676 — inject the canonical lease id (env + verbatim prompt line) so the
-    // worker doesn't claim under the generated worktree folder name.
-    launchCommand: (_ownerDataDir: string, workerId?: string) =>
-      `${workerIdEnvPrefix(workerId)}codex "Read .agents/skills/hotsheet-worker/SKILL.md and follow it exactly, starting now.${workerIdPromptLine(workerId)}"`,
-    binary: 'codex',
-  },
   // HS-9604 — codex's counters are NESTED, so the inclusive parents are
   // positively ignored rather than omitted. Measured over 4,778 real
   // `TokenUsage` records: `cached_input_tokens` <= `input_tokens` and

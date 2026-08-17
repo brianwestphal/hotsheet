@@ -1,24 +1,17 @@
 /**
- * HS-9676 — the canonical worker LEASE identity vs. the generated worktree/tab
- * INSTANCE name.
+ * A claiming agent's stable LEASE identity (e.g. `worker-1`) — used for
+ * `claimed_by` and its `hotsheet_claim_next` / `_renew_lease` / `_release` /
+ * `_update_ticket` calls, and by `deriveChannelActor` so its auto-claim-on-write
+ * matches its explicit claims.
  *
- * A pooled worker has two names:
- *   - a stable lease id, e.g. `worker-1`, used for `claimed_by` and every
- *     `hotsheet_claim_next` / `_renew_lease` / `_release` / `_update_ticket` call;
- *   - a generated worktree folder / tab title, e.g. `hotsheet-worker-1-12`, whose
- *     numeric suffix increments each time the slot is reused.
+ * `resolveWorkerActor` derives it: an explicitly-set `HOTSHEET_WORKER_ID` →
+ * the `hotsheet/<id>` branch → the cwd basename. (Originally HS-9676: the retired
+ * worker pool INJECTED the id; the pool is gone as of HS-9686, so an agent in a
+ * follower worktree either sets the env var or is identified by its branch.)
  *
- * The launcher knows the canonical id, so it INJECTS it (this module) instead of
- * letting the agent guess it from its cwd — the old `hotsheet-worker` skill told
- * agents to use the worktree folder name, so a reused worker (`hotsheet-worker-1-12`)
- * claimed/renewed under the wrong id and never recognized the tickets the pool
- * dispatched to `worker-1`.
- *
- * Leaf module with NO imports so both the AI-tool plugins and the worker launcher
- * / channel tools can depend on it without a cycle — and, because the plugins are
- * reachable from the CLIENT bundle, without dragging a node builtin (`path`) into
- * the browser build. (Hence the hand-rolled `lastPathSegment` below rather than
- * `path.basename`.)
+ * Leaf module with NO imports so it can't introduce a cycle and — because it is
+ * reachable from the CLIENT bundle — can't drag a node builtin (`path`) into the
+ * browser build. Hence the hand-rolled `lastPathSegment` rather than `path.basename`.
  */
 
 /** Last path segment of a filesystem path, cross-platform, dependency-free (see
@@ -29,33 +22,13 @@ function lastPathSegment(p: string): string {
   return i === -1 ? trimmed : trimmed.slice(i + 1);
 }
 
-/** The env var carrying the canonical worker lease identity into the launch. */
+/** The env var an agent may set to declare its canonical lease identity. Read by
+ *  `deriveChannelActor` so a follower's auto-claim-on-write matches its explicit
+ *  claim/renew/release calls. (The worker pool that used to INJECT this was
+ *  retired in HS-9686; an agent now sets it itself, or falls back to its branch.) */
 export const WORKER_ID_ENV = 'HOTSHEET_WORKER_ID';
 
-/** Worker ids are slugs (`slugify` → lowercase, `[a-z0-9]` joined by `-`), so
- *  they're always shell-safe. Guard defensively anyway: only emit an env
- *  assignment for a slug-shaped id, else nothing (older callers pass no id). */
-function isSlugId(id: string): boolean {
-  return /^[a-z0-9][a-z0-9-]*$/.test(id);
-}
-
-/** `HOTSHEET_WORKER_ID=<id> ` prefix for the launch command (trailing space), or
- *  `''` when no valid id is known. Shell-safe by the slug guard — no quoting. */
-export function workerIdEnvPrefix(workerId?: string): string {
-  if (workerId === undefined || workerId === '' || !isSlugId(workerId)) return '';
-  return `${WORKER_ID_ENV}=${workerId} `;
-}
-
-/** The verbatim identity statement appended to the worker's launch PROMPT, so the
- *  agent uses this exact id for its lease calls instead of the worktree folder name
- *  or the tab title. Empty when no id is known. No backticks/quotes — this text
- *  goes inside a double-quoted shell arg. */
-export function workerIdPromptLine(workerId?: string): string {
-  if (workerId === undefined || workerId === '') return '';
-  return ` Your canonical worker id is ${workerId} — use exactly that as your worker + label for every hotsheet_claim_next / hotsheet_renew_lease / hotsheet_release / hotsheet_update_ticket call. Do NOT derive your id from the worktree folder name or the tab title.`;
-}
-
-/** Fallback used by the skill when `HOTSHEET_WORKER_ID` is absent: strip the
+/** Fallback when `HOTSHEET_WORKER_ID` is absent: strip the
  *  `hotsheet/` prefix off a worker branch (`hotsheet/worker-1` → `worker-1`).
  *  Returns null for anything not in that shape. */
 export function workerIdFromBranch(branch: string | null | undefined): string | null {

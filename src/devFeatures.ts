@@ -48,11 +48,6 @@ export const DEV_FEATURES: readonly DevFeature[] = [
     hint: 'Adds the AI-tool integrations that are not shipped publicly (Antigravity, OpenCode, Gemini CLI, Goose) to Settings → AI Tools so they can be enabled. They are untested: Gemini has no drive at all, and Goose is unimplemented beyond command resolution — the play button will not work for either.',
   },
   {
-    key: 'dev_parallel_workers',
-    label: 'Parallel agent workers (git worktrees + worker pool)',
-    hint: 'Worker-pool + in-flight panels, the auto-pool switch, dispatch-to-worker, and the "Run on…" command target picker. The pool manager is session-only in memory — its slot registry is lost on a server restart (docs/91 §91.9).',
-  },
-  {
     key: 'dev_remote_access',
     label: 'Remote access',
     hint: 'The Remote Access device panel (mint / QR-pair / revoke) and remote-project client surfaces (docs/94, docs/112). The client half is foundation-only. Does not affect mutual-TLS enforcement on an exposed bind — that is always on.',

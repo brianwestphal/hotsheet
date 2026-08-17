@@ -163,49 +163,6 @@ export interface AiToolPlugin {
    */
   readonly promptGrouping?: PromptGroupingSpec;
   /**
-   * HS-9601 (docs/90 §90.5) — worker-pool support. **Absent means unsupported**,
-   * which is the §132.9 pattern and is what `assertWorkerLaunchSupported` now
-   * asks instead of testing tool ids.
-   *
-   * Only the LAUNCH LINE lives here, because that turned out to be the only
-   * genuinely per-tool piece. A worktree's worker skill and its permission
-   * bridge are already written by `ensureSkillsForDir`, which iterates this
-   * same registry — so a tool that declares `skills` + `permissions` gets both
-   * for free and needs no worker-specific wiring.
-   *
-   * Maintainer decision (2026-08-05): a non-Claude worker is a **PTY running
-   * the agent CLI**, like Claude's, rather than a headless drive session — so
-   * this returns a command string and the existing pool machinery (tiles,
-   * drain, `pending_integration`) applies unchanged.
-   */
-  readonly worker?: {
-    /**
-     * The terminal command that boots a worker in a prepared worktree.
-     *
-     * `ownerDataDir` is the OWNER's `.hotsheet` (the shared instance the worker
-     * reports into), NOT the worktree's — the worktree is a follower.
-     *
-     * `workerId` (HS-9676) is the canonical LEASE identity (e.g. `worker-1`). When
-     * given, the plugin injects it into the launch — `HOTSHEET_WORKER_ID=<id>` +
-     * a verbatim line in the prompt — so the agent uses it for claim/renew/release
-     * instead of guessing from the generated worktree folder name. Optional so
-     * older/manual callers still work.
-     */
-    launchCommand(ownerDataDir: string, workerId?: string): string;
-    /**
-     * The executable the launch line starts, so the pool can verify it exists
-     * BEFORE registering a slot.
-     *
-     * HS-9594's whole failure was that a PTY exists whether or not the command
-     * in it resolves: a codex project got a `claude …` line, the shell reported
-     * command-not-found into a terminal nobody was reading, and the slot
-     * registered and counted as live anyway. Checking the binary does not prove
-     * the agent STARTED, but it turns the one failure actually observed into a
-     * refusal with a reason.
-     */
-    binary: string;
-  };
-  /**
    * HS-9605 — whether this tool reports COST in its telemetry, not just tokens.
    *
    * Absent/false means the cost surfaces must show "unavailable" rather than a

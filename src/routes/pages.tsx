@@ -216,34 +216,6 @@ pageRoutes.get('/', (c) => {
               <span className="sidebar-git-branch"></span>
               <span className="sidebar-git-counts"></span>
             </div>
-            {/* HS-9068 — worker-pool + in-flight-work entry points. Moved out
-                of the git-status popover onto the sidebar as two iconic buttons
-                on a single row, sitting just above the "Auto worker pool" switch.
-                Follows the same visibility as the switch (hidden until the
-                channel is enabled); wired in `app.tsx::initWorkerActionButtons`. */}
-            <div className="sidebar-worker-actions" id="sidebar-worker-actions" style="display:none" data-dev-feature="dev_parallel_workers">
-              {/* HS-9113 — iconic only (no labels); lucide `bolt` for the worker
-                  pool and lucide `radio` for in-flight work. The `title` tooltips
-                  carry the meaning now that the text spans are gone. */}
-              <button type="button" className="sidebar-worker-action-btn sidebar-worker-action-btn-iconic" id="sidebar-worker-pool-btn" title="Worker pool">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><circle cx="12" cy="12" r="4"/></svg>
-              </button>
-              <button type="button" className="sidebar-worker-action-btn sidebar-worker-action-btn-iconic" id="sidebar-inflight-btn" title="In-flight work">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16.247 7.761a6 6 0 0 1 0 8.478"/><path d="M19.075 4.933a10 10 0 0 1 0 14.134"/><path d="M4.925 19.067a10 10 0 0 1 0-14.134"/><path d="M7.753 16.239a6 6 0 0 1 0-8.478"/><circle cx="12" cy="12" r="2"/></svg>
-              </button>
-            </div>
-            {/* HS-9039 — "Auto" worker-pool switch. When on, Hot Sheet sizes a
-                pool of parallel worktree workers to the current Up Next set and
-                lets them self-claim the work (no manual stepper/partition). Shown
-                alongside the play section (hidden until the channel is enabled);
-                bound + state-synced by `workerAutoMode.ts`. */}
-            <div className="sidebar-worker-auto" id="sidebar-worker-auto" style="display:none" data-dev-feature="dev_parallel_workers">
-              <label className="worker-auto-toggle" title="Automatically size a pool of parallel worktree workers to the current Up Next set, and let them self-claim the work">
-                <input type="checkbox" id="worker-auto-checkbox" className="worker-auto-checkbox" />
-                <span className="worker-auto-switch" aria-hidden="true"></span>
-                <span className="worker-auto-label">Auto worker pool</span>
-              </label>
-            </div>
             <div className="sidebar-channel-play" id="channel-play-section" style="display:none">
               <button className="channel-play-btn" id="channel-play-btn" title="Run worklist (double-click for auto mode)">
                 <span className="channel-play-icon" id="channel-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>

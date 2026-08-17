@@ -9,12 +9,12 @@
 // `--range oldest^..newest`; interleaved groups feed the client chooser, alongside
 // the overall earliest→latest span with its unrelated-commit count.
 //
-// Git is shelled via the injectable `GitRunner` shared with `worktrees.ts` /
-// `workers/integrate.ts` (async spawn — load-resilience P1); the pure matching +
-// grouping logic is exported for direct unit tests.
+// Git is shelled via the injectable `GitRunner` from `git/runner.ts` (async
+// spawn — load-resilience P1); the pure matching + grouping logic is exported
+// for direct unit tests.
 
+import { defaultGit, type GitRunner } from '../git/runner.js';
 import { pushAll } from '../utils/largeArray.js';
-import { defaultGit, type GitRunner } from '../worktrees.js';
 
 /** One commit as discovered from `git log` (order: as emitted, newest first). */
 export interface CommitEntry {

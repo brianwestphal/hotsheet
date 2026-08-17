@@ -1,44 +1,9 @@
-// HS-9676 — the injected-worker-identity helpers. These are the seam that keeps
-// a pooled worker's claims attributed to its stable LEASE id (`worker-1`) instead
-// of the generated worktree/tab INSTANCE name (`hotsheet-worker-1-12`).
+// The claiming-agent LEASE identity used by `deriveChannelActor` (the worker pool
+// that once INJECTED it was retired in HS-9686; an agent now sets the env itself
+// or is identified by its `hotsheet/<id>` branch).
 import { describe, expect, it } from 'vitest';
 
-import { resolveWorkerActor, WORKER_ID_ENV, workerIdEnvPrefix, workerIdFromBranch, workerIdPromptLine } from './workerIdentity.js';
-
-describe('workerIdEnvPrefix (HS-9676)', () => {
-  it('emits a shell-safe env assignment for a slug id', () => {
-    expect(workerIdEnvPrefix('worker-1')).toBe(`${WORKER_ID_ENV}=worker-1 `);
-    expect(workerIdEnvPrefix('worker-1-12')).toBe(`${WORKER_ID_ENV}=worker-1-12 `);
-  });
-
-  it('emits nothing when no id is known', () => {
-    expect(workerIdEnvPrefix(undefined)).toBe('');
-    expect(workerIdEnvPrefix('')).toBe('');
-  });
-
-  it('drops a non-slug id rather than emit an unquoted, shell-unsafe assignment', () => {
-    for (const bad of ['a b', 'a;rm -rf', 'a$(x)', 'a`x`', 'a/b', '-lead', 'UP']) {
-      expect(workerIdEnvPrefix(bad)).toBe('');
-    }
-  });
-});
-
-describe('workerIdPromptLine (HS-9676)', () => {
-  it('states the id verbatim and forbids deriving it from the folder/tab', () => {
-    const line = workerIdPromptLine('worker-1');
-    expect(line).toContain('canonical worker id is worker-1');
-    expect(line).toMatch(/Do NOT derive your id from the worktree folder name or the tab title/);
-    // No backticks/quotes — it goes inside a double-quoted shell arg (a backtick
-    // there would be command substitution).
-    expect(line).not.toContain('`');
-    expect(line).not.toContain('"');
-  });
-
-  it('is empty when no id is known', () => {
-    expect(workerIdPromptLine(undefined)).toBe('');
-    expect(workerIdPromptLine('')).toBe('');
-  });
-});
+import { resolveWorkerActor, workerIdFromBranch } from './workerIdentity.js';
 
 describe('workerIdFromBranch (HS-9676)', () => {
   it('strips the hotsheet/ prefix (the skill fallback when the env is unset)', () => {

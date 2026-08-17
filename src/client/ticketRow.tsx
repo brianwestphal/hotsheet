@@ -9,7 +9,6 @@ import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
 import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
-import { renderMergePendingBadge } from './integrationReview.js';
 import { parseJsonArrayOr } from './json.js';
 import { effect } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -214,25 +213,12 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
   // claim set changes) and `nowTick` ONLY when this ticket is claimed (so an
   // unclaimed row doesn't re-render every second). Separate effect: distributed-
   // execution state is orthogonal to the per-ticket signal.
-  // HS-9045 — the same slot shows a "merge pending" badge when a completed ticket
-  // hasn't been integrated yet (and isn't currently claimed). Reads the live
-  // ticket signal so it re-fires when `pending_integration` / `status` change.
   const claimedSlot = row.querySelector<HTMLElement>('.ticket-claimed-slot');
   if (claimedSlot !== null) {
     disposers.push(effect(() => {
-      // Read BOTH signals unconditionally so the effect always subscribes to the
-      // ticket signal too — otherwise, on a run that early-returns for a live
-      // claim, it would drop its ticket-signal subscription and miss a later
-      // `pending_integration` flip (HS-9045).
       const claim = claimsByTicketId.value.get(ticket.id);
-      const t = sigs.ticket.value;
       if (claim !== undefined) {
         claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
-        return;
-      }
-      if (t.status === 'completed' && t.pending_integration === true) {
-        // HS-9107 — the badge is a Review affordance when the worker recorded its branch.
-        claimedSlot.replaceChildren(renderMergePendingBadge(t));
       } else if (claimedSlot.firstChild !== null) {
         claimedSlot.replaceChildren();
       }

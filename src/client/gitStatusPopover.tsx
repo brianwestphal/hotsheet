@@ -7,10 +7,6 @@ import type { GitStatusFiles, GitStatusWithFiles, PendingCommit, RecentCommitsRe
 import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
-// HS-9441 — `worktreesPanel` is imported LAZILY (at click time). Statically it drags
-// in `terminal.tsx` → `commandLog.tsx` → … → `projectTabs.tsx`, so any module that
-// wants this file's dismiss function inherits a cycle back to the project tabs. The
-// panel is only ever opened from a click handler, so a dynamic import costs nothing.
 
 /**
  * HS-7956 — Phase 3 expanded popover for the sidebar git status chip.
@@ -37,8 +33,6 @@ import { showToast } from './toast.js';
 // `src/api/git.ts` (single source of truth). They replace the local
 // `GitStatusFiles` + `GitStatusJson` duplicates this file used to declare.
 const CLOSE_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>;
-// HS-9068 — lucide `git-branch` glyph for the "Manage worktrees" header button.
-const WORKTREE_ICON = <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>;
 
 let activePopover: HTMLElement | null = null;
 let activeAnchor: HTMLElement | null = null;
@@ -80,12 +74,7 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
     <div className="git-popover" role="dialog" aria-label="Git status">
       <div className="git-popover-header">
         <span className="git-popover-title">Loading…</span>
-        {/* HS-9068 — "Manage worktrees" moved out of the body into the header
-            line as an iconic button, sitting just before the close button.
-            Worktree management is independent of the loaded git status, so it
-            lives in the always-present header (no wait for the fetch). */}
         <div className="git-popover-header-actions">
-          <button className="git-popover-worktrees-btn" type="button" title="Manage worktrees">{WORKTREE_ICON}</button>
           <button className="git-popover-close" type="button" title="Close">{CLOSE_ICON}</button>
         </div>
       </div>
@@ -93,9 +82,6 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
     </div>
   );
   popover.querySelector('.git-popover-close')!.addEventListener('click', closePopover);
-  popover.querySelector('.git-popover-worktrees-btn')!.addEventListener('click', () => {
-    void import('./worktreesPanel.js').then(({ openWorktreesPanel }) => { openWorktreesPanel(); });
-  });
   document.body.appendChild(popover);
   activePopover = popover;
   positionPopover(popover, anchor);
@@ -216,10 +202,7 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
     });
   });
 
-  // HS-9068 — the "Manage worktrees" entry moved to the header (built in
-  // `openPopover`); the "Worker pool" + "In-flight work" entries moved out of
-  // this popover entirely onto the sidebar (`#sidebar-worker-actions`, wired in
-  // `app.tsx`), so the popover body now ends at the working-tree buckets.
+  // The popover body ends at the working-tree buckets.
 }
 
 /** Opaque `isConnected` read so TS can't narrow it across an `await`. */

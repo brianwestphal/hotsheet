@@ -8,7 +8,6 @@ import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { clearNewTicketHost, syncNewTicketHost } from './draftRow.js';
-import { renderMergePendingBadge } from './integrationReview.js';
 import type { ReadonlySignal } from './reactive.js';
 import { computed, effect } from './reactive.js';
 import { bindList, bindText } from './reactive-bind.js';
@@ -700,23 +699,15 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
     card.classList.toggle('cut-pending', cutIds.has(ticket.id));
   }));
 
-  // HS-9035 — claimed-by chip / merge-pending badge, mirroring the list row
-  // (ticketRow.tsx): list view showed the worker info but column view didn't.
-  // Reads `claimsByTicketId` + the live ticket signal (so it re-fires on claim
-  // and `pending_integration`/`status` changes); `nowTick` is read ONLY while
-  // claimed, so an unclaimed card doesn't re-render every second.
+  // HS-9035 — claimed-by chip, mirroring the list row (ticketRow.tsx): reads
+  // `claimsByTicketId` + `nowTick` (read ONLY while claimed, so an unclaimed card
+  // doesn't re-render every second).
   const claimedSlot = card.querySelector<HTMLElement>('.column-card-claimed-slot');
   if (claimedSlot !== null) {
     disposers.push(effect(() => {
       const claim = claimsByTicketId.value.get(ticket.id);
-      const t = sigs.ticket.value;
       if (claim !== undefined) {
         claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
-        return;
-      }
-      if (t.status === 'completed' && t.pending_integration === true) {
-        // HS-9107 — the badge is a Review affordance when the worker recorded its branch.
-        claimedSlot.replaceChildren(renderMergePendingBadge(t));
       } else if (claimedSlot.firstChild !== null) {
         claimedSlot.replaceChildren();
       }

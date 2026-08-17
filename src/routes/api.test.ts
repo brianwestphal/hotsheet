@@ -1984,18 +1984,18 @@ describe('POST /api/channel/trigger', () => {
     );
   });
 
-  it('forwards the HS-9084 routing target to triggerChannel', async () => {
+  it('forwards the routing target to triggerChannel', async () => {
     const channelConfig = await import('../channel-config.js');
     const mockTrigger = vi.mocked(channelConfig.triggerChannel);
     mockTrigger.mockResolvedValue(true);
 
-    const res = await app.request('/api/channel/trigger', post({ message: 'fan out', target: { kind: 'all-workers' } }));
+    const res = await app.request('/api/channel/trigger', post({ message: 'fan out', target: { kind: 'main' } }));
     expect(res.status).toBe(200);
     expect(mockTrigger).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(Number),
       'fan out',
-      { kind: 'all-workers' },
+      { kind: 'main' },
     );
   });
 

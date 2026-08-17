@@ -27,14 +27,14 @@ describe('DEV_FEATURES registry', () => {
   });
 
   it('recognizes its own keys and rejects others', () => {
-    expect(isDevFeatureKey('dev_parallel_workers')).toBe(true);
+    expect(isDevFeatureKey('dev_remote_access')).toBe(true);
     expect(isDevFeatureKey('dev_not_a_real_gate')).toBe(false);
     expect(isDevFeatureKey('ai_tool')).toBe(false);
   });
 });
 
 describe('isDevFeatureEnabled — fails closed', () => {
-  const KEY: DevFeatureKey = 'dev_parallel_workers';
+  const KEY: DevFeatureKey = 'dev_remote_access';
 
   it('is true only for an explicit boolean true', () => {
     expect(isDevFeatureEnabled({ [KEY]: true }, KEY)).toBe(true);

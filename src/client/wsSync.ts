@@ -14,7 +14,6 @@
 // (drops twice within 30s, or never connects), surface a "live updates
 // unavailable" hint and let the long-poll carry data until the WS recovers.
 
-import type { PartitionAssignment } from '../api/workers.js';
 import { httpOriginToWs } from './remoteOrigin.js';
 import { getActiveProject, shouldResetStatusOnUpNext } from './state.js';
 import { ticketsStore } from './ticketsStore.js';
@@ -34,7 +33,7 @@ export function shouldFallback(dropTimestamps: readonly number[], now: number): 
   return recent.length >= FALLBACK_DROP_THRESHOLD;
 }
 
-export type FrameAction = 'data' | 'detail' | 'claims' | 'active-device' | 'partition-proposed' | 'pong' | 'connected' | 'resync' | 'ignore';
+export type FrameAction = 'data' | 'detail' | 'claims' | 'active-device' | 'pong' | 'connected' | 'resync' | 'ignore';
 
 /** Classify an inbound frame `type` into the action the client takes.
  *  Mutation events → a full data refresh; attachment events → a detail-panel
@@ -50,9 +49,6 @@ export function frameAction(type: unknown): FrameAction {
     // HS-9191 — the active-device lease changed (docs/109 §109.5); the client
     // flips its terminals live↔placeholder based on whether it's the holder.
     case 'active-device-changed': return 'active-device';
-    // HS-9112 — the agent proposed a worker partition for review (docs/101 §101.7);
-    // the client opens the partition editor with the proposed plan.
-    case 'worker-partition-proposed': return 'partition-proposed';
     case 'attachment-added':
     case 'attachment-deleted': return 'detail';
     case 'ticket-created':
@@ -86,28 +82,6 @@ function toRecord(v: unknown): Record<string, unknown> {
 /** HS-9191 — the holder id off an `active-device-changed` frame (null = freed). */
 function activeDeviceIdOf(frame: Record<string, unknown>): string | null {
   return typeof frame.deviceId === 'string' && frame.deviceId !== '' ? frame.deviceId : null;
-}
-
-/** HS-9112 — the proposed assignment off a `worker-partition-proposed` frame. The
- *  frame was server-validated against the sync schema, so this narrows the shape
- *  defensively and returns [] on anything unexpected. */
-function proposedAssignmentsOf(frame: Record<string, unknown>): PartitionAssignment[] {
-  const raw = frame.assignments;
-  if (!Array.isArray(raw)) return [];
-  const out: PartitionAssignment[] = [];
-  for (const a of raw) {
-    if (a === null || typeof a !== 'object') continue;
-    const rec = a as Record<string, unknown>;
-    const ids = Array.isArray(rec.ticketIds) ? rec.ticketIds.filter((x): x is number => typeof x === 'number') : [];
-    const nums = Array.isArray(rec.ticketNumbers) ? rec.ticketNumbers.filter((x): x is string => typeof x === 'string') : [];
-    out.push({
-      worker: typeof rec.worker === 'string' ? rec.worker : '',
-      label: typeof rec.label === 'string' ? rec.label : '',
-      ticketIds: ids,
-      ticketNumbers: nums,
-    });
-  }
-  return out;
 }
 
 /**
@@ -205,9 +179,6 @@ export interface WsSyncDeps {
    *  device id, or null when the slot is now free. Drives the terminal
    *  live↔placeholder flip. */
   onActiveDeviceChanged: (deviceId: string | null) => void;
-  /** HS-9112 — a `worker-partition-proposed` event arrived: the agent's proposed
-   *  assignment. Opens the partition editor for owner review. */
-  onWorkerPartitionProposed: (assignments: PartitionAssignment[]) => void;
   /** HS-9305 — report the connection state for a project's `/ws/sync` (docs/112
    *  §112.8) so a remote project's tab can show connected/reconnecting/unreachable. */
   setConnectivity: (secret: string, state: 'connected' | 'reconnecting' | 'unreachable') => void;
@@ -322,7 +293,6 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     if (action === 'detail') deps.refreshDetail();
     else if (action === 'claims') deps.refreshClaims();
     else if (action === 'active-device') deps.onActiveDeviceChanged(activeDeviceIdOf(f));
-    else if (action === 'partition-proposed') deps.onWorkerPartitionProposed(proposedAssignmentsOf(f));
     else applyMutation(f);
   }
 
@@ -509,9 +479,6 @@ const wsSync = createWsSync({
   buildUrl: buildWsUrl,
   onActiveDeviceChanged: (deviceId) => {
     void import('./activeDevice.js').then(({ onActiveDeviceChangedEvent }) => onActiveDeviceChangedEvent(deviceId));
-  },
-  onWorkerPartitionProposed: (assignments) => {
-    void import('./agentPartitionProposal.js').then(({ onWorkerPartitionProposed }) => onWorkerPartitionProposed(assignments));
   },
   setConnectivity: (secret, state) => {
     void import('./remoteConnectivity.js').then(({ setConnectivity }) => setConnectivity(secret, state));
