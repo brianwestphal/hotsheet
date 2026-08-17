@@ -14,10 +14,20 @@
  * claimed/renewed under the wrong id and never recognized the tickets the pool
  * dispatched to `worker-1`.
  *
- * Leaf module (only a node builtin) so both the AI-tool plugins and the worker
- * launcher / channel tools can depend on it without a cycle.
+ * Leaf module with NO imports so both the AI-tool plugins and the worker launcher
+ * / channel tools can depend on it without a cycle — and, because the plugins are
+ * reachable from the CLIENT bundle, without dragging a node builtin (`path`) into
+ * the browser build. (Hence the hand-rolled `lastPathSegment` below rather than
+ * `path.basename`.)
  */
-import { basename } from 'path';
+
+/** Last path segment of a filesystem path, cross-platform, dependency-free (see
+ *  the module note — importing `node:path` breaks the client bundle). */
+function lastPathSegment(p: string): string {
+  const trimmed = p.replace(/[/\\]+$/, '');
+  const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return i === -1 ? trimmed : trimmed.slice(i + 1);
+}
 
 /** The env var carrying the canonical worker lease identity into the launch. */
 export const WORKER_ID_ENV = 'HOTSHEET_WORKER_ID';
@@ -69,5 +79,5 @@ export function resolveWorkerActor(cwd: string, injectedId: string | undefined, 
   if (injectedId !== undefined && injectedId !== '') return injectedId;
   const fromBranch = workerIdFromBranch(getBranch());
   if (fromBranch !== null) return fromBranch;
-  return basename(cwd);
+  return lastPathSegment(cwd);
 }
