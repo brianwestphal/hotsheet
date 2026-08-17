@@ -88,14 +88,19 @@ test.describe('Terminal dashboard — focus survives zoom + maximize (HS-9484)',
     // zoom's FLIP-animation + focus microtask can land after that window, so the
     // one-shot read intermittently saw <body> ("terminal-dashboard-active"). The
     // zoomed tile holds the shared xterm, so its helper-textarea is the focus target.
+    // HS-9678 — the ROOT cause was product-side: `centerTile` focused once in a
+    // microtask, and a reparent-blur (force-mount / shared-xterm restore-to-top)
+    // landed after it, so focus never stuck. `centerTile` now re-asserts focus on
+    // animation frames until it lands; the poll below just confirms it, with extra
+    // headroom for CI CPU contention (220 ms click debounce + mount + FLIP).
     await expect(tile.locator('.xterm-helper-textarea'), 'zooming should focus the terminal')
-      .toBeFocused({ timeout: 5000 });
+      .toBeFocused({ timeout: 10000 });
 
     // Now click INSIDE the zoomed terminal, the way a user does before typing.
     // Pre-fix this dropped focus to <body> with no way back short of Esc.
     await tile.locator('.terminal-dashboard-tile-preview').click({ position: { x: 40, y: 40 } });
     await expect(tile.locator('.xterm-helper-textarea'), 'clicking the zoomed terminal keeps focus on it')
-      .toBeFocused({ timeout: 5000 });
+      .toBeFocused({ timeout: 10000 });
 
     // …and it's the ZOOMED tile that holds it (not another instance's textarea).
     const afterClick = await activeElementInfo(page);

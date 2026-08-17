@@ -175,6 +175,36 @@ function getCenterReferenceRect(ctx: TileGridContext): DOMRect {
   return el.getBoundingClientRect();
 }
 
+/**
+ * HS-9678 — focus the centered terminal RESILIENTLY, not once.
+ *
+ * `centerTile` used to `queueMicrotask(() => tile.checkout?.term.focus())` — a
+ * single shot. That intermittently failed to stick (the flaky e2e
+ * `terminal-dashboard-focus.spec.ts:92` "zooming should focus the terminal",
+ * de-flaked twice before and still red in CI): when the tile is force-mounted or
+ * its shared xterm (the §54 LIFO checkout) is restored-to-top on center, the live
+ * `.xterm` DOM is reparented — and reparenting a focused element BLURS it, landing
+ * AFTER the one focus call. A bigger e2e timeout can't fix a one-shot focus.
+ *
+ * Re-assert on animation frames until the helper-textarea actually holds focus (or
+ * a small bound elapses), and stop early — never busy-loop and never steal focus
+ * back to a tile the user has since uncentered / re-centered elsewhere.
+ */
+function focusCenteredTerminalResiliently(ctx: TileGridContext, tile: InternalTile): void {
+  const MAX_ATTEMPTS = 12; // ~200 ms at 60 fps — covers reparent-blur + FLIP settle
+  let attempts = 0;
+  const tryFocus = (): void => {
+    if (ctx.centered.current !== tile || !tile.root.classList.contains('centered')) return;
+    tile.checkout?.term.focus();
+    attempts += 1;
+    const textarea = tile.root.querySelector('.xterm-helper-textarea');
+    const landed = textarea !== null && document.activeElement === textarea;
+    if (landed || attempts >= MAX_ATTEMPTS) return;
+    requestAnimationFrame(tryFocus);
+  };
+  queueMicrotask(tryFocus);
+}
+
 export function centerTile(ctx: TileGridContext, tile: InternalTile): void {
   ctx.centered.current = tile;
   clearTileBell(ctx, tile);
@@ -228,7 +258,7 @@ export function centerTile(ctx: TileGridContext, tile: InternalTile): void {
     tile.root.style.transform = '';
   }
 
-  queueMicrotask(() => { tile.checkout?.term.focus(); });
+  focusCenteredTerminalResiliently(ctx, tile);
 }
 
 export function recenterTile(ctx: TileGridContext): void {
