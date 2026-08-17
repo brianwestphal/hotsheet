@@ -56,8 +56,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npm test
@@ -73,8 +73,8 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npm run build:client
@@ -86,8 +86,8 @@ jobs:
   e2e-terminal:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npm run build:client
@@ -99,8 +99,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npm run lint
@@ -108,8 +108,8 @@ jobs:
   npm-dry-run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npm run build
@@ -139,8 +139,8 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: '${{ matrix.target }}' }
@@ -189,7 +189,7 @@ jobs:
       beta_version: ${{ steps.version.outputs.beta_version }}
       release_id: ${{ steps.create.outputs.result }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extract beta version from tag
         id: version
@@ -275,9 +275,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       base_version: ${{ steps.version.outputs.base_version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { ref: '${{ github.ref }}' }
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '${{ env.NODE_VERSION }}'
           cache: npm
@@ -353,9 +353,9 @@ jobs:
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
 
       - uses: dtolnay/rust-toolchain@stable
@@ -489,7 +489,7 @@ jobs:
       # `v[0-9]*` tags) still produce both NSIS and MSI because their
       # version has no pre-release identifier.
       - name: Build Tauri app and upload to release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -531,8 +531,8 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npx playwright install chromium --with-deps
@@ -579,8 +579,8 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ env.NODE_VERSION }}', cache: npm }
       - run: npm ci
       - run: npx playwright install chromium --with-deps
@@ -657,13 +657,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: '${{ github.ref }}'
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '${{ env.NODE_VERSION }}'
           cache: npm
