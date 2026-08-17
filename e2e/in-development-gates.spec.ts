@@ -40,7 +40,7 @@ test.describe('In Development gates (HS-9411)', () => {
     // Start from the default (all gates off) regardless of what ran before.
     await request.patch('/api/file-settings/layer', {
       headers: secretHeaders(secret),
-      data: { layer: 'local', settings: { dev_parallel_workers: false, dev_remote_access: false } },
+      data: { layer: 'local', settings: { dev_unreleased_ai_tools: false, dev_remote_access: false } },
     });
   });
 
@@ -83,14 +83,14 @@ test.describe('In Development gates (HS-9411)', () => {
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
     await openExperimentalTab(page);
 
-    await gate(page, 'dev_parallel_workers').check();
+    await gate(page, 'dev_unreleased_ai_tools').check();
 
     const layered = async () => await (await request.get('/api/file-settings/layered', { headers: secretHeaders(secret) })).json() as {
       shared: Record<string, unknown>; local: Record<string, unknown>;
     };
-    await expect.poll(async () => (await layered()).local.dev_parallel_workers, { timeout: 5000 }).toBe(true);
+    await expect.poll(async () => (await layered()).local.dev_unreleased_ai_tools, { timeout: 5000 }).toBe(true);
     // The load-bearing assertion: it must NOT be in the committed shared layer.
-    expect((await layered()).shared.dev_parallel_workers).toBeUndefined();
+    expect((await layered()).shared.dev_unreleased_ai_tools).toBeUndefined();
   });
 
   test('the gate survives a reload', async ({ page }) => {
