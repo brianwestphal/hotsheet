@@ -1,5 +1,7 @@
 # 103. Custom Command Buttons: Opt-In Target Picker (Main / Worker / All)
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED** — routing + warn-gate (HS-9084) + picker UI (HS-9083), both
 2026-06-26, + the **worker-safe command flag** (HS-9102, 2026-06-27). Design
 HS-9059. From the HS-9040 design investigation. A custom Claude command button today always triggers the

@@ -1,5 +1,7 @@
 # 91. Worker-Pool Dynamic Scaling + AI-Suggested N
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: PARTIAL — the pool manager + minimal panel SHIPPED 2026-06-23 (HS-8962).**
 §91.2-91.5 implemented: the in-memory pool manager (`src/workers/poolManager.ts`),
 the `/api/workers/pool*` endpoints, drain-aware `claim-next`, the `hotsheet-worker`

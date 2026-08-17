@@ -7,8 +7,11 @@
 - **Partial** — core shipped, enumerated gaps noted.
 - **Design only** — doc exists, implementation not yet built.
 - **Deferred** — intentionally postponed; see the entry for the trigger to revisit.
+- **Retired** — was built, then removed; the doc is kept as historical design.
 
 **Maintenance.** See §15. Update this file in the same change as any requirements doc change.
+
+> **RETIRED — parallel-agent worker pool / worktree orchestration (HS-9686, 2026-08-17).** Docs **89 (Phase B/C), 91, 92, 98–106** and the pool half of **90** are **Retired** — the worker pool, worktree management, pool MCP tools, and the `dev_parallel_workers` gate were removed (Claude/Codex provide their own worktree/parallel support). Any "Shipped" status in those sections is historical. **KEPT (still Shipped):** the claim/lease coordination core (doc 90: `claimed_by`/lease columns, atomic `claim-next`, the `blocked_by` gate, the 4 claim MCP tools) and the follower `.hotsheet` redirect (doc 89 Phase A). Adopt-worktree follow-up: HS-9688.
 
 ---
 

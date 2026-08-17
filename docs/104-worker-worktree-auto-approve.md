@@ -1,5 +1,7 @@
 # 104. Auto-Approve Worker Worktree MCP Server + Skills
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED** (core, HS-9085, 2026-06-26; design HS-9058). Implementation
 follow-up to the HS-9046 investigation. A new worker prompts on first launch to
 (a) allow the MCP server connection and (b) allow the worker skills — breaking the

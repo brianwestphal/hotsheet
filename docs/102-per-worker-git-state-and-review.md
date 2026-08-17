@@ -1,5 +1,7 @@
 # 102. Per-Worker Git State + Review Across Worktrees
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED (core)** — Part 2, the per-worktree git chip (§102.3-102.4),
 **SHIPPED** (HS-9081); Part 1, the Glassbox **diff-vs-target** review selector
 (§102.2), **SHIPPED** (HS-9082); the **review-in-worktree** mode (§102.2/§102.5),

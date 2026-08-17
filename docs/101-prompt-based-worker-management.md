@@ -1,5 +1,7 @@
 # 101. Prompt-Based Worker / Work-Splitting Management
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED** — the **prompt box + channel-trigger wrapper** (HS-9079) and
 the **"Parallelize tag…" quick action + plan-preview → dispatch** (HS-9080), both
 2026-06-26. Design HS-9061. The second half of HS-9031 — the MCP worker tools

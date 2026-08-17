@@ -1,5 +1,7 @@
 # 90. Distributed Ticket Execution (claim / lease + worker pool)
 
+> **PARTIALLY RETIRED (HS-9686, 2026-08-17).** **KEPT — the claim/lease coordination core** (the tool-agnostic shared backlog): the `claimed_by` / `claim_lease_expires_at` / `worker_label` / `claim_count` columns, atomic `claim-next` via `SKIP LOCKED`, the flat `blocked_by` gate, the channel auto-claim actor (`deriveChannelActor`), and the `hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` MCP tools. **REMOVED — the worker pool it fed:** worker launch/dispatch, the pool MCP tools (`get_worker_pool` / `set_worker_target` / `dispatch_tickets` / `propose_partition` / `drain_workers`), and both worktree-worker coordination models. Sections describing the pool/dispatch machinery are historical.
+
 **Status: PARTIAL — most of the epic has shipped.** Shipped: the claim/lease
 primitive (HS-8862), the flat `blocked_by` gate (HS-8865), the single-worker loop +
 launcher (HS-8863), the poison-ticket dead-letter (HS-8970), the worker-pool

@@ -1,5 +1,7 @@
 # 98. Worker Batching Policy
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED (core)** — the **skill prose** (§98.4 items 1+2) **SHIPPED**
 (HS-9072, `SKILL_VERSION` → 19) and the **partitioner grouping heuristic** (§98.4
 item 3) **SHIPPED** (HS-9073), both 2026-06-26. Only §98.4 item 4 (optional batch

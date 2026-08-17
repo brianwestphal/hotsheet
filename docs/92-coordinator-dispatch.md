@@ -1,5 +1,7 @@
 # 92. Coordinator-Dispatch UX (owner assigns ticket chunks to a worker)
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED 2026-06-24** — manual dispatch (HS-8964), reassign/recall
 (HS-8974), and the AI partition-into-chunks helper (HS-8965). The "push"
 half of the dual coordination model from

@@ -1,5 +1,7 @@
 # 89. Git Worktrees + Per-Worktree AI Agents
 
+> **RETIRED (HS-9686, 2026-08-17).** Hot Sheet no longer creates or manages git worktrees (Phase B/C) — Claude Code and Codex do. **KEPT: the follower `.hotsheet` redirect (Phase A)** — now in `file-settings.ts::resolveAuthoritativeDataDir` + `channel.tools.ts::deriveChannelActor` — so an AI agent in *any* worktree (however it was created) can claim from and report into the owner's one Hot Sheet. An in-app "adopt this worktree as a follower" command (the `makeFollower` recipe) is tracked in HS-9688. The rest of this document is retained as historical design.
+
 **Status: PARTIAL** (HS-8905 design, 2026-06-22). **Phase A shipped (HS-8934)** —
 the follower pointer + project-data redirect. **Phase B shipped** — server core
 (HS-8935: create/list/remove + API) + UI (HS-8938: management panel from the git

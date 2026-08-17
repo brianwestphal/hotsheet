@@ -1,5 +1,7 @@
 # 100. Server-Driven Worker Launch
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED** — the **server-owned terminal lifecycle** (§100.2.2, HS-9077),
 the **server reconcile endpoint** (§100.2.1(b), HS-9076), the **periodic reconcile
 interval loop** (§100.2.1(a), HS-9110), and **client adoption** (§100.2.3, HS-9078)

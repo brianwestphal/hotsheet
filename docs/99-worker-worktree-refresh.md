@@ -1,5 +1,7 @@
 # 99. Worker-Side Worktree-Refresh Routine
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED** — the **`refreshWorktree` helper** (§99.2, HS-9074), the
 **`POST /api/workers/refresh` endpoint** (§99.3, HS-9075), and the
 `/hotsheet-worker` skill prose (HS-9072) all landed 2026-06-26. Design HS-9063.

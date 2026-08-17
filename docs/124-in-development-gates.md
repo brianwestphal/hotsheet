@@ -26,8 +26,9 @@ about it*.
 
 | Key | Label | Hides when off |
 | --- | --- | --- |
-| `dev_parallel_workers` | Parallel agent workers (git worktrees + worker pool) | Sidebar worker-actions row, worker-pool + in-flight panels, the auto-worker-pool switch, and the "Run on…" command target chevron (docs/89, docs/91, docs/103) |
 | `dev_remote_access` | Remote access | The Settings → Remote Access tab (mint / QR-pair / revoke) and remote-project client surfaces (docs/94, docs/112) |
+
+> **`dev_parallel_workers` REMOVED (HS-9686, 2026-08-17).** The gate and everything it hid (the worker pool, worktree management, dispatch, the "Run on…" picker) were removed with the worker-pool retirement — there is no longer a half-built parallel-workers surface to gate.
 
 **Worktrees and the worker pool share one gate** (maintainer decision, HS-9411): the pool is unusable
 without worktrees, and their incompleteness is the same incompleteness.

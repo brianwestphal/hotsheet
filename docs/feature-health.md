@@ -133,14 +133,14 @@ a feature with nothing wrong that we know of.
 
 ## Workers / distributed execution
 
+> **RETIRED (HS-9686, 2026-08-17).** The worker pool, worker-pool panel, git-worktree management, coordinator dispatch, and owner-side integration helpers were all **removed** (Claude/Codex provide their own worktree/parallel support). Only the **claim/lease primitive + `blocked_by` gate** (the "Solid" row below) survives — it's the tool-agnostic shared backlog any independently-launched agent claims from.
+
 | Feature | Status | Notes |
 | --- | --- | --- |
-| **Worker pool manager** | Incomplete | `src/workers/poolManager.ts` states it plainly: *"pure in-memory + keyed by project data dir; session-only (no persistence)"*. **Restart the server and the pool registry is gone**, while the panel implies durable workers. |
-| **Worker pool panel** | Unknown | `e2e/worker-pool.spec.ts` asserts only empty states, disabled controls, and button visibility. **No test runs an actual worker.** 12 manual items. |
-| Git worktrees | Underbaked | Phases A–C shipped, Phase D gated on unfinished work. 5 manual items, no real e2e. |
-| Claim/lease primitive + `blocked_by` gate | Solid | Genuinely unit-tested; it's the layers above that are thin. |
-| Coordinator dispatch (drag → worker tile) | Unknown | 8 manual items, no e2e. |
-| Owner-side integration helpers | Solid\* | Unit-tested; the multi-worker flow they exist for is not. |
+| Claim/lease primitive + `blocked_by` gate | Solid | **KEPT.** Genuinely unit-tested; the tool-agnostic coordination core. |
+| ~~Worker pool manager / panel~~ | Removed | HS-9686 — `src/workers/` deleted. |
+| ~~Git worktree management~~ | Removed | HS-9686 — `src/worktrees.ts` deleted; the follower `.hotsheet` redirect is kept. |
+| ~~Coordinator dispatch / integration helpers~~ | Removed | HS-9686. |
 | Prompt-based worker management | Unknown | 5 manual items, needs a live channel to verify. |
 
 ## Data & storage

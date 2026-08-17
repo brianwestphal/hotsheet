@@ -1,5 +1,7 @@
 # 106. Integration Helpers: Explicit "Branch Ready" Signal + Optional Gate-Running
 
+> **RETIRED (HS-9686, 2026-08-17).** The parallel-agent worker pool / git-worktree orchestration described below was removed — Claude Code and Codex provide their own worktree / parallel-session support. KEPT is only the tool-agnostic claim/lease coordination core (`hotsheet_claim_next` / `_renew_lease` / `_release` / `_set_blocked_by` + the `blocked_by` gate; see [90-distributed-execution.md](90-distributed-execution.md)) and the follower `.hotsheet` pointer. This document is retained as historical design.
+
 **Status: SHIPPED** — §106.1 (explicit "branch ready" signal) **SHIPPED (HS-9090,
 2026-06-26)** + §106.2 (optional in-helper gate-running) **SHIPPED (HS-9091,
 2026-06-26)**. Smaller follow-up to HS-9048, which shipped the deterministic git integration core
