@@ -64,6 +64,23 @@ enrichProcessPath();
  * Returns true if the process should exit.
  */
 async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
+  if (args.follow !== null) {
+    // HS-9688 — adopt the CURRENT worktree (cwd) as a follower of the owner, then
+    // exit. A one-shot wiring action, like --close/--list (no server start).
+    const { makeFollower, resolveOwnerDataDir } = await import('./makeFollower.js');
+    const worktreeRoot = process.cwd();
+    const owner = resolveOwnerDataDir(args.follow);
+    try {
+      makeFollower(worktreeRoot, owner);
+    } catch (e) {
+      console.error(`Failed to adopt this worktree as a follower: ${e instanceof Error ? e.message : String(e)}`);
+      process.exit(1);
+    }
+    console.log(`Adopted ${worktreeRoot} as a follower of ${owner}.`);
+    console.log('Run `hotsheet` here (or open an agent in this worktree) — it now shares the owner\'s tickets + instance.');
+    process.exit(0);
+  }
+
   if (args.close) {
     await handleClose(args.dataDir, args.force);
     process.exit(0);

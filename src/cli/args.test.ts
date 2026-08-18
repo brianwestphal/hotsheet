@@ -149,6 +149,12 @@ describe('parseArgs — flags + valid values', () => {
     expect(parseArgs(argv('--port', '8080'))?.port).toBe(8080);
     expect(parseArgs(argv('--demo:3'))?.demo).toBe(3);
   });
+
+  // HS-9688 — --follow <ownerPath> carries the owner path; null when absent.
+  it('parses --follow <ownerPath> and defaults it to null', () => {
+    expect(parseArgs(argv())?.follow).toBeNull();
+    expect(parseArgs(argv('--follow', '/repo/owner'))?.follow).toBe('/repo/owner');
+  });
 });
 
 describe('parseArgs — error + usage exits', () => {
@@ -165,6 +171,7 @@ describe('parseArgs — error + usage exits', () => {
 
   it.each([
     ['--demo:0'], ['--demo:abc'], ['--port', 'notnum'], ['--bind'], ['--bind', '--force'], ['--totally-unknown'],
+    ['--follow'], ['--follow', '--force'], // HS-9688 — --follow needs an owner path
   ])('exits 1 on invalid input: %s', (...flags: string[]) => {
     expect(() => parseArgs(argv(...flags))).toThrow('exit:1');
     expect(exitMock).toHaveBeenCalledWith(1);

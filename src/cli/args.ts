@@ -65,6 +65,11 @@ export interface ParsedArgs {
    *  (mutual TLS required, HS-8993). `null` = not passed (today's behavior:
    *  server + auto-opened client). */
   server: 'localhost' | 'remote-access' | null;
+  /** HS-9688 — `--follow <ownerPath>`: adopt the CURRENT git worktree as a follower
+   *  of the owner project's Hot Sheet (write the `authoritativeDataDir` pointer + wire
+   *  the channel/skills/allow-rules against the owner), then exit. `ownerPath` is the
+   *  owner's project root or its `.hotsheet` dir. `null` = not passed. */
+  follow: string | null;
 }
 
 export function printUsage(): void {
@@ -96,6 +101,10 @@ Options:
   --close                  Unregister the current project from the running instance
   --force                  Skip interactive confirmations (use with --close in CI / scripts)
   --list                   List all projects registered with the running instance
+  --follow <ownerPath>     Adopt the CURRENT git worktree as a follower of the owner
+                           project (share its ticket DB / running instance). Pass the
+                           owner's project root or its .hotsheet dir. Wires the pointer
+                           + channel/skills/allow-rules, then exits.
   --test                   Run an isolated test instance: own ~/.hotsheet-test global
                            state, a sandbox project data-dir, default port ${TEST_MODE_PORT},
                            and a TEST badge — never touches your real instance/projects
@@ -108,6 +117,7 @@ Examples:
   hotsheet --data-dir ~/my-project/.hotsheet
   hotsheet --list
   hotsheet --close
+  hotsheet --follow ~/Documents/my-project
   hotsheet --replace
   hotsheet --test
   hotsheet --server localhost
@@ -132,6 +142,7 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
   let bind: string | undefined;
   let bindExplicit = false; // HS-9163 — did the user pass --bind? (gates remote-access's 0.0.0.0 default)
   let server: 'localhost' | 'remote-access' | null = null;
+  let follow: string | null = null;
   // HS-8921 — track whether the user passed these explicitly so `--test`'s
   // defaults only apply when the user didn't (order-independent: `--test --port`
   // and `--port --test` behave identically).
@@ -198,6 +209,14 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
         bind = args[++i];
         bindExplicit = true;
         break;
+      case '--follow':
+        // HS-9688 — adopt the current worktree as a follower of <ownerPath>.
+        if (i + 1 >= args.length || args[i + 1] === '' || args[i + 1].startsWith('--')) {
+          console.error("--follow requires the owner project's path (its root or its .hotsheet dir)");
+          process.exit(1);
+        }
+        follow = args[++i];
+        break;
       case '--server': {
         // HS-9163 — `--server <mode>` runs the server only (no client launched).
         const mode = args[i + 1];
@@ -242,5 +261,5 @@ export function parseArgs(argv: string[]): ParsedArgs | null {
     setTestMode(true);
   }
 
-  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list, test, bind, server };
+  return { port, dataDir, demo, forceUpdateCheck, noOpen, strictPort, replace, close, force, list, test, bind, server, follow };
 }

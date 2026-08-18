@@ -1,6 +1,6 @@
 # 89. Git Worktrees + Per-Worktree AI Agents
 
-> **RETIRED (HS-9686, 2026-08-17).** Hot Sheet no longer creates or manages git worktrees (Phase B/C) — Claude Code and Codex do. **KEPT: the follower `.hotsheet` redirect (Phase A)** — now in `file-settings.ts::resolveAuthoritativeDataDir` + `channel.tools.ts::deriveChannelActor` — so an AI agent in *any* worktree (however it was created) can claim from and report into the owner's one Hot Sheet. An in-app "adopt this worktree as a follower" command (the `makeFollower` recipe) is tracked in HS-9688. The rest of this document is retained as historical design.
+> **RETIRED (HS-9686, 2026-08-17).** Hot Sheet no longer creates or manages git worktrees (Phase B/C) — Claude Code and Codex do. **KEPT: the follower `.hotsheet` redirect (Phase A)** — now in `file-settings.ts::resolveAuthoritativeDataDir` + `channel.tools.ts::deriveChannelActor` — so an AI agent in *any* worktree (however it was created) can claim from and report into the owner's one Hot Sheet. The "adopt this worktree as a follower" command (the `makeFollower` recipe) **shipped in HS-9688** — see §89.7. The rest of this document is retained as historical design.
 
 **Status: PARTIAL** (HS-8905 design, 2026-06-22). **Phase A shipped (HS-8934)** —
 the follower pointer + project-data redirect. **Phase B shipped** — server core
@@ -358,3 +358,44 @@ Still open (smaller follow-up): an **explicit "branch ready" signal** (a per-wor
 flag/note when a worker has committed + rebased) so the owner integrates
 deterministically rather than enumerating `listReadyBranches`; and having the
 integrate helper optionally run the gates itself.
+
+## 89.7 Adopt a native worktree as a follower — `--follow` (SHIPPED, HS-9688)
+
+After the worker-pool retirement (HS-9686) Hot Sheet no longer *creates* worktrees, so
+the only path that used to write a follower pointer (`createWorktree`) is gone. But the
+runtime redirect is KEPT (§89.2 Phase A), so a worktree that carries the pointer still
+shares the owner's DB / instance. `--follow` is the missing way to *write* that pointer
+on a worktree Claude/Codex (or you) created natively.
+
+**Command:** run from inside the worktree —
+`hotsheet --follow <ownerPath>` — where `<ownerPath>` is the owner project's root or its
+`.hotsheet` dir (`resolveOwnerDataDir` accepts either). It's a one-shot wiring action
+(like `--close` / `--list`): it wires the follower and exits, starting no server.
+
+**The primitive:** `makeFollower(worktreeRoot, ownerDataDir)` in `src/makeFollower.ts` —
+pure orchestration over existing helpers, idempotent, and independent of the deleted
+`src/workers` / `worktrees.ts`. Steps:
+
+1. `writeFileSettings(<worktree>/.hotsheet, { authoritativeDataDir: <owner> })` — the
+   pointer the redirect reads.
+2. `ensureGitignore(worktreeRoot)` — keep the worktree's own `.hotsheet/` out of git
+   (git-gated: a no-op outside a git repo).
+3. `registerChannelAt(worktreeRoot, ownerDataDir)` — channel MCP config rooted at the
+   worktree but pointing tools at the OWNER.
+4. `ensureSkillsForDir(worktreeRoot, undefined, ownerDataDir)` — generated skills for
+   the worktree, resolved against the owner (must precede step 5).
+5. `writeWorktreeApprovals(worktreeRoot, ownerDataDir, generatedClaudeSkillNames())` —
+   pre-approve the owner's channel MCP server + skills (reads the owner's opt-out).
+
+**Validation (fail fast at adopt time):** the owner `.hotsheet` must exist, must not be
+a self-reference, and must not itself be a follower (no chains — mirrors the read-time
+guard in `resolveAuthoritativeDataDir`, but with a clearer message).
+
+Tests: `makeFollower.test.ts` (pointer + redirect resolves to owner, `.mcp.json` points
+at the owner, idempotence, and the three validation errors) + `cli/args.test.ts`
+(`--follow` parsing + missing-arg exit).
+
+**Follow-up (HS-9697):** a small in-app UI button ("adopt this worktree") wrapping the
+same `makeFollower` primitive, for users who don't reach for the CLI; and an optional
+owner auto-detect (derive the owner from the git superproject instead of requiring
+`<ownerPath>`).
