@@ -22,6 +22,7 @@ import { basename, join, resolve } from 'path';
 import { registerChannelAt } from './channel-config.js';
 import { writeWorktreeApprovals } from './claude-allow-rule.js';
 import { readFileSettings, writeFileSettings } from './file-settings.js';
+import { type GitRunner, listWorktreePaths } from './git/runner.js';
 import { ensureGitignore } from './gitignore.js';
 import { ensureSkillsForDir, generatedClaudeSkillNames } from './skills.js';
 
@@ -32,6 +33,29 @@ import { ensureSkillsForDir, generatedClaudeSkillNames } from './skills.js';
 export function resolveOwnerDataDir(ownerPath: string): string {
   const abs = resolve(ownerPath);
   return basename(abs) === '.hotsheet' ? abs : join(abs, '.hotsheet');
+}
+
+/**
+ * HS-9697 — auto-detect the owner `.hotsheet` for `hotsheet --follow` (no arg) run
+ * inside a linked worktree. `git worktree list` reports the MAIN worktree first, so its
+ * `.hotsheet` is the owner. Returns null when there's nothing to follow: the cwd IS the
+ * main worktree (you're the owner), the main has no `.hotsheet` (not a Hot Sheet owner),
+ * or git isn't available / this isn't a worktree. Async (shells git); the caller falls
+ * back to asking for an explicit path on null.
+ */
+export async function detectOwnerDataDir(worktreeRoot: string, git?: GitRunner): Promise<string | null> {
+  const root = resolve(worktreeRoot);
+  let paths: { path: string }[];
+  try {
+    paths = await listWorktreePaths(root, git);
+  } catch {
+    return null; // not a git repo / git unavailable
+  }
+  if (paths.length === 0) return null;
+  const main = resolve(paths[0].path); // `git worktree list` reports the main worktree first
+  if (main === root) return null; // cwd is the main worktree → nothing to follow
+  const owner = join(main, '.hotsheet');
+  return existsSync(owner) ? owner : null;
 }
 
 /**

@@ -67,9 +67,17 @@ async function handleEarlyFlags(args: ParsedArgs): Promise<boolean> {
   if (args.follow !== null) {
     // HS-9688 — adopt the CURRENT worktree (cwd) as a follower of the owner, then
     // exit. A one-shot wiring action, like --close/--list (no server start).
-    const { makeFollower, resolveOwnerDataDir } = await import('./makeFollower.js');
+    const { makeFollower, resolveOwnerDataDir, detectOwnerDataDir } = await import('./makeFollower.js');
     const worktreeRoot = process.cwd();
-    const owner = resolveOwnerDataDir(args.follow);
+    // HS-9697 — bare `--follow` (args.follow === true) auto-detects the owner from the
+    // git superproject; an explicit path resolves as given.
+    const owner = args.follow === true
+      ? await detectOwnerDataDir(worktreeRoot)
+      : resolveOwnerDataDir(args.follow);
+    if (owner === null) {
+      console.error('Could not auto-detect the owner project. Run `hotsheet --follow` from inside a linked git worktree whose main checkout has a .hotsheet, or pass the owner explicitly: `hotsheet --follow <ownerPath>`.');
+      process.exit(1);
+    }
     try {
       makeFollower(worktreeRoot, owner);
     } catch (e) {

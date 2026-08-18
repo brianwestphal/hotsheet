@@ -10,7 +10,8 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveAuthoritativeDataDir, writeFileSettings } from './file-settings.js';
-import { makeFollower, resolveOwnerDataDir } from './makeFollower.js';
+import type { GitRunner } from './git/runner.js';
+import { detectOwnerDataDir, makeFollower, resolveOwnerDataDir } from './makeFollower.js';
 
 let base: string;
 let ownerRoot: string;
@@ -78,5 +79,32 @@ describe('makeFollower', () => {
     mkdirSync(grand, { recursive: true });
     writeFileSettings(ownerHotsheet, { authoritativeDataDir: grand });
     expect(() => makeFollower(worktreeRoot, ownerHotsheet)).toThrow(/itself a follower|chains/);
+  });
+});
+
+describe('detectOwnerDataDir (HS-9697)', () => {
+  // git worktree list --porcelain reports the MAIN worktree first.
+  const gitReturning = (paths: string[]): GitRunner => () => Promise.resolve(paths.map(p => `worktree ${p}`).join('\n') + '\n');
+
+  it('returns the main worktree .hotsheet when run inside a linked worktree', async () => {
+    const git = gitReturning([ownerRoot, worktreeRoot]); // main first, then the current worktree
+    expect(await detectOwnerDataDir(worktreeRoot, git)).toBe(ownerHotsheet);
+  });
+
+  it('returns null when the cwd IS the main worktree (nothing to follow)', async () => {
+    const git = gitReturning([ownerRoot, worktreeRoot]);
+    expect(await detectOwnerDataDir(ownerRoot, git)).toBeNull();
+  });
+
+  it('returns null when the main worktree has no .hotsheet', async () => {
+    const bareMain = join(base, 'bare-main');
+    mkdirSync(bareMain, { recursive: true });
+    const git = gitReturning([bareMain, worktreeRoot]);
+    expect(await detectOwnerDataDir(worktreeRoot, git)).toBeNull();
+  });
+
+  it('returns null when git fails / not a repo', async () => {
+    const git: GitRunner = () => Promise.reject(new Error('not a git repository'));
+    expect(await detectOwnerDataDir(worktreeRoot, git)).toBeNull();
   });
 });

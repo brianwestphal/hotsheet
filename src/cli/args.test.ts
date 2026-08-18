@@ -150,10 +150,16 @@ describe('parseArgs — flags + valid values', () => {
     expect(parseArgs(argv('--demo:3'))?.demo).toBe(3);
   });
 
-  // HS-9688 — --follow <ownerPath> carries the owner path; null when absent.
-  it('parses --follow <ownerPath> and defaults it to null', () => {
+  // HS-9688/9697 — --follow: null when absent, the path string when given, and `true`
+  // (auto-detect the owner from the git superproject) when passed bare.
+  it('parses --follow: absent → null, path → string, bare → true (auto-detect)', () => {
     expect(parseArgs(argv())?.follow).toBeNull();
     expect(parseArgs(argv('--follow', '/repo/owner'))?.follow).toBe('/repo/owner');
+    expect(parseArgs(argv('--follow'))?.follow).toBe(true);
+    // A trailing flag doesn't get swallowed as the path — bare --follow, --force stays.
+    const p = parseArgs(argv('--follow', '--force'))!;
+    expect(p.follow).toBe(true);
+    expect(p.force).toBe(true);
   });
 });
 
@@ -171,7 +177,6 @@ describe('parseArgs — error + usage exits', () => {
 
   it.each([
     ['--demo:0'], ['--demo:abc'], ['--port', 'notnum'], ['--bind'], ['--bind', '--force'], ['--totally-unknown'],
-    ['--follow'], ['--follow', '--force'], // HS-9688 — --follow needs an owner path
   ])('exits 1 on invalid input: %s', (...flags: string[]) => {
     expect(() => parseArgs(argv(...flags))).toThrow('exit:1');
     expect(exitMock).toHaveBeenCalledWith(1);

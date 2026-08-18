@@ -391,11 +391,17 @@ pure orchestration over existing helpers, idempotent, and independent of the del
 a self-reference, and must not itself be a follower (no chains — mirrors the read-time
 guard in `resolveAuthoritativeDataDir`, but with a clearer message).
 
+**Owner auto-detect (HS-9697):** bare `hotsheet --follow` (no path) auto-detects the
+owner from the git superproject — `detectOwnerDataDir(worktreeRoot)` runs `git worktree
+list` (main worktree reported first) and returns the main's `.hotsheet`, or null when
+the cwd IS the main worktree, the main has no `.hotsheet`, or git is unavailable (the
+CLI then asks for an explicit path). `args.follow` is `string | true | null` (path /
+auto / absent).
+
 Tests: `makeFollower.test.ts` (pointer + redirect resolves to owner, `.mcp.json` points
-at the owner, idempotence, and the three validation errors) + `cli/args.test.ts`
-(`--follow` parsing + missing-arg exit).
+at the owner, idempotence, the three validation errors, + `detectOwnerDataDir` with an
+injected `GitRunner`) + `cli/args.test.ts` (`--follow` path / bare-auto / absent).
 
 **Follow-up (HS-9697):** a small in-app UI button ("adopt this worktree") wrapping the
-same `makeFollower` primitive, for users who don't reach for the CLI; and an optional
-owner auto-detect (derive the owner from the git superproject instead of requiring
-`<ownerPath>`).
+same `makeFollower` primitive, for users who don't reach for the CLI (the git-chip
+popover is the natural home). The owner auto-detect half of HS-9697 shipped here.
