@@ -1273,25 +1273,35 @@ describe('HS-9429 — codexTerminalRemoteCommand + codexTerminalNeedsDaemonEnsur
   });
 
   describe('codexTerminalNeedsDaemonEnsure', () => {
-    it('true only when gate on + ai_tool=codex + socket NOT up (the cold case)', () => {
+    it('true when gate on + ai_tool=codex (defers the spawn behind the ensure)', () => {
       vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1'); // dataDir settings.json has ai_tool: codex
-      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(true);
+      expect(codexTerminalNeedsDaemonEnsure(dataDir)).toBe(true);
     });
 
-    it('false when the daemon socket is already up (spawn stays synchronous)', () => {
+    // HS-9693 — the KEY regression. The result must be UNCONDITIONAL on the socket
+    // state: the old code returned `!fileExists(socketPath)`, so a stale socket (a file
+    // that exists but points at a dead daemon after an unclean death) read as "up" and
+    // skipped the ensure → `codex --remote` failed with "failed to connect to remote
+    // app server". The function no longer looks at the socket at all — it always defers
+    // to the liveness-aware ensure (HS-9667), which no-ops when genuinely up and
+    // recovers a stale socket by restarting the daemon.
+    it('does not consult the socket path at all (a stale sock must not skip the ensure)', () => {
       vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
-      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: allExist, socketPath: '/s.sock' })).toBe(false);
+      // No deps to inject a "socket exists" answer — the signature dropped them. Repeated
+      // calls stay true regardless of any real socket file the daemon may have left behind.
+      expect(codexTerminalNeedsDaemonEnsure(dataDir)).toBe(true);
+      expect(codexTerminalNeedsDaemonEnsure(dataDir)).toBe(true);
     });
 
     it('false when the gate is explicitly off (HOTSHEET_CODEX_DISCOVER_THREAD=0)', () => {
       vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '0'); // model-B is now default-on
-      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(false);
+      expect(codexTerminalNeedsDaemonEnsure(dataDir)).toBe(false);
     });
 
     it('false for a non-codex project even with the gate on', () => {
       vi.stubEnv('HOTSHEET_CODEX_DISCOVER_THREAD', '1');
       writeFileSync(join(dataDir, 'settings.json'), JSON.stringify({ ai_tool: 'claude' }), 'utf-8');
-      expect(codexTerminalNeedsDaemonEnsure(dataDir, { fileExists: noneExist, socketPath: '/s.sock' })).toBe(false);
+      expect(codexTerminalNeedsDaemonEnsure(dataDir)).toBe(false);
     });
   });
 });
@@ -1314,10 +1324,14 @@ describe('HS-9396 — prestartCodexDaemonIfNeeded', () => {
     expect(ensureDaemon).toHaveBeenCalledTimes(1);
   });
 
-  it('no-ops when the socket is already up', () => {
-    const ensureDaemon = vi.fn();
+  // HS-9693 — a socket FILE existing must NOT skip the ensure (it could be a stale sock
+  // from an unclean daemon death). The ensure is liveness-aware + a no-op when the
+  // daemon is genuinely up, so prestart always delegates to it.
+  it('still calls the (liveness-aware) ensure even when a socket file exists', async () => {
+    const ensureDaemon = vi.fn().mockResolvedValue(true);
     prestartCodexDaemonIfNeeded(dataDir, { ensureDaemon, socketPath: '/s.sock', fileExists: () => true });
-    expect(ensureDaemon).not.toHaveBeenCalled();
+    await flush();
+    expect(ensureDaemon).toHaveBeenCalledTimes(1);
   });
 
   // HS-9430 — a persisted rollout is NO LONGER required (that was the model-A

@@ -10,6 +10,7 @@
 // `perMessageDeflate: false` and a plain `host` header.
 
 import { spawn } from 'child_process';
+import { unlink } from 'fs/promises';
 import { connect as netConnect } from 'net';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -128,6 +129,12 @@ export interface EnsureDaemonDeps {
   probeSocket?: (sockPath: string) => Promise<boolean>;
   /** Injectable for tests. Defaults to the real `codex app-server daemon start`. */
   startDaemon?: () => Promise<boolean>;
+  /** Injectable for tests. Best-effort removal of a stale socket FILE when the daemon
+   *  can't be brought up (HS-9693) — so the synchronous `codexTerminalRemoteCommand`
+   *  (file-existence only) falls back to plain `codex` instead of emitting a
+   *  `codex --remote unix://<dead>` that fails with "failed to connect to remote app
+   *  server". Defaults to an `fs.unlink` that ignores ENOENT/any error. */
+  removeStaleSocket?: (sockPath: string) => Promise<void>;
 }
 
 /** Liveness probe: connect to the UDS. `true` only if something is LISTENING; a
@@ -167,6 +174,7 @@ export function ensureCodexDaemonRunning(deps: EnsureDaemonDeps = {}): Promise<b
   const sockPath = deps.socketPath ?? codexDaemonSocketPath();
   const probe = deps.probeSocket ?? probeDaemonSocket;
   const start = deps.startDaemon ?? startDaemonProcess;
+  const removeStaleSocket = deps.removeStaleSocket ?? ((p: string) => unlink(p).catch(() => { /* ENOENT/any — best-effort */ }));
   ensureInFlight = (async () => {
     try {
       // HS-9667 — probe LIVENESS, not file existence. A stale socket left by an
@@ -175,12 +183,18 @@ export function ensureCodexDaemonRunning(deps: EnsureDaemonDeps = {}): Promise<b
       // "failed to connect to remote app server". `codex app-server daemon start`
       // itself handles the stale socket; the bug was never reaching it.
       if (await probe(sockPath)) return true;
-      if (!await start()) return false;
-      for (const delayMs of [250, 1500, 3000]) {
+      if (await start()) {
+        for (const delayMs of [250, 1500, 3000]) {
+          if (await probe(sockPath)) return true;
+          await new Promise((r) => { const t = setTimeout(r, delayMs); t.unref(); });
+        }
         if (await probe(sockPath)) return true;
-        await new Promise((r) => { const t = setTimeout(r, delayMs); t.unref(); });
       }
-      return await probe(sockPath);
+      // HS-9693 — the daemon is unreachable (start failed, or it never came up). Clear
+      // any stale socket FILE so the synchronous resolver falls back to plain `codex`
+      // rather than pointing `codex --remote` at a dead socket.
+      await removeStaleSocket(sockPath);
+      return false;
     } finally {
       ensureInFlight = null;
     }

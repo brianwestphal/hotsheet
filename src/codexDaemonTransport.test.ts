@@ -154,7 +154,27 @@ describe('ensureCodexDaemonRunning (HS-9396)', () => {
   });
 
   it('resolves false when the start command fails', async () => {
-    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(false), startDaemon: () => Promise.resolve(false) })).toBe(false);
+    const removeStaleSocket = vi.fn().mockResolvedValue(undefined);
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(false), startDaemon: () => Promise.resolve(false), removeStaleSocket })).toBe(false);
+  });
+
+  // HS-9693 — when the daemon can't be brought up, clear a stale socket FILE so the
+  // synchronous `codexTerminalRemoteCommand` falls back to plain `codex` instead of
+  // emitting `codex --remote unix://<dead>` (→ "failed to connect to remote app server").
+  it('removes a stale socket file when the daemon can never be reached', async () => {
+    const removeStaleSocket = vi.fn().mockResolvedValue(undefined);
+    const result = await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(false), startDaemon: () => Promise.resolve(false), removeStaleSocket });
+    expect(result).toBe(false);
+    expect(removeStaleSocket).toHaveBeenCalledWith('/s.sock');
+  });
+
+  // The recovery case must NOT delete the socket: start succeeds and the daemon comes up.
+  it('does NOT remove the socket when the daemon (re)starts successfully', async () => {
+    let up = false;
+    const removeStaleSocket = vi.fn().mockResolvedValue(undefined);
+    const startDaemon = vi.fn().mockImplementation(() => { up = true; return Promise.resolve(true); });
+    expect(await ensureCodexDaemonRunning({ socketPath: '/s.sock', probeSocket: () => Promise.resolve(up), startDaemon, removeStaleSocket })).toBe(true);
+    expect(removeStaleSocket).not.toHaveBeenCalled();
   });
 
   it('concurrent callers share ONE in-flight start (several projects registering at once)', async () => {

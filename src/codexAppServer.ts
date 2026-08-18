@@ -236,8 +236,8 @@ export interface PrestartDeps extends CodexCommandDeps {
  * HS-9396 (docs/123 §123.5) — fire-and-forget daemon pre-start so a codex
  * terminal can launch DAEMON-HOSTED without waiting on a cold daemon start.
  * Called at project registration, on an `ai_tool` settings change, and on drive
- * re-enable. Acts when the model-B launch is one missing daemon away: model-B
- * on + drive enabled + `ai_tool=codex` + the daemon socket absent.
+ * re-enable. Acts for any model-B codex project: model-B on + drive enabled +
+ * `ai_tool=codex`.
  *
  * HS-9430 — no longer requires a persisted rollout on disk. That was the model-A
  * precondition (the terminal RESUMED the drive's thread, which needs a rollout);
@@ -246,13 +246,18 @@ export interface PrestartDeps extends CodexCommandDeps {
  * (`codexTerminalRemoteCommand`) stays side-effect-free — this is the async
  * spawn-adjacent path, and `codexTerminalNeedsDaemonEnsure` still covers the
  * cold spawn if the pre-start hasn't finished.
+ *
+ * HS-9693 — always delegate to the liveness-aware `ensureCodexDaemonRunning`; do
+ * NOT skip on the socket FILE existing. A stale socket left by an unclean daemon
+ * death would otherwise suppress the (re)start, leaving `codex --remote` pointed at
+ * a dead socket. `ensureCodexDaemonRunning` probes real liveness (HS-9667) and is a
+ * cheap no-op when the daemon is genuinely up, so this stays a warm-up in the common
+ * case and a recovery in the stale-socket case.
  */
 export function prestartCodexDaemonIfNeeded(dataDir: string, deps: PrestartDeps = {}): void {
   if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return;
   const tool = readFileSettings(dataDir).ai_tool;
   if (typeof tool !== 'string' || tool.trim().toLowerCase() !== 'codex') return;
-  const fileExists = deps.fileExists ?? existsSync;
-  if (fileExists(deps.socketPath ?? codexDaemonSocketPath())) return; // already up
   void (deps.ensureDaemon ?? ensureCodexDaemonRunning)().catch(() => { /* best-effort — plain codex fallback stands */ });
 }
 
@@ -407,20 +412,23 @@ export function codexTerminalRemoteCommand(dataDir: string, deps: CodexCommandDe
 
 /**
  * HS-9429 (docs/129 §129.4) — should the terminal spawn AWAIT the daemon before
- * launching? True only when model-B is on for a codex project AND the daemon socket
- * isn't up yet — i.e. the one cold case where `codex --remote` would otherwise have
- * nothing to connect to. `spawnIntoSession` uses this to defer the (rare) cold spawn
- * behind `ensureCodexDaemonRunning`; every other spawn stays synchronous.
+ * launching? True for any codex model-B project, so `spawnIntoSession` defers the
+ * spawn behind `ensureCodexDaemonRunning`; every non-codex spawn stays synchronous.
+ *
+ * HS-9693 — this deliberately does NOT gate on the socket FILE existing. A stale
+ * socket left by an unclean daemon death (Hot Sheet server SIGKILL/OOM/crash) leaves
+ * the file behind, so a `fileExists` check read it as "daemon up", skipped the ensure,
+ * and `codex --remote unix://<stale>` failed with "failed to connect to remote app
+ * server" (exit 1). `ensureCodexDaemonRunning` probes real LIVENESS (HS-9667) and is a
+ * cheap no-op when the daemon is genuinely up, so always awaiting it is safe — and it
+ * recovers a stale socket by restarting the daemon before `codex --remote` runs.
  */
-export function codexTerminalNeedsDaemonEnsure(dataDir: string, deps: CodexCommandDeps = {}): boolean {
-  // Env gate first (cheap) — short-circuits without the config/settings reads on the
+export function codexTerminalNeedsDaemonEnsure(dataDir: string): boolean {
+  // Env gate first (cheap) — short-circuits without the settings read on the
   // default (gate-off) path, since this runs on every terminal spawn.
   if (!codexDriveDiscoverEnabled() || !isCodexAppServerEnabled()) return false;
   const tool = readFileSettings(dataDir).ai_tool;
-  if (typeof tool !== 'string' || tool.trim().toLowerCase() !== 'codex') return false;
-  const socketPath = deps.socketPath ?? codexDaemonSocketPath();
-  const fileExists = deps.fileExists ?? existsSync;
-  return !fileExists(socketPath); // only when the daemon isn't already up
+  return typeof tool === 'string' && tool.trim().toLowerCase() === 'codex';
 }
 
 /**

@@ -128,9 +128,16 @@ The codex `{{aiCommand}}` terminal launches daemon-hosted so it owns a discovera
 - **Daemon readiness** (maintainer decision Q2=a — await): the terminal spawn AWAITS the daemon so
   `codex --remote` reliably connects. Rather than rippling async through the whole registry,
   `spawnIntoSession` (`registry/lifecycle.ts`) checks `codexTerminalNeedsDaemonEnsure` (gate on +
-  `ai_tool=codex` + socket not up) and, only in that rare cold case, `await`s `ensureCodexDaemonRunning`
-  then spawns; **every other spawn stays synchronous** (so `attach`'s synchronous pty read is
-  untouched). A failed ensure resolves to plain `codex` (the socket-absent fallback).
+  `ai_tool=codex`) and, for any model-B codex spawn, `await`s `ensureCodexDaemonRunning` then spawns;
+  **every non-codex spawn stays synchronous** (so `attach`'s synchronous pty read is untouched). A
+  failed ensure resolves to plain `codex` (the socket-absent fallback).
+  - **HS-9693** — `codexTerminalNeedsDaemonEnsure` (and `prestartCodexDaemonIfNeeded`) deliberately do
+    **not** gate on the socket FILE existing. A stale socket left by an unclean daemon death (Hot Sheet
+    server SIGKILL/OOM/crash) leaves the file behind, so the old `!fileExists(socketPath)` check read it
+    as "daemon up", skipped the ensure, and `codex --remote unix://<stale>` failed with `failed to
+    connect to remote app server` (exit 1). Both now always defer to `ensureCodexDaemonRunning`, which
+    probes real LIVENESS (HS-9667) — a cheap no-op when the daemon is genuinely up, and a recovery
+    (restart the daemon) when the socket is stale — before `codex --remote` runs.
 - **Gate**: the same `codexDriveDiscoverEnabled()` gate as the drive, so terminal-hosting +
   drive-discovery flip together. **Default ON** since HS-9430 (`codexModelBTerminals` config,
   env-overridable) — see §129.3.
