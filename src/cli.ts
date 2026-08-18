@@ -276,6 +276,10 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
     // no-op unless HOTSHEET_PTY_BROKER=1. Best-effort — a broker failure must never
     // block startup (terminals just won't survive the next death).
     {
+      // HS-9692 — clear any stale quit-intent marker from a prior real quit so a
+      // leftover can't make THIS run tear the broker down on an accidental signal.
+      const { clearQuitIntent } = await import('./terminals/quitIntent.js');
+      clearQuitIntent();
       const { isBrokerMode, initBrokerMode } = await import('./terminals/registry.js');
       if (isBrokerMode()) {
         startupMark('post-startup: connecting PTY broker');

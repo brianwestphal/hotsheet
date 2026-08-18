@@ -400,12 +400,20 @@ async function destroyTerminals(reason: ShutdownReason): Promise<void> {
     // Lazy-import so unit tests can run this module without pulling the PTY
     // registry (which depends on `node-pty`, an optional native binding).
     const { destroyAllTerminals, isBrokerMode, brokerShutdownForQuit } = await import('./terminals/registry.js');
-    // HS-9662 — in broker mode ONLY an explicit quit (SIGTERM/SIGINT) kills the
-    // detached broker's PTYs. A `--replace` relaunch (`/api/shutdown` → reason
-    // `'http'`) or any other reason leaves them alive so the fresh server
-    // re-adopts them — the survival guarantee. `destroyAllTerminals` itself only
-    // disconnects + clears local state in broker mode (never kills).
-    if (isBrokerMode() && (reason === 'SIGTERM' || reason === 'SIGINT')) {
+    const { shouldTearDownBroker } = await import('./terminals/quitIntent.js');
+    // HS-9662 — in broker mode ONLY a genuine app quit kills the detached broker's
+    // PTYs. A `--replace` relaunch (`/api/shutdown` → reason `'http'`) or any other
+    // reason leaves them alive so the fresh server re-adopts them — the survival
+    // guarantee. `destroyAllTerminals` itself only disconnects + clears local state
+    // in broker mode (never kills).
+    //
+    // HS-9692 — "genuine app quit" is NOT "the signal was SIGTERM": under the Tauri
+    // supervisor a bare external `kill` also arrives as SIGTERM but the supervisor
+    // RESPAWNS from it, so tearing the broker down there loses every terminal. The
+    // shell instead writes an explicit quit-intent marker on ⌘Q / app exit;
+    // `shouldTearDownBroker` gates on that (and still tears down on a real signal when
+    // standalone, where nothing will re-adopt). See docs/136 §136.
+    if (isBrokerMode() && shouldTearDownBroker(reason)) {
       brokerShutdownForQuit();
     }
     destroyAllTerminals();

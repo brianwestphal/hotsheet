@@ -286,6 +286,52 @@ fn server_stderr_log_path() -> Option<std::path::PathBuf> {
         .map(|home| std::path::PathBuf::from(home).join(".hotsheet").join("server-stderr.log"))
 }
 
+/// HS-9692 (docs/136) — the quit-intent marker path. The shell WRITES this file on a
+/// real quit (⌘Q / app exit) and passes the same path to the sidecar via
+/// `HOTSHEET_QUIT_INTENT_FILE`, so the sidecar's `gracefulShutdown` can tell a genuine
+/// quit (tear the detached PTY broker down) from a bare external SIGTERM (survive +
+/// let the HS-9656 supervisor respawn + re-adopt). Honors `HOTSHEET_HOME` first to
+/// match the sidecar's `globalHotsheetDir()` precedence, then `HOME`/`USERPROFILE`.
+///
+/// Pure over the environment so it's testable; both the write sites and the
+/// spawn-time env use it, guaranteeing the shell and sidecar agree on the path.
+fn quit_intent_path_from(
+    hotsheet_home: Option<&str>,
+    home: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    if let Some(h) = hotsheet_home {
+        if !h.trim().is_empty() {
+            return Some(std::path::PathBuf::from(h).join("terminal-quit-intent"));
+        }
+    }
+    home.map(|h| {
+        std::path::PathBuf::from(h)
+            .join(".hotsheet")
+            .join("terminal-quit-intent")
+    })
+}
+
+fn quit_intent_path() -> Option<std::path::PathBuf> {
+    let hh = std::env::var("HOTSHEET_HOME").ok();
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok());
+    quit_intent_path_from(hh.as_deref(), home.as_deref())
+}
+
+/// Write the quit-intent marker (best-effort) right before the shell SIGTERMs the
+/// sidecar on a genuine quit. Creates `~/.hotsheet` if needed. Any error is swallowed:
+/// a missing marker just means the broker is preserved (fail safe toward survival).
+fn write_quit_intent() {
+    if let Some(path) = quit_intent_path() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, b"quit\n");
+        shutdown_log(&format!("wrote quit-intent marker: {}", path.display()));
+    }
+}
+
 /// Bound `server-stderr.log` once per launch. Called from BOTH spawn paths (the
 /// dev child and the production sidecar) — the file carries every
 /// `console.error` the server makes, not just fatals, so it grows steadily
@@ -686,6 +732,10 @@ fn confirm_quit(app: tauri::AppHandle) -> Result<(), String> {
     match pid {
         Some(pid) => {
             app.state::<ShuttingDown>().0.store(true, Ordering::SeqCst);
+            // HS-9692 — a genuine quit: mark it BEFORE the SIGTERM so the sidecar's
+            // gracefulShutdown tears the detached PTY broker (and its PTYs) down
+            // rather than treating this SIGTERM like an accidental/external kill.
+            write_quit_intent();
             shutdown_log(&format!("confirm_quit: starting graceful drain of sidecar pid={pid}"));
             #[cfg(unix)]
             unsafe {
@@ -1055,6 +1105,15 @@ fn build_and_spawn_sidecar(
     let apple_fm = resource_dir.join("server").join("apple-fm-helper");
     if apple_fm.exists() {
         sidecar = sidecar.env("APPLE_FM_BIN", apple_fm.to_string_lossy().to_string());
+    }
+
+    // HS-9692 (docs/136) — tell the sidecar it's SUPERVISED (a bare SIGTERM may be an
+    // accidental kill we'll respawn from, so it must NOT tear the detached PTY broker
+    // down on the signal alone), and pin the exact quit-intent marker path so the two
+    // processes never disagree on where it lives (incl. `--test` instances).
+    sidecar = sidecar.env("HOTSHEET_TERMINAL_SUPERVISOR", "1");
+    if let Some(qip) = quit_intent_path() {
+        sidecar = sidecar.env("HOTSHEET_QUIT_INTENT_FILE", qip.to_string_lossy().to_string());
     }
 
     let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
@@ -1831,6 +1890,11 @@ pub fn run() {
                 }
                 tauri::RunEvent::Exit => {
                     shutdown_log("RunEvent::Exit — tearing down server child");
+                    // HS-9692 — the whole app is exiting: this is a real quit, so mark
+                    // it before the SIGTERM (covers exits that skip `confirm_quit`, e.g.
+                    // a direct `app.exit()`). The sidecar then tears the detached PTY
+                    // broker down instead of leaving orphan shells alive after close.
+                    write_quit_intent();
                     // Kill the sidecar / dev-server process on app exit
                     if let Some(pid) = app_handle.state::<SidecarPid>().0.lock().unwrap().take() {
                         #[cfg(unix)]
@@ -2247,6 +2311,38 @@ mod tts_command_tests {
             assert_eq!(spec.program, "kill");
             assert_eq!(spec.args, vec!["4321"]);
         }
+    }
+
+    // HS-9692 — the quit-intent marker path resolution the shell and sidecar must
+    // agree on. HOTSHEET_HOME (a `--test` instance) wins over HOME; a blank
+    // HOTSHEET_HOME is ignored; the default lands in ~/.hotsheet.
+    #[test]
+    fn quit_intent_path_prefers_hotsheet_home() {
+        let p = quit_intent_path_from(Some("/tmp/test-home"), Some("/Users/x")).unwrap();
+        assert_eq!(p, std::path::PathBuf::from("/tmp/test-home/terminal-quit-intent"));
+    }
+
+    #[test]
+    fn quit_intent_path_ignores_blank_hotsheet_home_and_falls_back_to_home() {
+        let p = quit_intent_path_from(Some("   "), Some("/Users/x")).unwrap();
+        assert_eq!(
+            p,
+            std::path::PathBuf::from("/Users/x/.hotsheet/terminal-quit-intent")
+        );
+    }
+
+    #[test]
+    fn quit_intent_path_defaults_under_home_dot_hotsheet() {
+        let p = quit_intent_path_from(None, Some("/home/dev")).unwrap();
+        assert_eq!(
+            p,
+            std::path::PathBuf::from("/home/dev/.hotsheet/terminal-quit-intent")
+        );
+    }
+
+    #[test]
+    fn quit_intent_path_is_none_without_any_home() {
+        assert!(quit_intent_path_from(None, None).is_none());
     }
 
     #[test]

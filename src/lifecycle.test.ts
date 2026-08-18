@@ -7,7 +7,10 @@
  * so the ordering invariants + idempotence guarantees from
  * `docs/45-pglite-robustness.md` §45.3 are pinned down.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import type { Server as HttpServer } from 'http';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -33,13 +36,16 @@ vi.mock('./db/connection.js', () => ({
 }));
 
 const destroyAllTerminalsMock = vi.fn();
+// HS-9662/9692 — `destroyTerminals` consults broker mode + the quit-intent gate.
+// These are mutable so individual tests can flip broker mode on and assert whether
+// the detached broker is torn down. Default: non-broker (the behavior the original
+// tests were written for).
+let brokerModeMock = false;
+const brokerShutdownForQuitMock = vi.fn();
 vi.mock('./terminals/registry.js', () => ({
   destroyAllTerminals: () => { destroyAllTerminalsMock(); },
-  // HS-9662 — `destroyTerminals` now consults broker mode; default these tests to
-  // the non-broker path (the behavior they were written for), where
-  // `destroyAllTerminals` runs normally and no detached broker is torn down.
-  isBrokerMode: () => false,
-  brokerShutdownForQuit: () => {},
+  isBrokerMode: () => brokerModeMock,
+  brokerShutdownForQuit: () => { brokerShutdownForQuitMock(); },
 }));
 
 // HS-8040 — shell-routes module is dynamically imported by the pipeline
@@ -83,10 +89,18 @@ beforeEach(() => {
   closeAllSyncSocketsMock.mockReset();
   closeAllTerminalSocketsMock.mockReset();
   wakeAllWaitersForShutdownMock.mockReset();
+  brokerModeMock = false;
+  brokerShutdownForQuitMock.mockReset();
+  // HS-9692 — the quit-intent gate reads these; default to STANDALONE (no supervisor,
+  // no marker) so signal reasons behave as before unless a test opts in.
+  delete process.env.HOTSHEET_TERMINAL_SUPERVISOR;
+  delete process.env.HOTSHEET_QUIT_INTENT_FILE;
 });
 
 afterEach(() => {
   _resetLifecycleForTests();
+  delete process.env.HOTSHEET_TERMINAL_SUPERVISOR;
+  delete process.env.HOTSHEET_QUIT_INTENT_FILE;
 });
 
 function makeFakeServer(closeBehavior: 'immediate' | 'delayed' | 'error' = 'immediate'): HttpServer {
@@ -316,5 +330,50 @@ describe('stepTimeoutFor (HS-9028 per-step budgets)', () => {
     _setShutdownTimeoutsForTests(25, 1000);
     expect(stepTimeoutFor('closeHttpServer')).toBe(25);
     expect(stepTimeoutFor('killShellCommands')).toBe(25);
+  });
+});
+
+// HS-9692 — the broker-teardown gate, exercised end-to-end through the pipeline. The
+// unit matrix lives in quitIntent.test.ts; these prove `destroyTerminals` wires it up.
+describe('gracefulShutdown → broker teardown gate (HS-9692)', () => {
+  let dir: string;
+  let marker: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'hs-lifecycle-quit-'));
+    marker = join(dir, 'terminal-quit-intent');
+    process.env.HOTSHEET_QUIT_INTENT_FILE = marker;
+    brokerModeMock = true; // these tests are about broker mode
+    _setShutdownTimeoutsForTests(25, 1000);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('SUPERVISED + no marker + SIGTERM → broker SURVIVES (the bug: external kill is respawnable)', async () => {
+    process.env.HOTSHEET_TERMINAL_SUPERVISOR = '1';
+    await gracefulShutdown('SIGTERM');
+    expect(brokerShutdownForQuitMock).not.toHaveBeenCalled();
+    // The local registry is still cleared — only the DETACHED broker is spared.
+    expect(destroyAllTerminalsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('SUPERVISED + quit-intent marker + SIGTERM → broker TORN DOWN (a genuine ⌘Q)', async () => {
+    process.env.HOTSHEET_TERMINAL_SUPERVISOR = '1';
+    writeFileSync(marker, 'quit\n', 'utf-8');
+    await gracefulShutdown('SIGTERM');
+    expect(brokerShutdownForQuitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('STANDALONE (no supervisor) + SIGTERM → broker TORN DOWN (real quit, nothing re-adopts)', async () => {
+    await gracefulShutdown('SIGTERM');
+    expect(brokerShutdownForQuitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a --replace relaunch (reason "http") never tears the broker down', async () => {
+    process.env.HOTSHEET_TERMINAL_SUPERVISOR = '1';
+    await gracefulShutdown('http');
+    expect(brokerShutdownForQuitMock).not.toHaveBeenCalled();
   });
 });
