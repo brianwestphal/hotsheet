@@ -17,7 +17,8 @@
  * The PTY factory is injectable so unit tests can drive the broker with a fake
  * PTY (no real process) for the kill/lease paths; the default uses node-pty.
  */
-import { createServer,type Server, type Socket } from 'net';
+import { existsSync, unlinkSync } from 'fs';
+import { connect as netConnect, createServer,type Server, type Socket } from 'net';
 import { spawn as spawnPty } from 'node-pty';
 
 import { killProcessTreeBestEffort } from '../processInspect.js';
@@ -38,6 +39,30 @@ const DEFAULT_SCROLLBACK_BYTES = 256 * 1024;
 /** How long the broker survives with no connected client before self-exiting. A
  *  fresh server reconnects in well under this on a restart; a dead app never does. */
 const DEFAULT_LEASE_GRACE_MS = 45_000;
+
+/**
+ * HS-9694 — liveness probe of a broker control socket: `true` only if something is
+ * actually LISTENING. A stale socket FILE left by a dead broker yields `ECONNREFUSED`
+ * → `false`. Same distinction the codex daemon draws (HS-9667). Used to decide, on an
+ * `EADDRINUSE` bind conflict, whether a LIVE broker already owns the socket (defer to
+ * it — unlinking would orphan it + its PTYs) or the socket is merely stale (rebind).
+ */
+export function brokerSocketIsLive(socketPath: string, timeoutMs = 1000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v: boolean): void => {
+      if (done) return;
+      done = true;
+      try { socket.destroy(); } catch { /* ignore */ }
+      resolve(v);
+    };
+    const socket = netConnect(socketPath);
+    socket.once('connect', () => finish(true));
+    socket.once('error', () => finish(false));
+    const t = setTimeout(() => finish(false), timeoutMs);
+    t.unref();
+  });
+}
 
 interface BrokerSession {
   pty: PtyLike | null;
@@ -104,6 +129,39 @@ export class PtyBroker {
         resolve();
       });
     });
+  }
+
+  /**
+   * HS-9694 — bind the control socket, resolving an `EADDRINUSE` conflict SAFELY.
+   * Returns `true` if this broker is now listening, `false` if a LIVE broker already
+   * owns the socket (the caller should exit and let clients use that one).
+   *
+   * The bug this fixes: the old entry-point unconditionally unlinked + rebound on
+   * `EADDRINUSE`. When a fresh server's `connect()` spawned a competing broker (on a
+   * transient first-attempt failure), that broker unlinked the LIVE broker's socket
+   * and rebound — orphaning the broker that held the PTYs. The re-adopting server then
+   * connected to THIS empty broker → welcome empty → re-adopted 0 → `/api/terminal/list`
+   * returned 0 while the real PTYs stayed alive but unreachable. The fix: on
+   * `EADDRINUSE`, PROBE liveness first — defer to a live broker; only unlink + rebind a
+   * genuinely stale socket.
+   */
+  async bind(socketPath: string, deps: { socketIsLive?: (p: string) => Promise<boolean> } = {}): Promise<boolean> {
+    const socketIsLive = deps.socketIsLive ?? brokerSocketIsLive;
+    try {
+      await this.listen(socketPath);
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EADDRINUSE') {
+        console.error('[pty-broker] listen failed:', e instanceof Error ? e.message : String(e));
+        return false;
+      }
+      // A live broker already owns it → do NOT touch the socket; exit and let the
+      // client connect to that broker (whose PTYs we would otherwise orphan).
+      if (await socketIsLive(socketPath)) return false;
+      // Stale socket from a dead broker → clear it and rebind once.
+      try { if (existsSync(socketPath)) unlinkSync(socketPath); } catch { /* ignore */ }
+      try { await this.listen(socketPath); return true; } catch { return false; }
+    }
   }
 
   /** For tests: current live/known sessions as the wire shape. */

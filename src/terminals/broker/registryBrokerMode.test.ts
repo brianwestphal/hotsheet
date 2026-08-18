@@ -116,4 +116,25 @@ describe('registry ↔ broker (broker mode, fake pty)', () => {
     await waitFor(() => broker.sessionInfos().every(s => s.sessionId !== 'secA::claude'));
     expect(broker.sessionInfos().some(s => s.sessionId === 'secA::claude')).toBe(false);
   });
+
+  // HS-9694 — the re-adoption pool must be refreshable from the broker's CURRENT live
+  // sessions (authoritative), not just the connect-time `welcome` snapshot. Closes the
+  // idempotency gap where a second `initBrokerMode` (client already set) returns
+  // `list()` WITHOUT repopulating the pool, which would leave a live PTY un-adopted.
+  it('refreshSurvivedFromBroker re-enumerates live broker sessions into the pool', async () => {
+    await brokerMode.initBrokerMode();
+    reg.ensureSpawned('secR', dataDir, 'claude', CFG);
+    await waitFor(() => broker.ptyForTest('secR::claude') !== null);
+
+    // Already-adopted (isAdopted=true) → NOT re-added to the pool.
+    await brokerMode.refreshSurvivedFromBroker((id) => id === 'secR::claude');
+    expect(brokerMode.remainingSurvivedSessions().some(s => s.sessionId === 'secR::claude')).toBe(false);
+
+    // A fresh server that hasn't adopted it (isAdopted=false) → the authoritative
+    // re-query pulls the live session into the pool so the sweep can re-adopt it.
+    await brokerMode.refreshSurvivedFromBroker(() => false);
+    expect(brokerMode.remainingSurvivedSessions().some(s => s.sessionId === 'secR::claude' && s.alive)).toBe(true);
+
+    reg.destroyTerminal('secR', 'claude');
+  });
 });

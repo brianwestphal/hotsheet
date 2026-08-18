@@ -103,6 +103,24 @@ export function remainingSurvivedSessions(): BrokerSessionInfo[] {
   return [...survivedSessions.values()];
 }
 
+/**
+ * HS-9694 — refresh the re-adoption pool from the broker's CURRENT live sessions
+ * (authoritative), not just the connect-time `welcome` snapshot. The snapshot can be
+ * empty/stale (e.g. a transient reconnect race), which would leave a live PTY
+ * un-adopted → `/api/terminal/list` returns 0 despite the terminal being alive. Adds
+ * any alive session that isn't already adopted (`isAdopted`) or already pooled. Never
+ * removes. Best-effort — a broker/list failure leaves the welcome snapshot in place.
+ */
+export async function refreshSurvivedFromBroker(isAdopted: (sessionId: string) => boolean): Promise<void> {
+  if (!client) return;
+  let live: BrokerSessionInfo[];
+  try { live = await client.list(); } catch { return; }
+  for (const s of live) {
+    if (!s.alive || isAdopted(s.sessionId) || survivedSessions.has(s.sessionId)) continue;
+    survivedSessions.set(s.sessionId, s);
+  }
+}
+
 function registerSink(sessionId: string, sink: Sink): void { sinks.set(sessionId, sink); }
 function unregisterSink(sessionId: string): void { sinks.delete(sessionId); }
 

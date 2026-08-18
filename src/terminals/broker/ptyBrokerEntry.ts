@@ -5,8 +5,6 @@
  * child: `node [--import tsx] ptyBrokerEntry <socketPath>`. Binds the control
  * socket and owns all terminal PTYs until an explicit shutdown / lost lease.
  */
-import { existsSync, unlinkSync } from 'fs';
-
 import { PtyBroker } from './ptyBroker.js';
 
 async function main(): Promise<void> {
@@ -18,25 +16,10 @@ async function main(): Promise<void> {
 
   const broker = new PtyBroker();
 
-  const bind = async (): Promise<boolean> => {
-    try {
-      await broker.listen(socketPath);
-      return true;
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === 'EADDRINUSE') {
-        // Either a live broker already owns it (then we should exit and let the
-        // client use that one), or it's a stale socket from a dead broker. Try to
-        // unlink + rebind once; if it rebinds, the old one was stale.
-        try { if (existsSync(socketPath)) unlinkSync(socketPath); } catch { /* ignore */ }
-        try { await broker.listen(socketPath); return true; } catch { return false; }
-      }
-      console.error('[pty-broker] listen failed:', e instanceof Error ? e.message : String(e));
-      return false;
-    }
-  };
-
-  if (!(await bind())) {
+  // HS-9694 — `bind` resolves an EADDRINUSE conflict SAFELY: it defers to a LIVE
+  // broker (never unlinking its socket, which would orphan its PTYs) and only
+  // unlinks + rebinds a genuinely stale socket. See PtyBroker.bind.
+  if (!(await broker.bind(socketPath))) {
     // A live broker already owns the socket — nothing to do.
     process.exit(0);
   }

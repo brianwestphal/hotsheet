@@ -21,6 +21,7 @@ import {
   brokerRemovePrefix,
   brokerSpawn,
   isBrokerMode,
+  refreshSurvivedFromBroker,
   remainingSurvivedSessions,
   takeHistory,
   takeSurvivedSession,
@@ -275,8 +276,12 @@ export function readoptProjectBrokerSessions(secret: string, dataDir: string): n
  * re-adopt). `dataDirForSecret` maps a project secret → its dataDir; sessions whose
  * project isn't registered this run are left in the broker.
  */
-export function readoptBrokerSessions(dataDirForSecret: (secret: string) => string | null): number {
+export async function readoptBrokerSessions(dataDirForSecret: (secret: string) => string | null): Promise<number> {
   if (!isBrokerMode()) return 0;
+  // HS-9694 — re-query the broker's CURRENT live sessions (authoritative) before the
+  // sweep, so a session the connect-time `welcome` snapshot missed (any reconnect
+  // race) is still re-adopted rather than lost. Skips ones already adopted this run.
+  await refreshSurvivedFromBroker((sessionId) => sessions.has(sessionId));
   let adopted = 0;
   for (const info of remainingSurvivedSessions()) {
     const sep = info.sessionId.indexOf('::');

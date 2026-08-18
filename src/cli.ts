@@ -303,7 +303,7 @@ async function postStartup(dataDir: string, actualPort: number, demo: number | n
         try {
           const { getAllProjects } = await import('./projects.js');
           const map = new Map(getAllProjects().map((p) => [p.secret, p.dataDir]));
-          const n = readoptBrokerSessions((s: string) => map.get(s) ?? null);
+          const n = await readoptBrokerSessions((s: string) => map.get(s) ?? null);
           startupMark(`post-startup: re-adopted ${String(n)} surviving terminal(s)`);
         } catch (e) { console.error('[pty-broker] re-adopt sweep failed:', e instanceof Error ? e.message : String(e)); }
       }
