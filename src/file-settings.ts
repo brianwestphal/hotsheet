@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { z } from 'zod';
 
@@ -560,7 +560,17 @@ function asCommandTree(v: unknown): CommandItem[] {
  * take"), and making it structurally impossible beats remembering.
  */
 function writeSettingsFileAtPath(path: string, data: unknown): void {
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  // HS-9695 — write ATOMICALLY (temp + rename). A plain `writeFileSync` truncates
+  // then fills, so a concurrent reader (e.g. the channel MCP server resolving
+  // `port` on every tool call) can observe an empty/partial file mid-write and
+  // parse `{}` → `port` missing → the MCP tool spuriously errors with "could not
+  // resolve the project port + secret". `rename` is atomic on the same filesystem,
+  // so a reader sees either the old file or the new one, never a torn one. The temp
+  // sits beside the target (same dir → same fs → rename can't cross-device fail),
+  // and carries the pid to avoid two writers colliding on the temp name.
+  const tmp = `${path}.${String(process.pid)}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  renameSync(tmp, path);
   invalidateSettingsPath(path);
 }
 

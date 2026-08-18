@@ -17,6 +17,7 @@ import {
   type FetchLike,
   listTools,
   loadChannelSettings,
+  resolveChannelSettingsWithRetry,
 } from './channel.tools.js';
 
 let tmpDataDir: string;
@@ -237,15 +238,52 @@ describe('callTool — dispatcher errors (HS-8346)', () => {
     expect(result.content[0].text).toContain('hotsheet_does_not_exist');
   });
 
-  it('returns an isError result when settings.json is missing', async () => {
+  it('returns an isError naming the MISSING config (not blaming the main server) when settings are absent', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'hotsheet-empty-'));
     try {
       const result = await callTool('hotsheet_signal_done', {}, empty, vi.fn());
       expect(result.isError).toBe(true);
+      // HS-9695 — names the actual missing config + asks about registration, and does
+      // NOT emit the old misleading "Is the main Hot Sheet server running?" text.
       expect(result.content[0].text).toContain('settings.json');
+      expect(result.content[0].text).toContain('registered with a running Hot Sheet server');
+      expect(result.content[0].text).not.toContain('Is the main Hot Sheet server running?');
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
+  });
+
+  // HS-9695 — config + secret present but the port isn't resolvable → a CONNECTION
+  // problem, not a config one. The message must send the operator to reconnect the
+  // channel (codex-aware: /mcp is Claude-only), not to investigate the config/main
+  // server (both fine).
+  it('distinguishes a stale channel connection from a genuinely-missing config', async () => {
+    // secret present (inline), but port absent → loadChannelSettings stays null.
+    writeFileSync(join(tmpDataDir, 'settings.json'), JSON.stringify({ secret: 'test-secret-abc' }), 'utf-8');
+    const result = await callTool('hotsheet_signal_done', {}, tmpDataDir, vi.fn());
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text;
+    expect(text).toContain('CONNECTION problem');
+    expect(text).toContain('/mcp'); // Claude recovery
+    expect(text).toContain('codex'); // codex recovery (no /mcp there)
+    expect(text).not.toContain('Is the main Hot Sheet server running?');
+  });
+
+  // HS-9695 — a TRANSIENT null (main server mid-startup / a settings-write race) must
+  // self-heal via the retry rather than erroring on the first unlucky call.
+  it('resolveChannelSettingsWithRetry recovers when settings appear on a retry', async () => {
+    rmSync(join(tmpDataDir, 'settings.json'), { force: true }); // start unresolvable
+    let writes = 0;
+    // Inject a fast delay that writes valid settings before the FIRST retry read.
+    const delayFn = (): Promise<void> => {
+      if (writes++ === 0) {
+        writeFileSync(join(tmpDataDir, 'settings.json'), JSON.stringify({ port: 4174, secret: 'test-secret-abc' }), 'utf-8');
+      }
+      return Promise.resolve();
+    };
+    const settings = await resolveChannelSettingsWithRetry(tmpDataDir, delayFn, [1, 1]);
+    expect(settings).not.toBeNull();
+    expect(settings?.port).toBe(4174);
   });
 });
 

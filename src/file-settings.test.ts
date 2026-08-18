@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -75,6 +75,19 @@ describe('writeFileSettings', () => {
     const result = writeFileSettings(dir, { backupDir: '/custom' });
     expect(result.appName).toBe('First');
     expect(result.backupDir).toBe('/custom');
+  });
+
+  // HS-9695 — the write is atomic (temp + rename), so a concurrent reader never sees a
+  // torn file. Guard that the rename completes and leaves no `.tmp` litter behind.
+  it('writes atomically and leaves no leftover .tmp file', () => {
+    const dir = join(tempDir, 'atomic');
+    mkdirSync(dir, { recursive: true });
+    writeFileSettings(dir, { appName: 'Atomic', port: 4174 });
+    const leftovers = readdirSync(dir).filter(f => f.includes('.tmp'));
+    expect(leftovers).toEqual([]);
+    // Both layers written this way (port is a local-scope key → settings.local.json).
+    expect(readFileSync(join(dir, 'settings.json'), 'utf-8')).toContain('Atomic');
+    expect(readdirSync(dir).filter(f => f.includes('.tmp'))).toEqual([]);
   });
 });
 

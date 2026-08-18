@@ -19,11 +19,11 @@
  * the tool call sits inside. See §63.3.
  */
 import { execFileSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { basename, join } from 'path';
 import { z } from 'zod';
 
-import { readFileSettings, resolveAuthoritativeDataDir } from './file-settings.js';
+import { invalidateSettingsCache, readFileSettings, resolveAuthoritativeDataDir } from './file-settings.js';
 import {
   TicketPrioritySchema,
   TicketStatusSchema,
@@ -149,6 +149,53 @@ export function loadChannelSettings(dataDir: string): ChannelSettings | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * HS-9695 — resolve the channel settings with a short retry before giving up.
+ * A `null` from `loadChannelSettings` is usually TRANSIENT: the main server is
+ * mid-startup and hasn't published `port` yet, or (pre the atomic-write fix) a read
+ * raced a settings rewrite. Retrying — with a cache clear so we re-read from disk,
+ * not a stale entry — lets a live channel self-heal instead of erroring on the first
+ * unlucky call. A persistently-missing config still falls through to the diagnostic.
+ */
+export async function resolveChannelSettingsWithRetry(
+  dataDir: string,
+  delayFn: (ms: number) => Promise<void> = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref(); }),
+  delaysMs: readonly number[] = [100, 300],
+): Promise<ChannelSettings | null> {
+  let settings = loadChannelSettings(dataDir);
+  for (let i = 0; i < delaysMs.length && settings === null; i++) {
+    await delayFn(delaysMs[i]);
+    invalidateSettingsCache(); // force a fresh disk read, not a cached null
+    settings = loadChannelSettings(dataDir);
+  }
+  return settings;
+}
+
+/**
+ * HS-9695 — an actionable message when settings can't be resolved, distinguishing the
+ * two independent failure modes the old text conflated. The old message ("Is the main
+ * Hot Sheet server running?") blamed the config + main server, both of which are
+ * typically FINE — sending the operator to investigate the wrong things.
+ */
+function diagnoseUnresolvedChannel(dataDir: string): string {
+  let dir = dataDir;
+  try { dir = resolveAuthoritativeDataDir(dataDir); } catch { /* fall back to dataDir */ }
+  const settingsPath = join(dir, 'settings.json');
+  const configPresent = existsSync(settingsPath) || existsSync(join(dir, 'settings.local.json'));
+  let secretPresent = false;
+  try { secretPresent = getProjectSecret(dir) !== ''; } catch { /* treat as absent */ }
+  if (configPresent && secretPresent) {
+    // Config + secret are present → the server PORT for this project just isn't
+    // resolvable right now. Not a config problem; the channel/main server connection
+    // needs re-establishing (or the main server is mid-startup).
+    return `Channel tool — this project's config and secret are present in ${dir}, but its Hot Sheet server port could not be resolved after retrying. This is a CONNECTION problem, not a config one: reconnect the channel (run /mcp in Claude, or restart the codex session), or wait a moment if the main server is starting. Do NOT edit the config files or restart the main server — they are fine.`;
+  }
+  const missing = !configPresent
+    ? `settings not found (settings.json / settings.local.json) in ${dir}`
+    : `project secret not found (secret.json) in ${dir}`;
+  return `Channel tool — could not resolve this project's server connection: ${missing}. Is this project registered with a running Hot Sheet server?`;
 }
 
 /** Helper — build a structured-error tool result with a readable
@@ -737,9 +784,13 @@ export async function callTool(
   if (tool === undefined) {
     return errorResult(`Unknown MCP tool: ${name}. Known: ${TOOLS.map(t => t.name).join(', ')}.`);
   }
-  const settings = loadChannelSettings(dataDir);
+  // HS-9695 — retry a transient null (main server mid-startup / a settings-write race)
+  // before failing, and on a persistent failure emit a message that names the ACTUAL
+  // problem (a stale channel connection vs. genuinely-missing config) instead of
+  // misblaming the config files + main server.
+  const settings = await resolveChannelSettingsWithRetry(dataDir);
   if (settings === null) {
-    return errorResult(`Channel tool — could not resolve the project port + secret from ${join(dataDir, 'settings.json')} / settings.local.json / secret.json. Is the main Hot Sheet server running?`);
+    return errorResult(diagnoseUnresolvedChannel(dataDir));
   }
   return await tool.call(args, settings, fetchFn);
 }
