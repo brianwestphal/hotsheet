@@ -402,6 +402,13 @@ Tests: `makeFollower.test.ts` (pointer + redirect resolves to owner, `.mcp.json`
 at the owner, idempotence, the three validation errors, + `detectOwnerDataDir` with an
 injected `GitRunner`) + `cli/args.test.ts` (`--follow` path / bare-auto / absent).
 
-**Follow-up (HS-9697):** a small in-app UI button ("adopt this worktree") wrapping the
-same `makeFollower` primitive, for users who don't reach for the CLI (the git-chip
-popover is the natural home). The owner auto-detect half of HS-9697 shipped here.
+**In-app UI (HS-9697, SHIPPED):** the git-chip popover (`src/client/gitStatusPopover.tsx`)
+offers an "Adopt worktree" section listing this repo's adoptable worktrees, each with an
+Adopt button that wires it as a follower of the current project (the same `makeFollower`).
+Server side: `GET /api/worktree/adoptable` (this repo's worktrees minus the owner's own
+root + ones already following this owner) and `POST /api/worktree/adopt` `{worktree}`
+(validates the target is a real worktree of this repo — no arbitrary cwd — then
+`makeFollower(target, thisDataDir)`), in `src/routes/worktree.ts`; typed API in
+`src/api/worktree.ts`. Tests: `routes/worktree.test.ts` (adoptable filtering + adopt
+validation/wiring, `listWorktreePaths` mocked, real `makeFollower`). Both HS-9697 items
+(owner auto-detect + UI button) are now shipped.

@@ -4,7 +4,7 @@ import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import type { GitStatusFiles, GitStatusWithFiles, PendingCommit, RecentCommitsRes } from '../api/git.js';
-import { getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
+import { adoptWorktree, getAdoptableWorktrees, getGitStatusWithFiles, getGlassboxStatus, getPendingCommits, getRecentCommits, gitReveal, reviewInGlassbox } from '../api/index.js';
 import { toElement } from './dom.js';
 import { showToast } from './toast.js';
 
@@ -174,6 +174,13 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
   bodyEl.appendChild(recentEl);
   void mountRecentCommits(recentEl);
 
+  // HS-9697 (docs/89 §89.7) — offer to adopt any of this repo's worktrees as a
+  // follower of this project (share its tickets/instance). Async + self-hiding: the
+  // placeholder stays empty unless there are adoptable worktrees.
+  const worktreesEl = toElement(<div className="git-popover-worktrees"></div>);
+  bodyEl.appendChild(worktreesEl);
+  void mountAdoptableWorktrees(worktreesEl);
+
   // Wire bucket-row expand/collapse toggles.
   bodyEl.querySelectorAll<HTMLElement>('.git-popover-bucket-header').forEach(header => {
     header.addEventListener('click', () => {
@@ -208,6 +215,69 @@ export function paintPopover(popover: HTMLElement, data: GitStatusWithFiles): vo
 /** Opaque `isConnected` read so TS can't narrow it across an `await`. */
 function stillMounted(el: HTMLElement): boolean {
   return el.isConnected;
+}
+
+/** Last path segment (a worktree's dir name — usually the branch), OS-separator safe. */
+function worktreeLabel(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
+}
+
+/**
+ * HS-9697 (docs/89 §89.7) — fill the adopt-worktree placeholder: one row per adoptable
+ * worktree of this repo, each with an "Adopt" button that wires it as a follower of
+ * this project (the same `makeFollower` the `hotsheet --follow` CLI uses). Self-hiding
+ * — renders nothing when there are no candidates or the fetch fails.
+ */
+async function mountAdoptableWorktrees(container: HTMLElement): Promise<void> {
+  let worktrees: { path: string }[];
+  try {
+    worktrees = (await getAdoptableWorktrees()).worktrees;
+  } catch {
+    return; // best-effort — leave the section empty on a fetch failure
+  }
+  if (!stillMounted(container) || worktrees.length === 0) return;
+
+  const section = toElement(
+    <div className="git-popover-worktrees-inner">
+      <div className="git-popover-worktrees-title" title="Adopt a git worktree so an agent there shares this project's tickets + running instance">
+        Adopt worktree
+      </div>
+    </div>,
+  );
+  for (const wt of worktrees) {
+    section.appendChild(toElement(
+      <div className="git-popover-worktree-row">
+        <span className="git-popover-worktree-path" title={wt.path}>{worktreeLabel(wt.path)}</span>
+        <button className="git-popover-worktree-adopt" type="button" data-path={wt.path}>Adopt</button>
+      </div>,
+    ));
+  }
+  container.replaceChildren(section);
+
+  container.querySelectorAll<HTMLButtonElement>('.git-popover-worktree-adopt').forEach(btn => {
+    btn.addEventListener('click', () => { void adoptWorktreeClicked(btn); });
+  });
+}
+
+/** Adopt one worktree; toast the outcome and drop the row on success. */
+async function adoptWorktreeClicked(btn: HTMLButtonElement): Promise<void> {
+  const worktree = btn.dataset.path;
+  if (worktree === undefined) return;
+  btn.disabled = true;
+  try {
+    const res = await adoptWorktree({ worktree });
+    if (res.ok) {
+      showToast('Adopted the worktree — an agent there now shares this project\'s tickets + instance.', { variant: 'success' });
+      btn.closest('.git-popover-worktree-row')?.remove();
+    } else {
+      showToast(`Could not adopt worktree: ${res.error ?? 'unknown error'}`, { variant: 'warning' });
+      btn.disabled = false;
+    }
+  } catch {
+    showToast('Could not adopt worktree (request failed).', { variant: 'warning' });
+    btn.disabled = false;
+  }
 }
 
 /**

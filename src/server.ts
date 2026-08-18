@@ -29,6 +29,7 @@ import { projectRoutes } from './routes/projects.js';
 import { remotesRoutes } from './routes/remotes.js';
 import { createRequestGuards } from './routes/requestGuards.js';
 import { telemetryRoutes } from './routes/telemetry.js';
+import { worktreeRoutes } from './routes/worktree.js';
 import { wireSyncWebSocket } from './routes/wsSync.js';
 import { getProjectSecret } from './secret-file.js';
 import { wireTerminalWebSocket } from './terminals/websocket.js';
@@ -178,6 +179,8 @@ export async function startServer(
   app.route('/api/projects', projectRoutes);
   // HS-7954 — git status chip. `GET /api/git/status` returns `GitStatus | null`.
   app.route('/api', gitRoutes);
+  // HS-9697 — adopt a git worktree as a follower (docs/89 §89.7). `/api/worktree/*`.
+  app.route('/api', worktreeRoutes);
   // HS-9302 — the machine-global remotes store (docs/112 §112.3).
   app.route('/api', remotesRoutes);
 
