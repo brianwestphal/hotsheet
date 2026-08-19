@@ -11,27 +11,20 @@
  * and future notification sources (e.g. Phase 3 OSC 133 AI responses) can
  * reuse the same affordance with the same styling.
  *
- * KERF-EVAL (feature 1 / KF-487) — the imperative rAF-enter + timeout-exit
- * dance is now kerf 4.2's `toast()` engine:
- *   - `enterClass: 'visible'` ← kerf adds it on the next frame (was our own rAF)
- *   - `exitClass` + `exitDuration` ← kerf owns the fade + delayed removal
- *   - `duration` ← kerf owns the auto-dismiss timer
+ * KERF-EVAL (feature 1 / KF-487) — the imperative rAF-enter + timeout-exit +
+ * single-toast dedup dance is now kerf 4.2's `toast()` engine:
+ *   - `mode: 'replace'` + `collapse: 'instant'` ← collapse-to-latest, removing
+ *     the prior toast synchronously (KF-495, beta.4) so two centered slots never
+ *     cross-fade in place — was a manual `.hs-toast?.remove()` pre-clear.
+ *   - `enterClass: 'visible'` + `exitDuration` ← kerf adds `visible` on the next
+ *     frame and, on dismiss, REMOVES it (beta.4) before removing the node after
+ *     the delay — so our original symmetric one-class fade works as-is, no
+ *     separate exit class needed.
+ *   - `duration` ← kerf owns the auto-dismiss timer.
  * `container: document.body` keeps toasts as DIRECT body children (kerf otherwise
  * wraps them in a `.kerf-toasts` region) — preserving the `.hs-toast` selector,
  * the OSC 9 e2e MutationObserver (body childList, no subtree), and our SCSS.
  * kerf sets `role="status"` on the toast (an a11y gain over the old plain div).
- *
- * Two kerf-model notes worth recording (KF-487 follow-up feedback):
- *   1. kerf's exit ADDS `exitClass` and KEEPS `enterClass`, so the fade-out is
- *      driven by a dedicated `.hs-toast-hide` rule that overrides `.visible`
- *      (source-ordered after it), not by removing `.visible`.
- *   2. kerf's `mode: 'replace'` *fade-dismisses* the prior toast (exit
- *      transition + delayed removal). For a STACKING region that's right, but
- *      Hot Sheet's toast is a single, exactly-centered slot — a fading old
- *      message would cross-fade THROUGH the new one for `exitDuration`. So we
- *      keep an instant synchronous pre-clear for the collapse-to-latest and let
- *      kerf own only the enter/exit of the surviving toast. (A kerf
- *      `collapse: 'instant' | 'fade'` knob would let us drop this.)
  */
 import { toast as kerfToast } from 'kerfjs/overlay';
 
@@ -58,23 +51,28 @@ export function showToast(message: string, opts: ShowToastOptions = {}): void {
     </>
   );
 
-  // Collapse-to-latest, instantly (see note 2 above): drop any prior toast
-  // before mounting the new one so two centered slots never overlap.
-  document.querySelectorAll('.hs-toast').forEach(t => t.remove());
-
   const handle = kerfToast(content, {
     container: document.body,
     className: `hs-toast hs-toast-${variant} plugin-toast`,
+    mode: 'replace',
+    collapse: 'instant',
     duration: durationMs,
     enterClass: 'visible',
-    exitClass: 'hs-toast-hide',
     exitDuration: TOAST_FADE_OUT_MS,
   });
 
   if (action !== undefined) {
+    const onClick = action.onClick;
     handle.el.querySelector('.hs-toast-action')?.addEventListener('click', () => {
-      action.onClick();
+      // Close this toast INSTANTLY, then run the action. `handle.dismiss()` fades
+      // over `exitDuration`, and a mid-exit toast is skipped by a later
+      // `mode:'replace'` collapse — so if the action shows a replacement toast
+      // (e.g. "Force-release" → "Released") the fading one would overlap it. kerf
+      // has no instant single-toast dismiss, so cancel the timer (dismiss) and
+      // drop the node now (el.remove). See KF-495 follow-up.
       handle.dismiss();
+      handle.el.remove();
+      onClick();
     });
   }
 }
