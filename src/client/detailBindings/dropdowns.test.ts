@@ -20,11 +20,10 @@ const h = vi.hoisted(() => ({
   updateDetailStatus: vi.fn(),
   closeAllMenus: vi.fn(),
   createDropdown: vi.fn((_btn: HTMLElement, _items: Item[]) => document.createElement('div')),
-  positionDropdown: vi.fn(),
 }));
 vi.mock('../../api/index.js', () => ({ updateTicket: h.updateTicket }));
 vi.mock('../detail.js', () => ({ openDetail: h.openDetail, updateDetailCategory: h.updateDetailCategory, updateDetailPriority: h.updateDetailPriority, updateDetailStatus: h.updateDetailStatus }));
-vi.mock('../dropdown.js', () => ({ closeAllMenus: h.closeAllMenus, createDropdown: h.createDropdown, positionDropdown: h.positionDropdown }));
+vi.mock('../dropdown.js', () => ({ closeAllMenus: h.closeAllMenus, createDropdown: h.createDropdown }));
 vi.mock('../ticketList.js', () => ({ loadTickets: h.loadTickets }));
 vi.mock('../undo/actions.js', () => ({ trackedPatch: h.trackedPatch }));
 vi.mock('../state.js', () => ({
@@ -42,7 +41,7 @@ beforeEach(() => {
     <button id="detail-priority" data-value="high"></button>
     <button id="detail-status" data-value="started"></button>`;
   h.state.activeTicketId = null; h.state.tickets = [];
-  for (const k of ['updateTicket', 'trackedPatch', 'openDetail', 'loadTickets', 'updateDetailCategory', 'updateDetailPriority', 'updateDetailStatus', 'closeAllMenus', 'createDropdown', 'positionDropdown'] as const) h[k].mockReset();
+  for (const k of ['updateTicket', 'trackedPatch', 'openDetail', 'loadTickets', 'updateDetailCategory', 'updateDetailPriority', 'updateDetailStatus', 'closeAllMenus', 'createDropdown'] as const) h[k].mockReset();
   h.createDropdown.mockImplementation(() => document.createElement('div'));
   h.updateTicket.mockResolvedValue(undefined); h.trackedPatch.mockResolvedValue(undefined); h.loadTickets.mockResolvedValue(undefined);
   bindDetailDropdowns();

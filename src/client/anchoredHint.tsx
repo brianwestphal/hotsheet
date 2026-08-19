@@ -10,15 +10,25 @@
  * already looking.
  *
  * DOM-only + side-effecting; the lifecycle (create → show → auto-dismiss) is
- * unit-testable in happy-dom with fake timers. Positioning reuses the
- * viewport-clamped `positionDropdown` so the bubble never spills off-screen.
+ * unit-testable in happy-dom with fake timers.
+ *
+ * KERF-EVAL (feature 9 / KF-491) — positioning is kerf 4.2's `autoReposition`
+ * (built on the `positionAnchored` placement core): it places the bubble below
+ * the anchor (flipping above on viewport overflow), horizontally clamped, AND
+ * keeps it glued as the page scrolls / resizes for the ~4.5 s it's shown. This
+ * retired Hot Sheet's hand-rolled `positionDropdown` (its last consumer).
  */
+import { autoReposition } from 'kerfjs/overlay';
+
 import { toElement } from './dom.js';
-import { positionDropdown } from './dropdown.js';
 import { TOAST_FADE_OUT_MS } from './uiTimings.js';
 
 /** Only one anchored hint is shown at a time. */
 const HINT_CLASS = 'anchored-hint';
+
+/** Disposer for the current hint's kerf `autoReposition` scroll/resize listeners.
+ *  Cleared whenever the hint is removed (fade-out, external dismiss, or replace). */
+let stopReposition: (() => void) | null = null;
 
 export interface AnchoredHintOptions {
   /** How long the bubble stays fully visible before fading (ms). Default 4500 —
@@ -36,15 +46,18 @@ export function flashAnchoredHint(anchor: HTMLElement, message: string, opts: An
   dismissAnchoredHint();
 
   const hint = toElement(
-    <div className={HINT_CLASS} role="status" style="visibility:hidden;top:0;left:0">{message}</div>,
+    <div className={HINT_CLASS} role="status" style="visibility:hidden">{message}</div>,
   );
   document.body.appendChild(hint);
-  // Measure + clamp against the viewport now that it's in the DOM, then reveal.
-  positionDropdown(hint, anchor);
+  // Position now that it's measurable in the DOM (synchronously, so there's no
+  // flash before reveal) and keep it glued while shown; then reveal.
+  stopReposition = autoReposition(hint, anchor);
   hint.style.visibility = '';
   requestAnimationFrame(() => hint.classList.add('visible'));
 
   const fadeAndRemove = (): void => {
+    stopReposition?.();
+    stopReposition = null;
     hint.classList.remove('visible');
     window.setTimeout(() => hint.remove(), TOAST_FADE_OUT_MS);
   };
@@ -67,5 +80,7 @@ export function flashAnchoredHint(anchor: HTMLElement, message: string, opts: An
 
 /** Remove any visible anchored hint immediately. */
 export function dismissAnchoredHint(): void {
+  stopReposition?.();
+  stopReposition = null;
   document.querySelector(`.${HINT_CLASS}`)?.remove();
 }

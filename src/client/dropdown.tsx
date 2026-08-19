@@ -20,24 +20,6 @@ export interface DropdownItem {
   action: () => void;
 }
 
-export function positionDropdown(menu: HTMLElement, anchor: HTMLElement) {
-  const rect = anchor.getBoundingClientRect();
-  const menuRect = menu.getBoundingClientRect();
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-
-  let left = rect.left;
-  if (left + menuRect.width > vw - 8) left = rect.right - menuRect.width;
-  if (left < 8) left = 8;
-
-  let top = rect.bottom + 4;
-  if (top + menuRect.height > vh - 8) top = rect.top - menuRect.height - 4;
-  if (top < 8) top = 8;
-
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-}
-
 /** Open dropdowns, tracked so `closeAllMenus()` can tear them down through
  *  kerf's `close()` (which also drops the reposition listeners). */
 const openDropdowns = new Set<OverlayHandle>();
@@ -51,8 +33,6 @@ const openDropdowns = new Set<OverlayHandle>();
  * buttons mount as its direct children, so the existing SCSS is unchanged. This
  * module keeps only the app-specific keyboard SHORTCUT dispatch (press an item's
  * `key` to run it) — kerf handles Escape via `dismiss`.
- *
- * `positionDropdown` (below) is retained: `anchoredHint` still uses it standalone.
  */
 export function createDropdown(anchor: HTMLElement, items: DropdownItem[]): void {
   const content = (
