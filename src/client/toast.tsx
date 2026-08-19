@@ -69,7 +69,7 @@ export function showToast(message: string, opts: ShowToastOptions = {}): void {
       // `mode:'replace'` collapse — so if the action shows a replacement toast
       // (e.g. "Force-release" → "Released") the fading one would overlap it. kerf
       // has no instant single-toast dismiss, so cancel the timer (dismiss) and
-      // drop the node now (el.remove). See KF-495 follow-up.
+      // drop the node now (el.remove). See KF-497.
       handle.dismiss();
       handle.el.remove();
       onClick();
