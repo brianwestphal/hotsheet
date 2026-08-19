@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { renderDocument } from 'kerfjs';
 
 import { listPlugins } from '../aiTools/registry.js';
 import { ANNOUNCER_MODELS } from '../announcer/models.js';
@@ -16,7 +17,9 @@ export const pageRoutes = new Hono<AppEnv>();
 // docs/94 §94.4.2). Secret-free + loads its own `pair.js`; reached over the
 // trusted tunnel channel. The actual signing is gated by the single-use pairing
 // token at `POST /api/auth/pair/complete`, not by this page being served.
-pageRoutes.get('/pair', (c) => c.html((<PairPage />).toString()));
+// kerf 4.2 `renderDocument` prepends `<!DOCTYPE html>` — `Layout`/`PairPage` emit a
+// bare `<html>`, so without this the page was served in quirks mode (KERF-EVAL).
+pageRoutes.get('/pair', (c) => c.html(renderDocument(<PairPage />)));
 
 pageRoutes.get('/', (c) => {
   // HS-8922 — when launched with `--test`, render an unmistakable TEST badge so
@@ -1310,6 +1313,7 @@ pageRoutes.get('/', (c) => {
 
     </Layout>
   );
-  return c.html(html.toString());
+  // kerf 4.2 `renderDocument` — prepend the doctype (see the /pair note above).
+  return c.html(renderDocument(html));
 });
 

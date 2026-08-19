@@ -1,5 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import { getPluginConfigLabels, runPluginAction } from '../api/index.js';
 import { TIMERS } from './constants/timers.js';
@@ -36,8 +36,8 @@ export function renderConfigLayout(container: HTMLElement, items: ConfigLayoutIt
         const btn = toElement(
           <button className={`btn btn-sm${item.style === 'primary' ? ' btn-primary' : ''}`}>
             {item.icon != null && item.icon !== ''
-              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `item.icon` is plugin-supplied SVG from a config-button manifest entry (trusted plugin data).
-              ? raw(item.icon)
+              // `item.icon` is plugin-supplied SVG from a config-button manifest entry (trusted plugin data).
+              ? trustedRaw(item.icon)
               : null}
             {item.label ?? 'Action'}
           </button>
@@ -103,8 +103,8 @@ export function createPreferenceRow(store: PreferenceStore, pref: PluginPreferen
         {isGlobal ? <span className="global-setting-badge">Global</span> : null}
       </label>
       {pref.description != null && pref.description !== ''
-        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- HS-9497: `formatPrefDescription` ESCAPES first and only then inserts <code>/<strong>, so every tag in the result is one we wrote. See its module note.
-        ? <span className="settings-hint">{raw(formatPrefDescription(pref.description))}</span>
+        // HS-9497: `formatPrefDescription` ESCAPES first and only then inserts <code>/<strong>, so every tag in the result is one we wrote. See its module note.
+        ? <span className="settings-hint">{trustedRaw(formatPrefDescription(pref.description))}</span>
         : null}
       <div className="plugin-pref-input" id={`pref-input-${ns}-${pref.key}`}></div>
       <div className="plugin-pref-validation" id={`pref-validation-${ns}-${pref.key}`}></div>

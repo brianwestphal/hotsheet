@@ -1,3 +1,5 @@
+import { debounce } from 'kerfjs/timing';
+
 import { destroyTerminal, getCommandSuggestions } from '../api/index.js';
 import { agentDisplayName } from './agentName.js';
 import { confirmDialog } from './confirm.js';
@@ -813,9 +815,8 @@ async function wireCommandCombobox(
 
   input.addEventListener('focus', () => { activeIndex = -1; render(); });
   input.addEventListener('input', () => { activeIndex = -1; render(); });
-  input.addEventListener('blur', () => {
-    setTimeout(() => { popover.hidden = true; }, BLUR_DEBOUNCE_MS);
-  });
+  const hidePopoverSoon = debounce(() => { popover.hidden = true; }, BLUR_DEBOUNCE_MS);
+  input.addEventListener('blur', () => { hidePopoverSoon(); });
   input.addEventListener('keydown', (e) => {
     if (popover.hidden !== false && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       activeIndex = -1; render();

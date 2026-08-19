@@ -1,6 +1,6 @@
 import './markdownSetup.js';
 
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { byIdOrNull, requireChild, toElement } from './dom.js';
@@ -145,8 +145,8 @@ export function openReaderOverlay(options: OpenReaderOverlayOptions): void {
           </div>
         </div>
         <div className="reader-mode-body note-markdown">{
-          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `renderReaderBodyHtml` runs sanitized `marked.parse(...)` over an empty-fallback-checked input and linkifies known ticket-prefix matches.
-          raw(renderReaderBodyHtml(initial.markdown))
+          // `renderReaderBodyHtml` runs sanitized `marked.parse(...)` over an empty-fallback-checked input and linkifies known ticket-prefix matches.
+          trustedRaw(renderReaderBodyHtml(initial.markdown))
         }</div>
       </div>
     </div>

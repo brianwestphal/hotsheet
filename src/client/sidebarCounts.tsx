@@ -5,6 +5,8 @@
  * special backlog/archive/trash views, and custom:* views). Refreshed alongside
  * the ticket list so the badges stay live as tickets move between views.
  */
+import { debounce } from 'kerfjs/timing';
+
 import { getSidebarCounts } from '../api/index.js';
 import { toElement } from './dom.js';
 
@@ -47,14 +49,12 @@ async function fetchAndApplySidebarCounts(): Promise<void> {
 // a COUNT per custom view). Debounce on the trailing edge so a burst collapses
 // into a single fetch.
 const SIDEBAR_COUNT_DEBOUNCE_MS = 150;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const debouncedRefresh = debounce(() => {
+  void fetchAndApplySidebarCounts();
+}, SIDEBAR_COUNT_DEBOUNCE_MS);
 
 /** Schedule a (debounced) refresh of the sidebar count badges. Rapid calls
  *  within the window coalesce into one fetch (the last call wins). */
 export function refreshSidebarCounts(): void {
-  if (debounceTimer !== null) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null;
-    void fetchAndApplySidebarCounts();
-  }, SIDEBAR_COUNT_DEBOUNCE_MS);
+  debouncedRefresh();
 }

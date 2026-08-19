@@ -1,4 +1,4 @@
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { getTicketByNumber } from '../api/index.js';
@@ -114,15 +114,15 @@ function pushDialog(ticket: Ticket): void {
           <div className="ticket-ref-dialog-section">
             <div className="ticket-ref-dialog-section-label">Details</div>
             <div className="ticket-ref-dialog-section-body note-markdown">{
-              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- detailsHtml is sanitized markdown HTML from `marked.parse(...)` + per-prefix linkify; the body strips raw `<script>` / event-handler attrs via marked's built-in escape.
-              raw(detailsHtml)
+              // detailsHtml is sanitized markdown HTML from `marked.parse(...)` + per-prefix linkify; the body strips raw `<script>` / event-handler attrs via marked's built-in escape.
+              trustedRaw(detailsHtml)
             }</div>
           </div>
           <div className="ticket-ref-dialog-section">
             <div className="ticket-ref-dialog-section-label">Notes</div>
             <div className="ticket-ref-dialog-section-body">{
-              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- notesHtml is sanitized markdown HTML (`marked.parse(...)` per note + per-prefix linkify).
-              raw(notesHtml)
+              // notesHtml is sanitized markdown HTML (`marked.parse(...)` per note + per-prefix linkify).
+              trustedRaw(notesHtml)
             }</div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import { batchTickets, emptyTrash, getSyncedTickets, getTicketSearchCounts, listTickets, queryTickets } from '../api/index.js';
 import { isExactTicketIdSearch } from '../ticketNumber.js';
@@ -734,8 +734,8 @@ export function buildSyncedIconMap(wire: Awaited<ReturnType<typeof getSyncedTick
     mapped[id] = info.icon != null && info.icon !== ''
       ? {
           pluginId: info.pluginId,
-          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- plugin-supplied SVG string from a registered plugin's manifest (trusted plugin data).
-          icon: raw(info.icon),
+          // plugin-supplied SVG string from a registered plugin's manifest (trusted plugin data).
+          icon: trustedRaw(info.icon),
         }
       : { pluginId: info.pluginId };
   }

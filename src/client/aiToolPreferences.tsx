@@ -14,7 +14,7 @@
 // surrounding dialog is what delivers that. What mattered was killing the hand-written
 // HTML and the tool-id branch, and that happens either way.
 
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import type { AiToolPreference } from '../aiTools/types.js';
 import { toElement } from './dom.js';
@@ -46,11 +46,10 @@ export function buildAiToolPreferenceRows(
         </label>
         {pref.description != null && pref.description !== ''
           // Escape-first formatting (see `prefDescription.ts`) so the `code` / **bold**
-          // the hand-written hints used survives the move into a declaration. `raw()` is
-          // safe here for the reason given there: every tag in the output is one we
+          // the hand-written hints used survives the move into a declaration. `trustedRaw`
+          // is safe here for the reason given there: every tag in the output is one we
           // wrote, because the input was escaped before any markup existed.
-          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- HS-9497: escape-first; see prefDescription.ts.
-          ? <span className="settings-hint">{raw(formatPrefDescription(pref.description))}</span>
+          ? <span className="settings-hint">{trustedRaw(formatPrefDescription(pref.description))}</span>
           : null}
       </div>
     );

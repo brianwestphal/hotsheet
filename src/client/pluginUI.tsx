@@ -1,5 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import { getPluginUiElements, type PluginUIElement, runPluginAction, triggerPluginSync } from '../api/index.js';
 import { getErrorMessage } from '../utils/errorMessage.js';
@@ -155,8 +155,8 @@ function createPluginButton(el: PluginUIElement): HTMLElement | null {
       data-plugin-action={el.action ?? ''}
     >
       {el.icon != null
-        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry (trusted plugin data).
-        ? raw(el.icon)
+        // `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry (trusted plugin data).
+        ? trustedRaw(el.icon)
         : null}
       {el.label != null && (!isToolbar || el.icon == null) ? <span>{el.label}</span> : null}
     </button>
@@ -172,8 +172,8 @@ function createPluginElement(el: PluginUIElement): HTMLElement | null {
     const link = toElement(
       <a className="plugin-ui-link" href={el.url} target="_blank" rel="noopener" title={el.title ?? ''}>
         {el.icon != null && el.icon !== ''
-          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry.
-          ? raw(el.icon)
+          // `el.icon` is plugin-supplied SVG from a `defineUIElements({...})` manifest entry.
+          ? trustedRaw(el.icon)
           : null}
         {el.label ?? el.url}
       </a>

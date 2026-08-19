@@ -1,6 +1,6 @@
 import './markdownSetup.js';
 
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 // HS-8642 — `FeedbackDraft` + `FeedbackDraftAttachmentSummary` are now defined
 // once as the wire SSOT in `src/api/feedbackDrafts.ts` (inferred from
@@ -501,8 +501,8 @@ export function renderNotes(ticketId: number, notes: NoteEntry[]) {
         <div className="note-text note-markdown">{
           isEmpty
             ? <span className="note-placeholder">Click to add a note...</span>
-            // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `renderedText` is sanitized markdown HTML from `marked.parse(...)` + `linkifyWithCachedPrefixes`.
-            : raw(renderedText)
+            // `renderedText` is sanitized markdown HTML from `marked.parse(...)` + `linkifyWithCachedPrefixes`.
+            : trustedRaw(renderedText)
         }</div>
         {showFeedbackLink ? <button className="feedback-link">Provide Feedback</button> : null}
       </div>

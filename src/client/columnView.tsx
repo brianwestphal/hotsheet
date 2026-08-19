@@ -1,4 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
+import { disposeScope } from 'kerfjs/scope';
 
 import { suppressAnimation } from './animate.js';
 import { renderClaimedByChip } from './claimedByChip.js';
@@ -608,7 +609,9 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
   const sigs = getTicketSignals(ticket.id);
   if (sigs === undefined) return () => { /* no-op */ };
 
-  const disposers: Array<() => void> = [];
+  // kerf 4.2 `disposeScope` — accumulate this card's effect disposers in an
+  // element-scoped teardown bag instead of a hand-rolled array (KERF-EVAL).
+  const scope = disposeScope(card);
   let firstRun = true;
   let lastAppliedTitle: string = ticket.title;
   let lastAppliedTagsRaw: string = ticket.tags;
@@ -618,7 +621,7 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
   const starBtn = card.querySelector<HTMLElement>('.ticket-star');
   const titleHost = card.querySelector<HTMLElement>('.column-card-title');
 
-  disposers.push(effect(() => {
+  scope.add(effect(() => {
     const t = sigs.ticket.value;
     if (firstRun) {
       firstRun = false;
@@ -694,7 +697,7 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
   }));
 
   // .cut-pending — separate signal, separate effect.
-  disposers.push(effect(() => {
+  scope.add(effect(() => {
     const cutIds = cutTicketIdsSignal.value;
     card.classList.toggle('cut-pending', cutIds.has(ticket.id));
   }));
@@ -704,7 +707,7 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
   // doesn't re-render every second).
   const claimedSlot = card.querySelector<HTMLElement>('.column-card-claimed-slot');
   if (claimedSlot !== null) {
-    disposers.push(effect(() => {
+    scope.add(effect(() => {
       const claim = claimsByTicketId.value.get(ticket.id);
       if (claim !== undefined) {
         claimedSlot.replaceChildren(renderClaimedByChip(claim, nowTick.value));
@@ -714,11 +717,8 @@ export function setupColumnCardEffects(card: HTMLElement, ticket: Ticket): () =>
     }));
   }
 
-  return () => {
-    for (const d of disposers) {
-      try { d(); } catch { /* swallow */ }
-    }
-  };
+  // kerf 4.2 — one idempotent, best-effort teardown for every registered effect.
+  return () => { scope.dispose(); };
 }
 
 /** Rebuild `.column-card-title` children — sync icon (if any), unread

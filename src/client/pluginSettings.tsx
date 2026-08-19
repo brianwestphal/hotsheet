@@ -1,5 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import {
   disablePlugin, disablePluginEverywhere, enablePlugin, enablePluginEverywhere,
@@ -97,8 +97,8 @@ function showFindPluginsDialog() {
         <div className="bundled-plugin-row">
           <div className="bundled-plugin-info">
             {bp.manifest.icon != null && bp.manifest.icon !== '' ? <span className="bundled-plugin-icon">{
-              // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `bp.manifest.icon` is plugin-manifest SVG (trusted plugin data, bundled with the plugin).
-              raw(bp.manifest.icon)
+              // `bp.manifest.icon` is plugin-manifest SVG (trusted plugin data, bundled with the plugin).
+              trustedRaw(bp.manifest.icon)
             }</span> : null}
             <div>
               <div className="bundled-plugin-name">{bp.manifest.name} <span className="plugin-version">v{bp.manifest.version}</span></div>

@@ -1,7 +1,7 @@
 import './markdownSetup.js';
 
 import type { SafeHtml } from 'kerfjs';
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import { getFeedbackDrafts, getStats, getTicketDetail, updateSettings, updateTicket } from '../api/index.js';
 import { syncBlockedReasonSize } from './blockedReasonSize.js';
@@ -376,8 +376,8 @@ function loadPreviewDetail(id: number) {
         <div className="note-entry">
           {note.created_at ? <div className="note-timestamp">{new Date(note.created_at).toLocaleString()}</div> : null}
           <div className="note-text note-markdown">{
-            // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from `marked.parse(...)`.
-            raw(parseMarkdownCached(note.text))
+            // sanitized markdown HTML from `marked.parse(...)`.
+            trustedRaw(parseMarkdownCached(note.text))
           }</div>
         </div>
       )}
@@ -611,8 +611,8 @@ async function loadDetail(id: number, forceTextFields = false) {
       {ticket.syncInfo.map(s =>
         <div className="detail-sync-info">
           {s.pluginIcon != null && s.pluginIcon !== ''
-            // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- plugin-supplied SVG string (trusted plugin manifest data).
-            ? raw(s.pluginIcon)
+            // plugin-supplied SVG string (trusted plugin manifest data).
+            ? trustedRaw(s.pluginIcon)
             : SYNC_FALLBACK_ICON}
           {s.remoteUrl != null && s.remoteUrl !== ''
             ? <a href={s.remoteUrl} target="_blank" rel="noopener">{s.pluginName} #{s.remoteId}</a>

@@ -1,4 +1,4 @@
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 import {
   createFeedbackDraft, deleteAttachment, deleteFeedbackDraft, getFeedbackDrafts,
@@ -780,8 +780,8 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
                         argument intentionally; if the prompt references its
                         own ticket, the user usually does want to see it. */}
                     <div className="feedback-prompt-block note-markdown" data-block-index={String(idx)}>{
-                      // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- `block.html` is sanitized markdown HTML; `linkifyWithCachedPrefixes` is HTML-in / HTML-out and only adds <a> tags around known ticket-prefix tokens.
-                      raw(linkifyWithCachedPrefixes(block.html))
+                      // `block.html` is sanitized markdown HTML; `linkifyWithCachedPrefixes` is HTML-in / HTML-out and only adds <a> tags around known ticket-prefix tokens.
+                      trustedRaw(linkifyWithCachedPrefixes(block.html))
                     }</div>
                     <div className="feedback-insert-slot" data-after-block={String(idx)}>
                       <button className="feedback-insert-btn" type="button" aria-label="Add response here">

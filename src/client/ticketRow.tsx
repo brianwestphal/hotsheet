@@ -1,4 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
+import { debounce } from 'kerfjs/timing';
 
 import { deleteTicket, updateTicket,type UpdateTicketReq } from '../api/index.js';
 import { lastMeaningfulNoteIndex } from '../systemNotes.js';
@@ -17,8 +18,7 @@ import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
   callUpdateBatchToolbar, callUpdateSelectionClasses,
   draggedTicketIds, getCategoryShortcuts,
-  PRIORITY_SHORTCUTS,   saveTimeout, setDraggedTicketIds,
-setSaveTimeout,
+  PRIORITY_SHORTCUTS, setDraggedTicketIds,
 setSuppressFocusSelect,
   suppressFocusSelect, } from './ticketListState.js';
 import { getTicketSignals, ticketsStore } from './ticketsStore.js';
@@ -779,15 +779,18 @@ async function deleteTicketAndFocus(id: number) {
   }
 }
 
+// Trailing-edge debounce (300 ms): a burst of title-input events collapses
+// into a single `updateTicket` with the latest args once typing stops.
+const debouncedSaveImpl = debounce((id: number, updates: UpdateTicketReq) => {
+  void updateTicket(id, updates);
+}, 300);
+
 export function debouncedSave(id: number, updates: UpdateTicketReq) {
-  if (saveTimeout) clearTimeout(saveTimeout);
-  setSaveTimeout(setTimeout(() => {
-    void updateTicket(id, updates);
-  }, 300));
+  debouncedSaveImpl(id, updates);
 }
 
 export function cancelPendingSave() {
-  if (saveTimeout) { clearTimeout(saveTimeout); setSaveTimeout(null); }
+  debouncedSaveImpl.cancel();
 }
 
 // --- Context menus ---

@@ -15,7 +15,7 @@
  */
 
 import type { SafeHtml } from 'kerfjs';
-import { raw } from 'kerfjs';
+import { trustedRaw } from 'kerfjs';
 
 const LUCIDE_14 = {
   xmlns: 'http://www.w3.org/2000/svg',
@@ -32,9 +32,9 @@ const LUCIDE_14 = {
 /** Render a Lucide icon SVG from its inner path content. Used for
  *  dynamically loaded icons (e.g. user-pickable commands from the
  *  icon-picker catalog) where the path content is a string at call
- *  time. The path string is included via `raw()` because the catalog
- *  payloads are SVG-path-tag strings, not JSX; the catalog ships with
- *  the build and is never user-supplied data. */
+ *  time. The path string is included via `trustedRaw()` because the
+ *  catalog payloads are SVG-path-tag strings, not JSX; the catalog
+ *  ships with the build and is never user-supplied data. */
 export function renderIconSvg(svgPath: string, size = 14, color = 'currentColor'): SafeHtml {
   return (
     <svg
@@ -48,10 +48,9 @@ export function renderIconSvg(svgPath: string, size = 14, color = 'currentColor'
       stroke-linecap="round"
       stroke-linejoin="round"
     >
-      {/* eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg --
-        * svgPath is sourced from the Lucide catalog bundled at build
+      {/* svgPath is sourced from the Lucide catalog bundled at build
         * time — never user input. */}
-      {raw(svgPath)}
+      {trustedRaw(svgPath)}
     </svg>
   );
 }

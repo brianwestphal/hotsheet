@@ -16,6 +16,8 @@
  * entry point.
  */
 
+import { debounce } from 'kerfjs/timing';
+
 import { getGlobalConfig, updateGlobalConfig } from '../api/index.js';
 import type { GlobalConfig } from '../global-config.js';
 import {
@@ -31,26 +33,23 @@ const SLIDER_PERSIST_DEBOUNCE_MS = 250;
 interface SliderState {
   columnCount: number;
   sliderValueLoadPromise: Promise<void> | null;
-  sliderPersistTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 function freshSliderState(): SliderState {
   return {
     columnCount: DEFAULT_TILES_PER_ROW,
     sliderValueLoadPromise: null,
-    sliderPersistTimeout: null,
   };
 }
 
 let sliderState: SliderState = freshSliderState();
 
-/** **HS-8395 — TEST ONLY.** Clear any pending persistence timer + reset
+/** **HS-8395 — TEST ONLY.** Cancel any pending persistence write + reset
  *  the module-level state. Mirrors the `_resetStateForTesting` pattern
- *  in `terminalDashboard.tsx` — runs the disposer before swapping in
- *  the fresh state so an in-flight `setTimeout` doesn't fire against
- *  the new state. */
+ *  in `terminalDashboard.tsx` — cancels the pending debounced write before
+ *  swapping in the fresh state so it doesn't fire against the new state. */
 export function _resetSliderStateForTesting(): void {
-  if (sliderState.sliderPersistTimeout !== null) clearTimeout(sliderState.sliderPersistTimeout);
+  persistColumnCount.cancel();
   sliderState = freshSliderState();
 }
 
@@ -131,16 +130,18 @@ export function bindSizeSliderInput(opts: {
 }
 
 /** HS-7948 / HS-8176 / HS-8290 — debounced persistence of the column
- *  count to global config under `dashboard.columnsPerRow`. Private to
- *  this module; called from the input handler in `bindSizeSliderInput`. */
+ *  count to global config under `dashboard.columnsPerRow`. Trailing-edge:
+ *  a drag of the slider collapses into a single write once it settles.
+ *  Private to this module; called via `schedulePersistColumnCount` from the
+ *  input handler in `bindSizeSliderInput`. */
+const persistColumnCount = debounce(() => {
+  // HS-8434 — type the PATCH body against the shared schema so a key
+  // added here without a matching schema entry is a compile error.
+  const body: Partial<GlobalConfig> = { dashboard: { columnsPerRow: sliderState.columnCount } };
+  void updateGlobalConfig(body)
+    .catch(() => { /* swallow — UI already reflects the new value */ });
+}, SLIDER_PERSIST_DEBOUNCE_MS);
+
 function schedulePersistColumnCount(): void {
-  if (sliderState.sliderPersistTimeout !== null) clearTimeout(sliderState.sliderPersistTimeout);
-  sliderState.sliderPersistTimeout = setTimeout(() => {
-    sliderState.sliderPersistTimeout = null;
-    // HS-8434 — type the PATCH body against the shared schema so a key
-    // added here without a matching schema entry is a compile error.
-    const body: Partial<GlobalConfig> = { dashboard: { columnsPerRow: sliderState.columnCount } };
-    void updateGlobalConfig(body)
-      .catch(() => { /* swallow — UI already reflects the new value */ });
-  }, SLIDER_PERSIST_DEBOUNCE_MS);
+  persistColumnCount();
 }

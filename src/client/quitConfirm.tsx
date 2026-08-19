@@ -1,4 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
+import { delegateActions } from 'kerfjs/actions';
 
 import { getQuitSummary, updateFileSettings } from '../api/index.js';
 import { confirmDialog } from './confirm.js';
@@ -356,9 +357,12 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
     );
 
     let settled = false;
+    // kerf 4.2 `delegateActions` disposer (assigned below); torn down in `finish`.
+    let disposeActions: (() => void) | null = null;
     const finish = (outcome: 'proceed' | 'cancel'): void => {
       if (settled) return;
       settled = true;
+      disposeActions?.();
       const cb = overlay.querySelector<HTMLInputElement>('.quit-confirm-dont-ask-cb');
       const dontAskAgain = cb?.checked === true;
       document.removeEventListener('keydown', onKey, true);
@@ -387,12 +391,12 @@ export function showQuitConfirmDialog(contributing: QuitSummaryProject[]): Promi
     };
     document.addEventListener('keydown', onKey, true);
 
-    overlay.querySelectorAll<HTMLElement>('[data-action="cancel"]').forEach(el => {
-      el.addEventListener('click', (ev) => { ev.stopPropagation(); finish('cancel'); });
-    });
-    overlay.querySelector('[data-action="proceed"]')?.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      finish('proceed');
+    // kerf 4.2 `delegateActions` — one delegated click listener dispatches every
+    // `data-action` button (both Cancel affordances + Quit Anyway), replacing the
+    // per-button querySelector wiring (KERF-EVAL).
+    disposeActions = delegateActions(overlay, 'click', {
+      cancel: (ev) => { ev.stopPropagation(); finish('cancel'); },
+      proceed: (ev) => { ev.stopPropagation(); finish('proceed'); },
     });
 
     const previewEl = overlay.querySelector<HTMLElement>('.quit-confirm-detail-preview');
