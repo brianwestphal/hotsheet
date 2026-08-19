@@ -1,18 +1,25 @@
-import { overlay } from 'kerfjs/overlay';
+import { choice } from 'kerfjs/overlay';
 
 /**
- * In-app confirm dialog. `window.confirm()` is a silent no-op in Tauri's
- * WKWebView — it returns false immediately without showing a dialog — so any
- * client flow that would have used it must go through this overlay instead.
+ * In-app confirm dialogs. `window.confirm()` / `window.prompt()` are silent
+ * no-ops in Tauri's WKWebView (they return false/null immediately without
+ * showing anything), so any client flow that would use them must go through
+ * these overlays instead.
  *
- * KERF-EVAL (feature 9) — the modal PLUMBING (append wrapper, Escape/backdrop
- * dismiss, focus trap, focus restore, teardown) is now kerf 4.2's `overlay()`
- * engine; this module only owns the app's markup + button semantics. That
- * deleted the hand-rolled keydown/backdrop/finish/focus code AND added
- * restore-focus-on-close, which the previous implementation lacked. The DOM
- * shape is unchanged (`.confirm-dialog-overlay` wrapper → `.confirm-dialog`
- * content), so the existing SCSS applies verbatim. Enter-to-confirm is wired
- * here (kerf's overlay handles Escape/Tab, not Enter).
+ * KERF-EVAL (feature 9 / KF-494) — both dialogs are now kerf 4.2's high-level
+ * `choice<R>()` helper (beta.4): it renders one button per action, resolves that
+ * action's `value` on click or `null` on dismissal (Escape / backdrop), owns the
+ * focus-trap + focus-restore, AND — via `defaultValue` — resolves a default
+ * action on **Enter anywhere in the dialog** WITHOUT us holding the overlay
+ * handle. That replaced the hand-rolled `overlay()` wiring: the per-button
+ * `querySelector().addEventListener`, the global Enter keydown listener, and the
+ * `await handle.result` result-mapping all move into kerf. The `render` slot
+ * option keeps our exact markup (`.confirm-dialog-overlay` → `.confirm-dialog`),
+ * so the existing SCSS applies verbatim; `choice()` supplies each button's click
+ * wiring via the `actions[i]` attribute bag we spread on.
+ *
+ * `confirmDialog` is `choice<boolean>` (Enter → confirm); `choiceDialog` is the
+ * three-way `choice<ChoiceResult>` (Enter → primary, dismissal → the SAFE cancel).
  */
 
 interface ConfirmOptions {
@@ -31,30 +38,28 @@ export async function confirmDialog(options: ConfirmOptions): Promise<boolean> {
     ? 'btn btn-sm btn-danger confirm-dialog-confirm'
     : 'btn btn-sm confirm-dialog-confirm';
 
-  const handle = overlay(
-    <div className="confirm-dialog">
-      <div className="confirm-dialog-header">{title}</div>
-      <div className="confirm-dialog-body">{options.message}</div>
-      <div className="confirm-dialog-footer">
-        <button type="button" className="btn btn-sm confirm-dialog-cancel">{cancelLabel}</button>
-        <button type="button" className={confirmClass}>{confirmLabel}</button>
-      </div>
-    </div>,
-    { className: 'confirm-dialog-overlay', dismiss: ['escape', 'backdrop'], initialFocus: '.confirm-dialog-confirm' },
+  const result = await choice<boolean>(
+    options.message,
+    [
+      { value: false, label: cancelLabel },
+      { value: true, label: confirmLabel },
+    ],
+    {
+      className: 'confirm-dialog-overlay',
+      defaultValue: true, // Enter anywhere confirms
+      render: ({ message, actions }) => (
+        <div className="confirm-dialog" aria-label={title}>
+          <div className="confirm-dialog-header">{title}</div>
+          <div className="confirm-dialog-body">{message}</div>
+          <div className="confirm-dialog-footer">
+            <button type="button" className="btn btn-sm confirm-dialog-cancel" {...actions[0]}>{cancelLabel}</button>
+            <button type="button" className={confirmClass} {...actions[1]}>{confirmLabel}</button>
+          </div>
+        </div>
+      ),
+    },
   );
-  handle.el.setAttribute('aria-label', title);
-  handle.el.querySelector('.confirm-dialog-cancel')?.addEventListener('click', () => handle.close(false));
-  handle.el.querySelector('.confirm-dialog-confirm')?.addEventListener('click', () => handle.close(true));
-  const onKey = (e: KeyboardEvent): void => {
-    if (e.key === 'Enter') { e.preventDefault(); handle.close(true); }
-  };
-  document.addEventListener('keydown', onKey, true);
-  try {
-    // Escape / backdrop resolve `undefined` (kerf user-dismissal) → false.
-    return (await handle.result) === true;
-  } finally {
-    document.removeEventListener('keydown', onKey, true);
-  }
+  return result === true; // Escape / backdrop → null → false
 }
 
 /** Three-way variant of {@link confirmDialog}: a primary action, a secondary
@@ -63,7 +68,7 @@ export async function confirmDialog(options: ConfirmOptions): Promise<boolean> {
  *  open never destroys data — e.g. a "Save Draft / Discard / Keep Editing"
  *  prompt (HS-9180). Enter triggers the primary. Like `confirmDialog`, this
  *  replaces native dialogs that no-op in Tauri's WKWebView, and rides kerf's
- *  `overlay()` engine (KERF-EVAL feature 9). */
+ *  `choice()` helper (KERF-EVAL feature 9 / KF-494). */
 export type ChoiceResult = 'primary' | 'secondary' | 'cancel';
 
 interface ChoiceOptions {
@@ -84,31 +89,28 @@ export async function choiceDialog(options: ChoiceOptions): Promise<ChoiceResult
     ? 'btn btn-sm btn-danger confirm-dialog-secondary'
     : 'btn btn-sm confirm-dialog-secondary';
 
-  const handle = overlay(
-    <div className="confirm-dialog">
-      <div className="confirm-dialog-header">{title}</div>
-      <div className="confirm-dialog-body">{options.message}</div>
-      <div className="confirm-dialog-footer">
-        <button type="button" className="btn btn-sm confirm-dialog-cancel">{cancelLabel}</button>
-        <button type="button" className={secondaryClass}>{options.secondaryLabel}</button>
-        <button type="button" className="btn btn-sm confirm-dialog-confirm">{options.primaryLabel}</button>
-      </div>
-    </div>,
-    { className: 'confirm-dialog-overlay', dismiss: ['escape', 'backdrop'], initialFocus: '.confirm-dialog-confirm' },
+  const result = await choice<ChoiceResult>(
+    options.message,
+    [
+      { value: 'cancel', label: cancelLabel },
+      { value: 'secondary', label: options.secondaryLabel },
+      { value: 'primary', label: options.primaryLabel },
+    ],
+    {
+      className: 'confirm-dialog-overlay',
+      defaultValue: 'primary', // Enter anywhere triggers the primary
+      render: ({ message, actions }) => (
+        <div className="confirm-dialog" aria-label={title}>
+          <div className="confirm-dialog-header">{title}</div>
+          <div className="confirm-dialog-body">{message}</div>
+          <div className="confirm-dialog-footer">
+            <button type="button" className="btn btn-sm confirm-dialog-cancel" {...actions[0]}>{cancelLabel}</button>
+            <button type="button" className={secondaryClass} {...actions[1]}>{options.secondaryLabel}</button>
+            <button type="button" className="btn btn-sm confirm-dialog-confirm" {...actions[2]}>{options.primaryLabel}</button>
+          </div>
+        </div>
+      ),
+    },
   );
-  handle.el.setAttribute('aria-label', title);
-  handle.el.querySelector('.confirm-dialog-cancel')?.addEventListener('click', () => handle.close('cancel'));
-  handle.el.querySelector('.confirm-dialog-secondary')?.addEventListener('click', () => handle.close('secondary'));
-  handle.el.querySelector('.confirm-dialog-confirm')?.addEventListener('click', () => handle.close('primary'));
-  const onKey = (e: KeyboardEvent): void => {
-    if (e.key === 'Enter') { e.preventDefault(); handle.close('primary'); }
-  };
-  document.addEventListener('keydown', onKey, true);
-  try {
-    // Escape / backdrop resolve `undefined` (kerf user-dismissal) → the SAFE cancel.
-    const r = await handle.result;
-    return r === 'primary' || r === 'secondary' ? r : 'cancel';
-  } finally {
-    document.removeEventListener('keydown', onKey, true);
-  }
+  return result ?? 'cancel'; // Escape / backdrop → null → the SAFE cancel
 }

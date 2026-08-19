@@ -63,7 +63,11 @@ describe('choiceDialog (HS-9180)', () => {
 
   it('Enter resolves the primary action', async () => {
     const p = choiceDialog(opts());
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    // kerf's `choice()` listens for Enter on the overlay wrapper (it fires when
+    // the key bubbles from a focused element inside the dialog — the real path),
+    // so dispatch from a dialog element with `bubbles`, not on `document`.
+    document.querySelector<HTMLElement>('.confirm-dialog-confirm')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(await p).toBe('primary');
   });
 
