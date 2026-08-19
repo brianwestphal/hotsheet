@@ -7569,6 +7569,14 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
     transform: translateX(-50%) translateY(0);
   }
 
+  // KERF-EVAL (KF-487) — kerf's `toast()` exit ADDS this class and keeps
+  // `.visible`, so the fade-out lives here (source-ordered after `.visible`,
+  // equal specificity → this wins) rather than in removing `.visible`.
+  &.hs-toast-hide {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px);
+  }
+
   // HS-9092 — a toast with an inline action button (e.g. "Undo") must accept
   // clicks (the base toast is pointer-events:none so it never blocks the UI).
   &:has(.hs-toast-action) {
