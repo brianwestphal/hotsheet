@@ -812,38 +812,39 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
 
 // HS-8533 — the out-of-order guard for rapid 7/30/90-day clicks (a slower earlier
 // response must not land after a faster later one, leaving the page stale/empty).
-// KERF-EVAL (feature 4) — was a hand-rolled `fetchGeneration` counter; now kerf 4.2's
-// `resource`, which drops a superseded run and exposes `value.input` (the window of the
-// LATEST run) + `value.status`/`value.error`. The per-window cache below is Hot Sheet's
-// own — `resource` has no per-input cache, so it replaces ONLY the stale-guard here.
-const dashboardResource = resource<DashboardPayload, DashboardWindow>();
+// KERF-EVAL (feature 4 / KF-489+KF-493) — was a hand-rolled `fetchGeneration`
+// counter + a per-window `Map` cache. Now kerf 4.2's `resource` owns BOTH:
+//   - the stale-guard (drops a superseded run; `value.input` = the LATEST run's
+//     window; `value.status`/`value.error`),
+//   - the per-window SWR cache via `cacheKey` — `run(window, …)` synchronously
+//     paints that window's cached slice as `value.data` (status `running`) while
+//     it revalidates; `cached(w)`/`cachedKeys()`/`clearCache()` (beta.4) read +
+//     evict it, so the test accessors + `reset()` point straight at the resource,
+//   - `equals` (structural) drives `value.revision`, which bumps ONLY when the
+//     data actually changes — so a 30 s poll returning identical data leaves the
+//     revision (and the painted DOM) untouched (see `paintIfChanged`).
+const dashboardResource = resource<DashboardPayload, DashboardWindow>({
+  cacheKey: (w) => w,
+  equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+});
 
-// HS-8572 — per-window payload cache. Re-entering the page (header
-// button click) or a window-selector click against an already-fetched
-// window shows the cached payload immediately while a background
-// fetch refreshes it. Keyed by `DashboardWindow` so switching back to
-// the same window picks the right cached slice.
-const cachedPayloads = new Map<DashboardWindow, DashboardPayload>();
+// HS-8572 — the `value.revision` currently painted into each container, so we
+// skip a redundant `renderShell` on a poll tick when the same data is already
+// on-screen (a repaint wipes sort / scroll / hover state). Keyed by the
+// container element; revision is monotonic and only advances on a real change.
+const lastPaintedRevision = new WeakMap<HTMLElement, number>();
 
-// HS-8572 — track which payload (serialized) is currently painted into
-// each container so we can skip a redundant `renderShell` call on a
-// poll tick when the cached payload is already on-screen. Pre-fix the
-// cache-hit branch re-painted on every re-entry, wiping interactive
-// state (sort selection, hover, scroll) every 30 s even when nothing
-// changed.
-const lastPaintedFor = new WeakMap<HTMLElement, string>();
-
-// HS-8576 — `#cross-project-stats-root` is a single static element reused
-// across every open/close cycle, and the lifecycle teardown empties it with
-// `root.replaceChildren()` WITHOUT touching `lastPaintedFor` (keyed by that
-// same element). So on re-open with unchanged data, the stale "already painted
-// X" record made BOTH `fetchAndRender` short-circuits fire — the cache-hit
-// branch skipped the paint and the fresh-fetch branch returned early — leaving
-// the just-emptied root blank (the HS-8576 symptom). The paint-skip is only
-// valid when the container actually still holds the content we painted, so
-// gate it on a non-empty container rather than chasing every external clear.
-function isPaintCurrent(container: HTMLElement, serialized: string): boolean {
-  return container.childElementCount > 0 && lastPaintedFor.get(container) === serialized;
+// HS-8576 — `#cross-project-stats-root` is a single static element reused across
+// every open/close cycle, and the lifecycle teardown empties it with
+// `root.replaceChildren()` WITHOUT touching `lastPaintedRevision` (keyed by that
+// same element). So on re-open with unchanged data the stale "already painted at
+// revision N" record would skip the paint and leave the just-emptied root blank
+// (the HS-8576 symptom). The paint-skip is only valid when the container actually
+// still holds the content we painted, so gate it on a non-empty container.
+function paintIfChanged(container: HTMLElement, payload: DashboardPayload, revision: number): void {
+  if (container.childElementCount > 0 && lastPaintedRevision.get(container) === revision) return;
+  renderShell(payload, container);
+  lastPaintedRevision.set(container, revision);
 }
 
 // HS-8572 — live-refresh interval id while the page is on-screen.
@@ -857,38 +858,38 @@ const POLL_INTERVAL_MS = 30_000;
 async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 'month'): Promise<void> {
   currentDashboardWindow = window;
 
-  // HS-8572 — cache hit: paint the cached payload immediately so the
-  // user doesn't see the "Loading dashboard…" placeholder on every
-  // re-entry. Skip the paint when the cached payload is already on
-  // screen (poll tick on an unchanged window) — see `lastPaintedFor`.
-  const cached = cachedPayloads.get(window);
-  if (cached !== undefined) {
-    const cachedSerialized = JSON.stringify(cached);
-    if (!isPaintCurrent(container, cachedSerialized)) {
-      renderShell(cached, container);
-      lastPaintedFor.set(container, cachedSerialized);
-    }
-  } else {
-    container.replaceChildren(toElement(<p className="telemetry-dashboard-loading">Loading dashboard…</p>));
-    lastPaintedFor.delete(container);
-  }
-
   const tz = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat !== 'undefined'
     ? Intl.DateTimeFormat().resolvedOptions().timeZone
     : 'UTC';
+
   // HS-8563 — cross-project read MUST hit the launched-with default DB (where the
   // otel receiver writes all telemetry rows, tagged by `project_secret`). The
   // auto-appended `?project=<active-secret>` would otherwise re-scope the middleware
   // to the active project's DB. `skipProjectScope` opts out (see `buildUrl`).
   // `resource.run` never throws — a failure lands in `value.status`/`value.error`.
-  await dashboardResource.run(window, () => getTelemetryDashboard(window, tz));
+  // With `cacheKey`, `run()` synchronously sets `value.data` to this window's
+  // cached slice (status `running`) BEFORE awaiting, so we can paint it now.
+  const runPromise = dashboardResource.run(window, () => getTelemetryDashboard(window, tz));
+  const running = dashboardResource.value;
+  const hadCache = running.data !== undefined;
+  if (hadCache) {
+    // HS-8572 — cache hit: paint immediately so the user doesn't see the
+    // "Loading dashboard…" placeholder on re-entry; `paintIfChanged` skips the
+    // paint when this revision is already on-screen (poll tick, unchanged window).
+    paintIfChanged(container, running.data as DashboardPayload, running.revision);
+  } else {
+    container.replaceChildren(toElement(<p className="telemetry-dashboard-loading">Loading dashboard…</p>));
+    lastPaintedRevision.delete(container);
+  }
+
+  await runPromise;
   const s = dashboardResource.value;
   if (s.input !== window) return; // a newer fetch superseded us; let it win.
 
   if (s.status === 'failed') {
     // HS-8572 — keep showing cached data when a poll-tick fetch fails (server
     // restart, transient blip). Only paint the error when we have no fallback.
-    if (cached !== undefined) return;
+    if (hadCache) return;
     const message = s.error instanceof Error ? s.error.message : String(s.error);
     container.replaceChildren(toElement(
       <div className="telemetry-dashboard-error">
@@ -900,15 +901,10 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
   }
   if (s.status !== 'completed' || s.data === undefined) return; // defensive
 
-  // HS-8572 — skip the re-render when the fresh payload matches what is currently
-  // painted (compared against `lastPaintedFor`, the actual on-screen content) so a
+  // HS-8572 — skip the re-render when the fresh payload matches what is on-screen
+  // (via `value.revision`, which only advanced if the data actually changed) so a
   // 30 s tick on unchanged data doesn't wipe sort / scroll / hover state.
-  const payload = s.data;
-  const fresh = JSON.stringify(payload);
-  cachedPayloads.set(window, payload);
-  if (isPaintCurrent(container, fresh)) return;
-  renderShell(payload, container);
-  lastPaintedFor.set(container, fresh);
+  paintIfChanged(container, s.data, s.revision);
 }
 
 /** HS-8572 — start the live-refresh poll. Each tick re-fetches the
@@ -1137,17 +1133,18 @@ export function hideCrossProjectStatsPage(): void {
  *  the next. Not exported to production callers. */
 export const _testingHS8572 = {
   reset(): void {
-    cachedPayloads.clear();
     stopPolling();
     currentDashboardWindow = 'month';
-    dashboardResource.reset(); // KERF-EVAL — clear the resource's stale-guard state
+    dashboardResource.reset(); // KERF-EVAL — clears the stale-guard state AND the per-window cache
   },
   fetchAndRender,
   startPolling,
   stopPolling,
-  getCacheSize(): number { return cachedPayloads.size; },
-  hasCached(w: DashboardWindow): boolean { return cachedPayloads.has(w); },
-  getCached(w: DashboardWindow): DashboardPayload | undefined { return cachedPayloads.get(w); },
+  // KERF-EVAL (KF-493) — the per-window cache now lives in the resource; read it
+  // through kerf's `cachedKeys()` / `cached(w)` instead of a shadow Map.
+  getCacheSize(): number { return dashboardResource.cachedKeys().length; },
+  hasCached(w: DashboardWindow): boolean { return dashboardResource.cached(w) !== undefined; },
+  getCached(w: DashboardWindow): DashboardPayload | undefined { return dashboardResource.cached(w); },
   isPolling(): boolean { return pollIntervalId !== null; },
   getCurrentWindow(): DashboardWindow { return currentDashboardWindow; },
 };
