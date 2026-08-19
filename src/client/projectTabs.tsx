@@ -1086,11 +1086,18 @@ function renderTabs() {
     titleArea.innerHTML = '';
     const inner = toElement(<div className="project-tabs-inner"></div>);
     titleArea.appendChild(inner);
-    const dispose = bindList(inner, projectsListSignal, (p) => p.secret, renderTabRow);
-    // HS-8664 — append the add-project button as the LAST child of the
-    // strip. `bindList` only positions its keyed tab rows at indices
-    // [0, tabCount) and only removes keys it owns, so this trailing
-    // non-keyed button survives every reconcile and stays after the tabs.
+    // KERF-EVAL (feature 3 / KF-492) — kerf's `bindList` anchors its rows to the
+    // END of its parent (it assumes exclusive ownership of the parent's
+    // children), unlike the old local reconcile which positioned rows by index
+    // and left foreign siblings alone. So the sliding indicator + add-project
+    // button can no longer share the bindList parent (HS-8664). Give `bindList` a
+    // dedicated `.project-tabs-strip` with `display: contents` — it has no layout
+    // box, so the tab rows still lay out as direct flex children of
+    // `.project-tabs-inner` and all the scroll / overflow / offset math is
+    // unchanged — while the indicator + add button stay siblings in `inner`.
+    const strip = toElement(<div className="project-tabs-strip"></div>);
+    inner.appendChild(strip);
+    const dispose = bindList(strip, projectsListSignal, (p) => p.secret, renderTabRow);
     inner.appendChild(createAddProjectButton());
     multiTabState = { dispose, parent: inner };
     // HS-8824 — wire the resize observer once per strip (re)mount, NOT on

@@ -128,6 +128,13 @@ input, select, textarea {
   &::-webkit-scrollbar { display: none; } // Chrome/Safari
 }
 
+// KERF-EVAL (KF-492) — the dedicated parent kerf's `bindList` owns exclusively.
+// `display: contents` gives it no box, so the tab rows inside it participate in
+// `.project-tabs-inner`'s flex layout exactly as if they were direct children —
+// keeping the sliding indicator + add button as siblings without kerf clobbering
+// their order. See `renderTabs()` in `projectTabs.tsx`.
+.project-tabs-strip { display: contents; }
+
 body.scrollbars-always-visible .project-tabs-inner {
   @include ios-thumb-scrollbar;
 }

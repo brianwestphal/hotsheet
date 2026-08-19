@@ -17,6 +17,8 @@
 // through it so a future swap (e.g. back to `@preact/signals-core`
 // direct, or to a different signals primitive entirely) only touches
 // `reactive.ts`.
+import { bindList as kerfBindList, type ListKey } from 'kerfjs/list';
+
 import type { ReadonlySignal, Signal } from './reactive.js';
 import { computed, effect, signal } from './reactive.js';
 
@@ -95,12 +97,6 @@ export function bindAttr(
 export interface BindListRenderResult {
   el: Element;
   dispose?: () => void;
-}
-
-interface ListEntry {
-  key: unknown;
-  el: Element;
-  dispose: (() => void) | undefined;
 }
 
 /**
@@ -239,72 +235,33 @@ export function bindListVirtualized<T>(
   };
 }
 
+/**
+ * KERF-EVAL (feature 3 / KF-492) — the local three-pass keyed reconcile (build
+ * keep-set → tear down strays → walk order + `insertBefore`) is now kerf 4.2's
+ * `bindList` in **element mode**: `render` returns the row element (plus an
+ * optional `dispose`) and kerf keys / moves / reuses the SAME element across
+ * append / remove / reorder, running `dispose` only on genuine removal — the
+ * exact contract this function had. beta.4 fixed the element-mode reuse bug I
+ * filed as KF-492 (beta.3 re-rendered every row); the reactive-bind test suite
+ * (append-reuses-node, remove-disposes-only-removed, reorder-preserves-identity)
+ * pins the equivalence.
+ *
+ * The adapter bridges the two type shapes: our `key` returns `unknown` (kerf
+ * wants `string | number`) and our `BindListRenderResult.el` is `Element` (kerf
+ * wants `HTMLElement`) — both narrowings hold for every real caller (keys are
+ * ids/strings; rows are `toElement(<jsx/>)` HTML elements).
+ */
 export function bindList<T>(
   parent: Element,
   signal: AnySignal<readonly T[]>,
   key: (item: T) => unknown,
   render: (item: T) => BindListRenderResult,
 ): () => void {
-  // Map of key → entry, holding the live row + its per-row disposer.
-  const live = new Map<unknown, ListEntry>();
-
-  const stop = effect(() => {
-    const items = signal.value;
-    // Pass 1: figure out which existing keys survive AND construct any
-    // new rows up-front so subsequent `insertBefore` calls have a node
-    // to move. Stash the desired order so pass 2 can walk it linearly.
-    const desired: ListEntry[] = [];
-    const survivors = new Set<unknown>();
-    for (const item of items) {
-      const k = key(item);
-      survivors.add(k);
-      let entry = live.get(k);
-      if (entry === undefined) {
-        const result = render(item);
-        entry = { key: k, el: result.el, dispose: result.dispose };
-        live.set(k, entry);
-      }
-      desired.push(entry);
-    }
-    // Pass 2: tear down rows whose key didn't survive — dispose first,
-    // then detach. Disposing first ensures any per-row effects don't
-    // re-fire against an in-flight detach.
-    for (const [k, entry] of live) {
-      if (!survivors.has(k)) {
-        if (entry.dispose !== undefined) {
-          try { entry.dispose(); } catch { /* swallow — caller's bug, don't block list update */ }
-        }
-        if (entry.el.parentNode === parent) parent.removeChild(entry.el);
-        live.delete(k);
-      }
-    }
-    // Pass 3: walk `desired` left-to-right. For each position, if the
-    // current child at that index is the wrong node, `insertBefore`
-    // moves the right node into place. Cheap on no-op renders (every
-    // `insertBefore` of an already-positioned node is a browser no-op).
-    for (let i = 0; i < desired.length; i++) {
-      const want = desired[i].el;
-      // `parent.childNodes[i]` is typed as ChildNode (non-nullable) under
-      // strict lib types, but at runtime it returns undefined past the
-      // current length. Pick `null` explicitly for the insertBefore-at-end
-      // case so the move is well-defined.
-      const have = i < parent.childNodes.length ? parent.childNodes[i] : null;
-      if (have !== want) {
-        parent.insertBefore(want, have);
-      }
-    }
+  return kerfBindList(parent as HTMLElement, signal, {
+    key: (item) => key(item) as ListKey,
+    render: (item) => {
+      const r = render(item);
+      return { el: r.el as HTMLElement, dispose: r.dispose };
+    },
   });
-
-  // Outer disposer tears down the watching effect AND every live row's
-  // per-row disposer. Detaching the rows themselves is the caller's
-  // responsibility (typically by replacing or detaching `parent`).
-  return () => {
-    stop();
-    for (const entry of live.values()) {
-      if (entry.dispose !== undefined) {
-        try { entry.dispose(); } catch { /* swallow */ }
-      }
-    }
-    live.clear();
-  };
 }
