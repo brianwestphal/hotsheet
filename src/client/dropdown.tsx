@@ -1,7 +1,7 @@
 import type { SafeHtml } from 'kerfjs';
 import { trustedRaw } from 'kerfjs';
-
-import { toElement } from './dom.js';
+import type { OverlayHandle } from 'kerfjs/overlay';
+import { popover } from 'kerfjs/overlay';
 
 export interface DropdownItem {
   label: string;
@@ -38,9 +38,25 @@ export function positionDropdown(menu: HTMLElement, anchor: HTMLElement) {
   menu.style.top = `${top}px`;
 }
 
-export function createDropdown(_anchor: HTMLElement, items: DropdownItem[]): HTMLElement {
-  const menu = toElement(
-    <div className="dropdown-menu" style="visibility:hidden;top:0;left:0">
+/** Open dropdowns, tracked so `closeAllMenus()` can tear them down through
+ *  kerf's `close()` (which also drops the reposition listeners). */
+const openDropdowns = new Set<OverlayHandle>();
+
+/**
+ * KERF-EVAL (feature 9) — anchored menu on kerf 4.2's `popover()` engine. kerf
+ * owns the positioning (below the anchor, flipping above on overflow, clamped
+ * horizontally), the outside-click dismissal (anchor exempt), AND reposition on
+ * scroll/resize — replacing the hand-rolled `positionDropdown` + outside-click +
+ * timeout dance. The wrapper carries the `.dropdown-menu` class and the item
+ * buttons mount as its direct children, so the existing SCSS is unchanged. This
+ * module keeps only the app-specific keyboard SHORTCUT dispatch (press an item's
+ * `key` to run it) — kerf handles Escape via `dismiss`.
+ *
+ * `positionDropdown` (below) is retained: `anchoredHint` still uses it standalone.
+ */
+export function createDropdown(anchor: HTMLElement, items: DropdownItem[]): void {
+  const content = (
+    <>
       {items.map(item =>
         item.separator === true
           ? <div className="dropdown-separator"></div>
@@ -54,50 +70,42 @@ export function createDropdown(_anchor: HTMLElement, items: DropdownItem[]): HTM
               {item.shortcut !== undefined && item.shortcut !== '' ? <kbd className="dropdown-kbd">{item.shortcut}</kbd> : null}
             </button>
       )}
-    </div>
+    </>
   );
 
-  // Bind click handlers to each button (skip separators)
+  const handle = popover(anchor, content, {
+    className: 'dropdown-menu',
+    dismiss: ['outside', 'escape'],
+    outsideIgnore: anchor,
+  });
+  openDropdowns.add(handle);
+
+  // Bind click handlers to each button (skip separators).
   const actionItems = items.filter(i => i.separator !== true);
-  const buttons = menu.querySelectorAll('.dropdown-item');
-  buttons.forEach((btn, i) => {
+  handle.el.querySelectorAll('.dropdown-item').forEach((btn, i) => {
     btn.addEventListener('click', () => {
       actionItems[i].action();
-      menu.remove();
+      handle.close();
     });
   });
 
-  function onKeydown(e: KeyboardEvent) {
-    const match = items.find(item => e.key.toLowerCase() === item.key.toLowerCase());
+  // App-specific: press an item's shortcut `key` to invoke it (kerf owns Escape).
+  const onKeydown = (e: KeyboardEvent): void => {
+    const match = items.find(item => item.separator !== true && e.key.toLowerCase() === item.key.toLowerCase());
     if (match) {
       e.preventDefault();
       e.stopPropagation();
       match.action();
-      cleanup();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      cleanup();
+      handle.close();
     }
-  }
-
-  function cleanup() {
-    menu.remove();
-    document.removeEventListener('keydown', onKeydown, true);
-    document.removeEventListener('click', onOutsideClick);
-  }
-
-  function onOutsideClick() {
-    cleanup();
-  }
-
+  };
   document.addEventListener('keydown', onKeydown, true);
-  setTimeout(() => {
-    document.addEventListener('click', onOutsideClick);
-  }, 0);
-
-  return menu;
+  void handle.result.finally(() => {
+    document.removeEventListener('keydown', onKeydown, true);
+    openDropdowns.delete(handle);
+  });
 }
 
-export function closeAllMenus() {
-  document.querySelectorAll('.dropdown-menu').forEach(m => { m.remove(); });
+export function closeAllMenus(): void {
+  for (const handle of [...openDropdowns]) handle.close();
 }

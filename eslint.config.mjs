@@ -493,6 +493,7 @@ export default tseslint.config(
       "src/client/crossProjectStatsPage.tsx", // cross-project by design (§70)
       "src/client/experimentalSettings.tsx", // icon/color lookup constants
       "src/client/noteRenderer.tsx", // markdown render constants
+      "src/client/dropdown.tsx", // KERF-EVAL — transient open-overlay handles (kerf popover), not project data; closed on navigation via closeAllMenus
       "src/client/serverBusyChip.tsx", // global in-flight request set
       "src/client/settingsScope.tsx", // constant tab-name Set
       "src/client/state.tsx", // THE per-project session store itself (projectViews/Searches/…), keyed by secret

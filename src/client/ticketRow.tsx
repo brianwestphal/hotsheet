@@ -9,7 +9,7 @@ import { cutTicketIdsSignal, getCutTicketIds } from './clipboard.js';
 import { showTicketContextMenu } from './contextMenu.js';
 import { parseTags, syncDetailPanel } from './detail.js';
 import { toElement } from './dom.js';
-import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { closeAllMenus, createDropdown } from './dropdown.js';
 import { parseJsonArrayOr } from './json.js';
 import { effect } from './reactive.js';
 import type { Ticket } from './state.js';
@@ -799,7 +799,7 @@ export function showCategoryMenu(anchor: HTMLElement, ticket: Ticket) {
   closeAllMenus();
   const isMac = navigator.userAgent.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
-  const menu = createDropdown(anchor, getCategoryShortcuts().map(s => ({
+  createDropdown(anchor, getCategoryShortcuts().map(s => ({
     label: s.label,
     key: s.key,
     shortcut: `${mod}${s.key.toUpperCase()}`,
@@ -813,14 +813,11 @@ export function showCategoryMenu(anchor: HTMLElement, ticket: Ticket) {
       callRenderTicketList();
     },
   })));
-  document.body.appendChild(menu);
-  positionDropdown(menu, anchor);
-  menu.style.visibility = '';
 }
 
 export function showPriorityMenu(anchor: HTMLElement, ticket: Ticket) {
   closeAllMenus();
-  const menu = createDropdown(anchor, PRIORITY_SHORTCUTS.map(s => ({
+  createDropdown(anchor, PRIORITY_SHORTCUTS.map(s => ({
     label: s.label,
     key: s.key,
     shortcut: `Alt+${s.key}`,
@@ -835,7 +832,4 @@ export function showPriorityMenu(anchor: HTMLElement, ticket: Ticket) {
       callRenderTicketList();
     },
   })));
-  document.body.appendChild(menu);
-  positionDropdown(menu, anchor);
-  menu.style.visibility = '';
 }

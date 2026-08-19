@@ -50,11 +50,12 @@ beforeEach(() => {
 afterEach(() => { document.body.innerHTML = ''; });
 
 describe('open-on-click', () => {
-  it('opens a dropdown (closeAllMenus + createDropdown + position) when enabled', () => {
+  it('opens a dropdown (closeAllMenus + createDropdown) when enabled', () => {
+    // KERF-EVAL — `createDropdown` now opens + positions the menu itself (kerf
+    // `popover()`), so callers no longer invoke `positionDropdown`.
     document.getElementById('detail-category')!.click();
     expect(h.closeAllMenus).toHaveBeenCalled();
     expect(h.createDropdown).toHaveBeenCalledTimes(1);
-    expect(h.positionDropdown).toHaveBeenCalled();
   });
 
   it('does nothing when the button is disabled', () => {

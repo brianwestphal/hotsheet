@@ -8,7 +8,7 @@
 import { updateTicket,type UpdateTicketReq } from '../../api/index.js';
 import { openDetail, updateDetailCategory, updateDetailPriority, updateDetailStatus } from '../detail.js';
 import { byId } from '../dom.js';
-import { closeAllMenus, createDropdown, positionDropdown } from '../dropdown.js';
+import { closeAllMenus, createDropdown } from '../dropdown.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from '../state.js';
 import { loadTickets } from '../ticketList.js';
 import { trackedPatch } from '../undo/actions.js';
@@ -37,10 +37,7 @@ export function bindDetailDropdowns(): void {
       if (btn.disabled) return;
       closeAllMenus();
       const current = btn.dataset.value ?? '';
-      const menu = createDropdown(btn, getItems(current));
-      document.body.appendChild(menu);
-      positionDropdown(menu, btn);
-      menu.style.visibility = '';
+      createDropdown(btn, getItems(current));
     });
   }
 

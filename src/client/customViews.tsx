@@ -22,7 +22,7 @@ import {
 } from './customViewsLayers.js';
 import { displayTag, hasTag, normalizeTag, parseTags } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
-import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { closeAllMenus, createDropdown } from './dropdown.js';
 import { ICON_ARROW_DOWN, ICON_ARROW_UP, ICON_EYE, ICON_EYE_OFF, ICON_INFO, ICON_PENCIL, ICON_TAG, ICON_TRASH_SIMPLE, ICON_UNDO_2 } from './icons.js';
 import { getScopeMode } from './settingsScope.js';
 import { refreshSidebarCounts } from './sidebarCounts.js';
@@ -202,15 +202,12 @@ function showViewContextMenu(anchor: HTMLElement, view: CustomView) {
   // addition). Deleting a shared view from the sidebar would edit the committed
   // file — that promote/demote lives in the Settings "Views" tab (HS-9093).
   const shared = isSharedView(view.id);
-  const menu = createDropdown(anchor, [
+  createDropdown(anchor, [
     { label: 'Edit', key: 'e', icon: ICON_PENCIL, action: () => showViewEditor(view) },
     shared
       ? { label: 'Hide on this machine', key: 'h', icon: ICON_EYE_OFF, action: () => { void hideView(view); } }
       : { label: 'Delete', key: 'd', icon: ICON_TRASH_SIMPLE, action: () => { void deleteView(view.id); } },
   ]);
-  document.body.appendChild(menu);
-  positionDropdown(menu, anchor);
-  menu.style.visibility = '';
 }
 
 /** If the deleted/hidden view is the active one, fall back to the "all" view. */

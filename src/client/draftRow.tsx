@@ -1,7 +1,7 @@
 import { createTicket } from '../api/index.js';
 import { extractBracketTags, hasTag, syncDetailPanel } from './detail.js';
 import { byIdOrNull, toElement } from './dom.js';
-import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { closeAllMenus, createDropdown } from './dropdown.js';
 import { getCategoryColor, getCategoryLabel, state } from './state.js';
 import {
   callFocusDraftInput, callLoadTickets, callRenderTicketList,
@@ -233,7 +233,7 @@ function showDraftCategoryMenu(anchor: HTMLElement) {
   const isMac = navigator.userAgent.includes('Mac');
   const mod = isMac ? '\u2318' : 'Ctrl+';
   const currentCat = getDraftCategory();
-  const menu = createDropdown(anchor, getCategoryShortcuts().map(s => ({
+  createDropdown(anchor, getCategoryShortcuts().map(s => ({
     label: s.label,
     key: s.key,
     shortcut: `${mod}${s.key.toUpperCase()}`,
@@ -257,9 +257,6 @@ function showDraftCategoryMenu(anchor: HTMLElement) {
       callFocusDraftInput();
     },
   })));
-  document.body.appendChild(menu);
-  positionDropdown(menu, anchor);
-  menu.style.visibility = '';
 }
 
 /** HS-8375 - repaint the draft row's category badge in place. Used by the

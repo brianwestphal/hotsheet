@@ -1,7 +1,7 @@
 import { duplicateTickets } from '../api/index.js';
 import { channelAutoTrigger } from './channelUI.js';
 import { byId } from './dom.js';
-import { closeAllMenus, createDropdown, positionDropdown } from './dropdown.js';
+import { closeAllMenus, createDropdown } from './dropdown.js';
 import { ICON_ARCHIVE, ICON_CALENDAR, ICON_COPY, ICON_EYE, ICON_EYE_OFF, ICON_TAG } from './icons.js';
 import { getPluginBatchMenuItems } from './pluginUI.js';
 import { getPriorityColor, getPriorityIcon, getStatusIcon, PRIORITY_ITEMS, state, STATUS_ITEMS } from './state.js';
@@ -13,7 +13,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
   batchCategory.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
-    const menu = createDropdown(batchCategory, state.categories.map(c => ({
+    createDropdown(batchCategory, state.categories.map(c => ({
       label: c.label,
       key: c.shortcutKey,
       color: c.color,
@@ -24,16 +24,13 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
         void loadTickets();
       },
     })));
-    document.body.appendChild(menu);
-    positionDropdown(menu, batchCategory);
-    menu.style.visibility = '';
   });
 
   const batchPriority = byId<HTMLButtonElement>('batch-priority');
   batchPriority.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
-    const menu = createDropdown(batchPriority, PRIORITY_ITEMS.map(p => ({
+    createDropdown(batchPriority, PRIORITY_ITEMS.map(p => ({
       label: p.label,
       key: p.key,
       icon: getPriorityIcon(p.value),
@@ -45,16 +42,13 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
         void loadTickets();
       },
     })));
-    document.body.appendChild(menu);
-    positionDropdown(menu, batchPriority);
-    menu.style.visibility = '';
   });
 
   const batchStatus = byId<HTMLButtonElement>('batch-status');
   batchStatus.addEventListener('click', (e) => {
     e.stopPropagation();
     closeAllMenus();
-    const menu = createDropdown(batchStatus, STATUS_ITEMS.map(s => ({
+    createDropdown(batchStatus, STATUS_ITEMS.map(s => ({
       label: s.label,
       key: s.key,
       icon: getStatusIcon(s.value),
@@ -65,9 +59,6 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
         void loadTickets();
       },
     })));
-    document.body.appendChild(menu);
-    positionDropdown(menu, batchStatus);
-    menu.style.visibility = '';
   });
 
   byId('batch-upnext').addEventListener('click', async () => {
@@ -105,7 +96,7 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
       ? [{ label: '', key: '', separator: true, action: () => {} }, ...pluginItems]
       : [];
 
-    const menu = createDropdown(batchMore, [
+    createDropdown(batchMore, [
       {
         label: 'Tags...',
         key: 't',
@@ -158,9 +149,6 @@ export function bindBatchToolbar(showTagsDialog: () => Promise<void>) {
         },
       },
     ]);
-    document.body.appendChild(menu);
-    positionDropdown(menu, batchMore);
-    menu.style.visibility = '';
   });
 
   // Select-all checkbox
