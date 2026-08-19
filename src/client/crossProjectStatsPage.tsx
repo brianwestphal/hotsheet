@@ -43,6 +43,7 @@
  */
 
 import type { SafeHtml } from 'kerfjs';
+import { resource } from 'kerfjs/async';
 
 import { type CostAvailability, costAvailabilityFor, costAvailabilityNote } from '../aiTools/costAvailability.js';
 import { getTelemetryDashboard } from '../api/index.js';
@@ -809,13 +810,13 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
   container.appendChild(root);
 }
 
-// HS-8533 — generation counter shared across every `fetchAndRender`
-// call. Each invocation captures its own `gen` and only mutates the
-// container if no newer fetch has started in the meantime. Pre-fix,
-// rapid 7/30/90-day clicks could race so a slower earlier response
-// landed AFTER a faster later one, leaving the page in a stale (and
-// sometimes empty-looking) state.
-let fetchGeneration = 0;
+// HS-8533 — the out-of-order guard for rapid 7/30/90-day clicks (a slower earlier
+// response must not land after a faster later one, leaving the page stale/empty).
+// KERF-EVAL (feature 4) — was a hand-rolled `fetchGeneration` counter; now kerf 4.2's
+// `resource`, which drops a superseded run and exposes `value.input` (the window of the
+// LATEST run) + `value.status`/`value.error`. The per-window cache below is Hot Sheet's
+// own — `resource` has no per-input cache, so it replaces ONLY the stale-guard here.
+const dashboardResource = resource<DashboardPayload, DashboardWindow>();
 
 // HS-8572 — per-window payload cache. Re-entering the page (header
 // button click) or a window-selector click against an already-fetched
@@ -854,7 +855,6 @@ let pollIntervalId: ReturnType<typeof setInterval> | null = null;
 const POLL_INTERVAL_MS = 30_000;
 
 async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 'month'): Promise<void> {
-  const gen = ++fetchGeneration;
   currentDashboardWindow = window;
 
   // HS-8572 — cache hit: paint the cached payload immediately so the
@@ -873,46 +873,42 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     lastPaintedFor.delete(container);
   }
 
-  try {
-    const tz = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat !== 'undefined'
-      ? Intl.DateTimeFormat().resolvedOptions().timeZone
-      : 'UTC';
-    // HS-8563 — cross-project read MUST hit the launched-with default DB
-    // (where the otel receiver writes all telemetry rows, tagged by
-    // `project_secret`). The auto-appended `?project=<active-secret>`
-    // would otherwise re-scope the middleware to the active project's
-    // DB, which contains no otel data unless the user happens to be on
-    // the launched-with project. `skipProjectScope` opts out of the
-    // auto-append. See `buildUrl` in `src/client/api.tsx`.
-    const payload: DashboardPayload = await getTelemetryDashboard(window, tz);
-    if (gen !== fetchGeneration) return; // a newer fetch superseded us; let it win.
+  const tz = typeof Intl !== 'undefined' && typeof Intl.DateTimeFormat !== 'undefined'
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : 'UTC';
+  // HS-8563 — cross-project read MUST hit the launched-with default DB (where the
+  // otel receiver writes all telemetry rows, tagged by `project_secret`). The
+  // auto-appended `?project=<active-secret>` would otherwise re-scope the middleware
+  // to the active project's DB. `skipProjectScope` opts out (see `buildUrl`).
+  // `resource.run` never throws — a failure lands in `value.status`/`value.error`.
+  await dashboardResource.run(window, () => getTelemetryDashboard(window, tz));
+  const s = dashboardResource.value;
+  if (s.input !== window) return; // a newer fetch superseded us; let it win.
 
-    // HS-8572 — skip the re-render when the fresh payload matches what
-    // is currently painted into the container. Avoids 30 s tick
-    // re-builds wiping sort / scroll / hover state when nothing has
-    // changed (compared against `lastPaintedFor` — the actual on-
-    // screen content — rather than the in-memory cache, which is the
-    // same reference here but might diverge if a future caller paints
-    // into the container without going through this function).
-    const fresh = JSON.stringify(payload);
-    cachedPayloads.set(window, payload);
-    if (isPaintCurrent(container, fresh)) return;
-    renderShell(payload, container);
-    lastPaintedFor.set(container, fresh);
-  } catch (err) {
-    if (gen !== fetchGeneration) return;
-    // HS-8572 — keep showing cached data when a poll-tick fetch fails
-    // (server restart, transient network blip). Only paint the error
-    // state when we have nothing to fall back on.
+  if (s.status === 'failed') {
+    // HS-8572 — keep showing cached data when a poll-tick fetch fails (server
+    // restart, transient blip). Only paint the error when we have no fallback.
     if (cached !== undefined) return;
-    const message = err instanceof Error ? err.message : String(err);
+    const message = s.error instanceof Error ? s.error.message : String(s.error);
     container.replaceChildren(toElement(
       <div className="telemetry-dashboard-error">
         <p>Failed to load telemetry dashboard.</p>
         <p className="telemetry-dashboard-error-detail">{message}</p>
       </div>
     ));
+    return;
   }
+  if (s.status !== 'completed' || s.data === undefined) return; // defensive
+
+  // HS-8572 — skip the re-render when the fresh payload matches what is currently
+  // painted (compared against `lastPaintedFor`, the actual on-screen content) so a
+  // 30 s tick on unchanged data doesn't wipe sort / scroll / hover state.
+  const payload = s.data;
+  const fresh = JSON.stringify(payload);
+  cachedPayloads.set(window, payload);
+  if (isPaintCurrent(container, fresh)) return;
+  renderShell(payload, container);
+  lastPaintedFor.set(container, fresh);
 }
 
 /** HS-8572 — start the live-refresh poll. Each tick re-fetches the
@@ -1144,7 +1140,7 @@ export const _testingHS8572 = {
     cachedPayloads.clear();
     stopPolling();
     currentDashboardWindow = 'month';
-    fetchGeneration = 0;
+    dashboardResource.reset(); // KERF-EVAL — clear the resource's stale-guard state
   },
   fetchAndRender,
   startPolling,
