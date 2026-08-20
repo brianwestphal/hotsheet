@@ -7,7 +7,7 @@
 // plugin has unresolved sync conflicts in the active project. Clicking it opens
 // Settings → Plugins and scrolls to the conflicts section. Generic across plugins
 // — driven by `GET /sync/conflicts/summary`, not special-cased to GitHub.
-import { trustedRaw } from 'kerfjs';
+import { raw } from 'kerfjs';
 
 import { getSyncConflictsSummary, type SyncConflictSummaryEntry } from '../api/index.js';
 import { byIdOrNull, toElement } from './dom.js';
@@ -85,8 +85,8 @@ export async function refreshSyncConflictBanner(): Promise<void> {
   if (iconEl !== null) {
     const icon = summary.find(s => s.icon != null && s.icon !== '')?.icon ?? null;
     if (icon != null) {
-      // plugin-manifest SVG icon (trusted plugin data, bundled with the plugin).
-      iconEl.replaceChildren(toElement(<span>{trustedRaw(icon)}</span>));
+      // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- plugin-manifest SVG icon (trusted plugin data, bundled with the plugin).
+      iconEl.replaceChildren(toElement(<span>{raw(icon)}</span>));
     } else {
       iconEl.replaceChildren();
     }

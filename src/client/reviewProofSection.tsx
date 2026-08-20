@@ -1,6 +1,6 @@
 import './markdownSetup.js'; // HS-9387 — escape-html marked config for note bodies
 
-import { trustedRaw } from 'kerfjs';
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import { type CommitGroup, getReviewProof, getTicketCommits, type GlassboxReviewReq, launchGlassbox, reviewInGlassbox, type ReviewProofAttachment, type ReviewProofNote, type TicketCommitsResponse } from '../api/index.js';
@@ -146,8 +146,8 @@ function renderNote(note: ReviewProofNote): HTMLElement {
   if (bodyText !== '') {
     detail.appendChild(toElement(
       <div className="review-proof-body">
-        {/* sanitized markdown HTML from `marked.parse(...)` (markdownSetup escapes raw HTML). */}
-        {trustedRaw(marked.parse(bodyText, { async: false }))}
+        {/* eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from `marked.parse(...)` (markdownSetup escapes raw HTML). */}
+        {raw(marked.parse(bodyText, { async: false }))}
       </div>,
     ));
   }

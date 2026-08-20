@@ -1,6 +1,6 @@
 import './markdownSetup.js'; // side-effecting: switches `marked` into escape-raw-HTML mode
 
-import { trustedRaw } from 'kerfjs';
+import { raw } from 'kerfjs';
 import { marked } from 'marked';
 
 import type { GitStatusFiles, GitStatusWithFiles, PendingCommit, RecentCommitsRes } from '../api/git.js';
@@ -365,8 +365,8 @@ export function commitRow(c: PendingCommit, glassboxAvailable: boolean): HTMLEle
           renderedMd = toElement(
             <div className="git-popover-commit-body-md">
               {
-                // sanitized markdown HTML from marked.parse (markdownSetup escapes raw HTML)
-                trustedRaw(html)
+                // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- sanitized markdown HTML from marked.parse (markdownSetup escapes raw HTML)
+                raw(html)
               }
             </div>
           );

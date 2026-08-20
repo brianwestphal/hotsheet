@@ -1,5 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
-import { trustedRaw } from 'kerfjs';
+import { raw } from 'kerfjs';
 
 import { duplicateTickets, getBackends, pushTicketToBackend, releaseTicket, updateTicket, uploadAttachment } from '../api/index.js';
 import { isSystemStatusNote } from '../systemNotes.js';
@@ -455,8 +455,8 @@ function buildSubmenuItem(label: string, items: SubItem[], icon?: string | SafeH
   const item = toElement(
     <div className="context-menu-item has-submenu">
       {icon !== undefined && icon !== '' ? <span className="dropdown-icon">{
-        // string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
-        typeof icon === 'string' ? trustedRaw(icon) : icon
+        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
+        typeof icon === 'string' ? raw(icon) : icon
       }</span> : null}
       <span className="context-menu-label">{label}</span>
       <span className="context-menu-arrow">{'\u25B8'}</span>
@@ -468,8 +468,8 @@ function buildSubmenuItem(label: string, items: SubItem[], icon?: string | SafeH
     const subItem = toElement(
       <div className={`context-menu-item${sub.active === true ? ' active' : ''}`}>
         {sub.icon !== undefined && sub.icon !== '' ? <span className="dropdown-icon" style={sub.iconColor !== undefined && sub.iconColor !== '' ? `color:${sub.iconColor}` : ''}>{
-          // string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
-          typeof sub.icon === 'string' ? trustedRaw(sub.icon) : sub.icon
+          // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
+          typeof sub.icon === 'string' ? raw(sub.icon) : sub.icon
         }</span> : null}
         <span className="context-menu-label">{sub.label}</span>
       </div>
@@ -491,8 +491,8 @@ function addActionItem(menu: HTMLElement, label: string, action: () => void, opt
   const item = toElement(
     <div className={`context-menu-item${options?.danger === true ? ' danger' : ''}${disabled ? ' disabled' : ''}`}>
       {options?.icon !== undefined ? <span className="dropdown-icon">{
-        // string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
-        typeof options.icon === 'string' ? trustedRaw(options.icon) : options.icon
+        // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- string-icon callers still pass HTML strings here; JSX-icon callers pass `SafeHtml` which renders through the JSX child path.
+        typeof options.icon === 'string' ? raw(options.icon) : options.icon
       }</span> : null}
       <span className="context-menu-label">{label}</span>
     </div>

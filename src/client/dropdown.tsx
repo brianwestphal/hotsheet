@@ -1,5 +1,5 @@
 import type { SafeHtml } from 'kerfjs';
-import { trustedRaw } from 'kerfjs';
+import { raw } from 'kerfjs';
 import type { OverlayHandle } from 'kerfjs/overlay';
 import { popover } from 'kerfjs/overlay';
 
@@ -43,8 +43,8 @@ export function createDropdown(anchor: HTMLElement, items: DropdownItem[]): void
           : <button className={`dropdown-item${item.active === true ? ' active' : ''}`} data-key={item.key}>
               {item.color !== undefined && item.color !== '' ? <span className="dropdown-dot" style={`background-color:${item.color}`}></span> : null}
               {item.icon !== undefined && item.icon !== '' ? <span className="dropdown-icon" style={item.iconColor !== undefined && item.iconColor !== '' ? `color:${item.iconColor}` : ''}>{
-                  // legacy string-icon callers (plugin-supplied icons, status/priority helpers) still pass HTML strings; JSX-icon callers pass `SafeHtml` which renders via the standard JSX child path.
-                  typeof item.icon === 'string' ? trustedRaw(item.icon) : item.icon
+                  // eslint-disable-next-line kerfjs/no-raw-with-dynamic-arg -- legacy string-icon callers (plugin-supplied icons, status/priority helpers) still pass HTML strings; JSX-icon callers pass `SafeHtml` which renders via the standard JSX child path.
+                  typeof item.icon === 'string' ? raw(item.icon) : item.icon
                 }</span> : null}
               <span className="dropdown-label">{item.label}</span>
               {item.shortcut !== undefined && item.shortcut !== '' ? <kbd className="dropdown-kbd">{item.shortcut}</kbd> : null}
