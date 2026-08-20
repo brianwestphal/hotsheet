@@ -1086,19 +1086,16 @@ function renderTabs() {
     titleArea.innerHTML = '';
     const inner = toElement(<div className="project-tabs-inner"></div>);
     titleArea.appendChild(inner);
-    // KERF-EVAL (feature 3 / KF-492) — kerf's `bindList` anchors its rows to the
-    // END of its parent (it assumes exclusive ownership of the parent's
-    // children), unlike the old local reconcile which positioned rows by index
-    // and left foreign siblings alone. So the sliding indicator + add-project
-    // button can no longer share the bindList parent (HS-8664). Give `bindList` a
-    // dedicated `.project-tabs-strip` with `display: contents` — it has no layout
-    // box, so the tab rows still lay out as direct flex children of
-    // `.project-tabs-inner` and all the scroll / overflow / offset math is
-    // unchanged — while the indicator + add button stay siblings in `inner`.
-    const strip = toElement(<div className="project-tabs-strip"></div>);
-    inner.appendChild(strip);
-    const dispose = bindList(strip, projectsListSignal, (p) => p.secret, renderTabRow);
-    inner.appendChild(createAddProjectButton());
+    // KERF-EVAL (feature 3 / KF-496, beta.5) — kerf's `bindList` otherwise anchors
+    // its rows to the END of the parent (assuming exclusive ownership), which would
+    // reorder the sliding indicator + add-project button that share this strip
+    // (HS-8664). The `before` option keeps the tab rows as a contiguous block
+    // ending just before the add button, so bindList never touches it — no separate
+    // container needed. (The absolutely-positioned indicator is out of flow, so
+    // wherever the reconcile leaves it is layout-neutral.)
+    const addBtn = createAddProjectButton();
+    inner.appendChild(addBtn);
+    const dispose = bindList(inner, projectsListSignal, (p) => p.secret, renderTabRow, { before: addBtn });
     multiTabState = { dispose, parent: inner };
     // HS-8824 — wire the resize observer once per strip (re)mount, NOT on
     // every `renderTabs()`. Pre-fix `setupScrollObserver()` ran at the end

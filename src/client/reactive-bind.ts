@@ -250,12 +250,19 @@ export function bindListVirtualized<T>(
  * wants `string | number`) and our `BindListRenderResult.el` is `Element` (kerf
  * wants `HTMLElement`) — both narrowings hold for every real caller (keys are
  * ids/strings; rows are `toElement(<jsx/>)` HTML elements).
+ *
+ * `opts.before` (KF-496, kerf beta.5) keeps the rows as a contiguous block
+ * ending just before a fixed trailing sibling, so a list can share its `parent`
+ * with a non-row control (an "add" button, an indicator) without kerf — which
+ * otherwise anchors rows to the parent's end — reordering it. Used by the
+ * project-tabs strip; omit it and kerf assumes exclusive ownership of `parent`.
  */
 export function bindList<T>(
   parent: Element,
   signal: AnySignal<readonly T[]>,
   key: (item: T) => unknown,
   render: (item: T) => BindListRenderResult,
+  opts?: { before?: Node | (() => Node | null) },
 ): () => void {
   return kerfBindList(parent as HTMLElement, signal, {
     key: (item) => key(item) as ListKey,
@@ -263,5 +270,6 @@ export function bindList<T>(
       const r = render(item);
       return { el: r.el as HTMLElement, dispose: r.dispose };
     },
+    before: opts?.before,
   });
 }

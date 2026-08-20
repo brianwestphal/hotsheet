@@ -64,14 +64,10 @@ export function showToast(message: string, opts: ShowToastOptions = {}): void {
   if (action !== undefined) {
     const onClick = action.onClick;
     handle.el.querySelector('.hs-toast-action')?.addEventListener('click', () => {
-      // Close this toast INSTANTLY, then run the action. `handle.dismiss()` fades
-      // over `exitDuration`, and a mid-exit toast is skipped by a later
-      // `mode:'replace'` collapse — so if the action shows a replacement toast
-      // (e.g. "Force-release" → "Released") the fading one would overlap it. kerf
-      // has no instant single-toast dismiss, so cancel the timer (dismiss) and
-      // drop the node now (el.remove). See KF-497.
-      handle.dismiss();
-      handle.el.remove();
+      // Close this toast INSTANTLY (KF-497, beta.4→beta.5), then run the action —
+      // which may show a replacement toast; `{ instant: true }` removes this one
+      // synchronously (no fade) so the two never cross-fade in the centered slot.
+      handle.dismiss({ instant: true });
       onClick();
     });
   }
