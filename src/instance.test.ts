@@ -48,9 +48,20 @@ describe('writeInstanceFile', () => {
   it('writes correct JSON with port and PID', () => {
     writeInstanceFile(4174);
     expect(existsSync(instancePath)).toBe(true);
-    const data = JSON.parse(readFileSync(instancePath, 'utf-8')) as { port: number; pid: number };
+    const data = JSON.parse(readFileSync(instancePath, 'utf-8')) as { port: number; pid: number; desktop: boolean };
     expect(data.port).toBe(4174);
     expect(data.pid).toBe(process.pid);
+    // HS-9700 — defaults to non-desktop when the flag is omitted.
+    expect(data.desktop).toBe(false);
+  });
+
+  // HS-9700 — the packaged desktop app's supervised sidecar tags its instance file
+  // so a bare `npm run dev --replace` can recognize + refuse to kill it.
+  it('records desktop=true when told this instance is the supervised desktop app', () => {
+    writeInstanceFile(4174, true);
+    const data = JSON.parse(readFileSync(instancePath, 'utf-8')) as { desktop: boolean };
+    expect(data.desktop).toBe(true);
+    expect(readInstanceFile()?.desktop).toBe(true);
   });
 
   it('creates the .hotsheet directory if it does not exist', () => {
@@ -69,7 +80,13 @@ describe('readInstanceFile', () => {
   it('returns parsed data when file exists with valid JSON', () => {
     writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: 12345 }));
     const result = readInstanceFile();
-    expect(result).toEqual({ port: 4174, pid: 12345 });
+    // HS-9700 — `desktop` defaults to false for an older file that predates the field.
+    expect(result).toEqual({ port: 4174, pid: 12345, desktop: false });
+  });
+
+  it('preserves an explicit desktop=true flag (HS-9700)', () => {
+    writeFileSync(instancePath, JSON.stringify({ port: 4174, pid: 12345, desktop: true }));
+    expect(readInstanceFile()).toEqual({ port: 4174, pid: 12345, desktop: true });
   });
 
   it('returns null for invalid JSON', () => {

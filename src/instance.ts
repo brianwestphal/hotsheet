@@ -7,6 +7,12 @@ import { globalHotsheetDir } from './global-dir.js';
 const InstanceInfoSchema = z.object({
   port: z.number(),
   pid: z.number(),
+  // HS-9700 — true when this instance is the packaged desktop app's supervised
+  // sidecar (set from HOTSHEET_TERMINAL_SUPERVISOR at write time). Lets a bare
+  // `npm run dev --replace` recognize it's about to kill the running desktop app
+  // (with its terminals) and refuse instead. Optional + defaulted so an older
+  // instance.json without the field still parses (treated as non-desktop).
+  desktop: z.boolean().optional().default(false),
 });
 
 type InstanceInfo = z.infer<typeof InstanceInfoSchema>;
@@ -15,10 +21,10 @@ function getInstanceFilePath(): string {
   return join(globalHotsheetDir(), 'instance.json');
 }
 
-export function writeInstanceFile(port: number): void {
+export function writeInstanceFile(port: number, desktop = false): void {
   const dir = globalHotsheetDir();
   mkdirSync(dir, { recursive: true });
-  writeFileSync(getInstanceFilePath(), JSON.stringify({ port, pid: process.pid }));
+  writeFileSync(getInstanceFilePath(), JSON.stringify({ port, pid: process.pid, desktop }));
 }
 
 export function readInstanceFile(): InstanceInfo | null {

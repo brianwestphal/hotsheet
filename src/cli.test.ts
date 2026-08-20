@@ -10,7 +10,7 @@ import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { afterAll, describe, expect, it } from 'vitest';
 
-import { computeIsEntryPoint } from './cli.js';
+import { computeIsEntryPoint, shouldRefuseReplace } from './cli.js';
 // HS-8202 — the spawn-test gate lives in spawnTestServer.ts (shared with the
 // *.e2e.test.ts suites) so all spawn-bearing tests agree on when it's safe to
 // spawn a real CLI child. It is true only when tsx can really spawn a child
@@ -252,5 +252,25 @@ describe('computeIsEntryPoint', () => {
       'file:///usr/local/lib/node_modules/hotsheet/dist/cli.js',
       throwingRealpath,
     )).toBe(false);
+  });
+});
+
+// HS-9700 — a bare `npm run dev` runs `cli.ts --replace` (no `--no-open`); if the
+// running instance is the desktop app, replacing it kills the app's server +
+// terminals and opens a stray tab, then the app's supervisor respawns and bounces
+// back. The `--replace` must be refused for that collision only.
+describe('shouldRefuseReplace (HS-9700)', () => {
+  it('REFUSES when a bare (unsupervised) process would replace the running desktop app', () => {
+    expect(shouldRefuseReplace(true, false)).toBe(true);
+  });
+
+  it('ALLOWS the desktop app\'s own supervised respawn to replace itself', () => {
+    // The HS-9656 supervisor respawns the sidecar with HOTSHEET_TERMINAL_SUPERVISOR=1.
+    expect(shouldRefuseReplace(true, true)).toBe(false);
+  });
+
+  it('ALLOWS replacing a non-desktop instance (a plain dev/CLI server)', () => {
+    expect(shouldRefuseReplace(false, false)).toBe(false);
+    expect(shouldRefuseReplace(false, true)).toBe(false);
   });
 });
