@@ -25,6 +25,7 @@ import {
   enqueuePermission,
   getDecision,
   peekPending,
+  PERMISSION_LONE_TTL_MS,
   recordDecision,
 } from './channelPermissions.js';
 import { type ChannelInfo, maybeUnlinkPortFile, writeChannelInfo } from './channelPortFile.js';
@@ -38,6 +39,7 @@ import {
 import { installStdioDisconnectHandler } from './channelStdioWatcher.js';
 import { isWarmPoolClient } from './channelWarmClient.js';
 import { readFileSettings } from './file-settings.js';
+import { parseAutoApproveMs } from './permissionAutoApprove.js';
 import { HotsheetSettingsSchema } from './schemas.js';
 import { getProjectSecret } from './secret-file.js';
 
@@ -133,6 +135,29 @@ function isFollowerCwd(): boolean {
 // server lifecycle event below also gets mirrored here.
 const channelLog = createChannelLogger(join(dataDir, 'mcp.log'));
 channelLog.log('process-start', `argv=${process.argv.slice(2).join(' ')} dataDir=${dataDir} serverName=${serverName}`);
+
+// HS-9702 (docs/137) — grace added past the configured auto-approve window when
+// extending the lone-request backstop, so the request outlives the moment the
+// overlay fires the approve (the client + this server race the same deadline).
+const AUTO_APPROVE_TTL_GRACE_MS = 60_000;
+// Cache the effective lone-TTL: reading the settings file on every ~100 ms
+// `/permission` poll would hammer `dataDir` (possibly a slow cloud path — docs/128).
+let cachedLoneTtl = { at: 0, ms: PERMISSION_LONE_TTL_MS };
+const LONE_TTL_CACHE_MS = 3000;
+
+/** HS-9702 — the lone-request backstop `peekPending` should use right now: the
+ *  default, unless an auto-approve window is configured for this project, in which
+ *  case at least `window + grace` so a counting-down request isn't abandoned early. */
+function effectiveLoneTtlMs(now: number): number {
+  if (now - cachedLoneTtl.at < LONE_TTL_CACHE_MS) return cachedLoneTtl.ms;
+  let ms = PERMISSION_LONE_TTL_MS;
+  try {
+    const windowMs = parseAutoApproveMs(readFileSettings(dataDir).permission_auto_approve_ms);
+    if (windowMs > 0) ms = Math.max(PERMISSION_LONE_TTL_MS, windowMs + AUTO_APPROVE_TTL_GRACE_MS);
+  } catch { /* keep the default backstop on any read/parse failure */ }
+  cachedLoneTtl = { at: now, ms };
+  return ms;
+}
 
 // Create MCP server with channel capability
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- Server is needed for low-level MCP channel/permission protocol
@@ -311,7 +336,11 @@ const httpServer = createServer(async (req, res) => {
     // HS-8047 — `peekPending` auto-expires entries older than the TTL.
     // Wire shape stays `{ pending: head | null }` so client + main
     // server are oblivious to the queue beneath.
-    res.end(JSON.stringify({ pending: peekPending() }));
+    // HS-9702 (docs/137) — extend the LONE backstop to cover an enabled
+    // auto-approve window so a request the overlay is counting down on isn't
+    // abandoned mid-countdown (a 60-min window vs the 15-min default).
+    const now = Date.now();
+    res.end(JSON.stringify({ pending: peekPending(now, effectiveLoneTtlMs(now)) }));
     return;
   }
 

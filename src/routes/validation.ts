@@ -216,6 +216,11 @@ export const PermissionRespondSchema = z.object({
   // first (e.g. fast-respond before the long-poll's logging path ran).
   description: z.string().optional(),
   input_preview: z.string().optional(),
+  // HS-9702 (docs/137) — set by the overlay when this allow came from the
+  // auto-approve-after-timeout countdown firing (not a click). The server logs it
+  // distinctly (`Auto-approved (timeout)`) so the Commands Log shows it wasn't a
+  // manual decision. Ignored for `deny`.
+  auto_approved: z.boolean().optional(),
 });
 
 // --- Projects ---

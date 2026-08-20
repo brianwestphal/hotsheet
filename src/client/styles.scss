@@ -12246,6 +12246,41 @@ label.detail-details-label {
   margin-top: 2px;
 }
 
+// HS-9702 (docs/137) — auto-approve countdown row in the permission popup: a muted
+// "Auto-approving in M:SS" status line with an inline Cancel to keep the popup open.
+.permission-auto-approve {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.25));
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.permission-auto-approve-text {
+  font-variant-numeric: tabular-nums; // steady width as the seconds tick down
+}
+
+.permission-auto-approve-cancel {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-color, inherit);
+  background: transparent;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.4));
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--hover-bg, rgba(128, 128, 128, 0.12));
+  }
+}
+
 .dialog-shell-links-sep {
   color: var(--text-muted);
   font-size: 11px;

@@ -482,7 +482,11 @@ channelRoutes.post('/channel/permission/respond', async (c) => {
   // worktree worker's, not necessarily the leader); fall back to the leader.
   const port = requestSourcePort.get(parsed.data.request_id) ?? getChannelPort(dataDir);
   if (port === null) return c.json({ error: 'Channel not available' }, 503);
-  const action = parsed.data.behavior === 'allow' ? 'Allowed' : 'Denied';
+  // HS-9702 (docs/137) — distinguish a timeout auto-approval from a manual click in
+  // the Commands Log, mirroring the §47 "Auto-allowed (rule …)" audit wording.
+  const action = parsed.data.behavior === 'allow'
+    ? (parsed.data.auto_approved === true ? 'Auto-approved (timeout)' : 'Allowed')
+    : 'Denied';
   const toolName = parsed.data.tool_name ?? 'tool';
   // Update the existing permission_request entry with the response instead of creating a new one
   const logId = loggedPermissionRequests.get(parsed.data.request_id);

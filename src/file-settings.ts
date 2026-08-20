@@ -58,6 +58,12 @@ export const FileSettingsSchema = z.object({
   antigravity_interactive_permissions: z.boolean().optional(),
   // HS-9359 — route codex tool calls through the §47 permission overlay.
   codex_interactive_permissions: z.boolean().optional(),
+  // HS-9702 (docs/137) — auto-approve a pending permission request if the user
+  // doesn't decide within this many milliseconds. 0 / absent = OFF (the default;
+  // requests wait for an explicit decision). Allowed values: 60000 / 120000 /
+  // 300000 / 900000 / 3600000 (1/2/5/15/60 min). §95 **LOCAL** (a per-machine
+  // safety/convenience preference like `permission_allow_rules`; never shared).
+  permission_auto_approve_ms: z.number().optional(),
   // HS-9411 (docs/124) — the "In Development" gates. Declared here so the layered
   // settings API carries them; the authoritative list + labels live in
   // `src/devFeatures.ts`. All are `dev_`-prefixed ⇒ routed to the LOCAL layer by
@@ -158,6 +164,9 @@ const LOCAL_SCOPE_KEYS = new Set([
   // Per-device auto-allow rules carrying machine-specific paths/commands.
   'permission_allow_rules',
   'terminal_prompt_allow_rules',
+  // HS-9702 (docs/137) — auto-approve-after-timeout window. A per-machine
+  // safety/convenience preference, classified with the allow-rules: never shared.
+  'permission_auto_approve_ms',
   // HS-9338 (docs/117 §117.3) — the drive-transport override is machine-specific (which
   // agent/binary is installed varies per device), so it's Local, not committed.
   'agent_backend',

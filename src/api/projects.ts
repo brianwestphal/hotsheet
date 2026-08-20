@@ -79,6 +79,13 @@ const PermissionEntrySchema = z.object({
     name: z.string(),
     kind: z.string(),
   })).optional().catch(undefined),
+  // HS-9702 (docs/137) — epoch-ms auto-approve deadline (computed server-side from
+  // the OWNING project's window). MUST be named here: this schema is the client's
+  // only view of the poll and zod strips what it doesn't name (the HS-9586 lesson
+  // above). Absent when auto-approve is off. `.catch(undefined)` so a malformed
+  // value degrades to "no auto-approve", never rejecting the whole poll (which
+  // would strand every pending request).
+  auto_approve_at: z.number().optional().catch(undefined),
 });
 
 export const ProjectsPermissionsSchema = z.object({

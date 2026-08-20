@@ -10,6 +10,7 @@ import { projectHasPendingFeedback } from '../feedback-state.js';
 import { readFileSettings } from '../file-settings.js';
 import { readGlobalConfig } from '../global-config.js';
 import { openInFileManager } from '../open-in-file-manager.js';
+import { parseAutoApproveMs } from '../permissionAutoApprove.js';
 import { addToProjectList, readProjectList, removeFromProjectList, reorderProjectList } from '../project-list.js';
 import { getAllProjects, getProjectBySecret, registerProject, reorderProjects, unregisterProject } from '../projects.js';
 import { type PendingPermissionEntrySchema, PendingPermissionSchema } from '../schemas.js';
@@ -175,6 +176,36 @@ projectRoutes.get('/feedback-state', async (c) => {
   return c.json({ projects: result });
 });
 
+// HS-9702 (docs/137) — cache the computed auto-approve deadline per request_id.
+// The deadline is fixed once (creation time + the owning project's window), so
+// there's no reason to re-read the settings file on every ~100 ms poll while a
+// popup is open — `dataDir` may be a slow cloud path (docs/128). `null` caches
+// "auto-approve is off for this request". Bounded like `channelPermissions`'
+// decision map so a long-lived server can't grow it without limit.
+const autoApproveDeadlineCache = new Map<string, number | null>();
+const AUTO_APPROVE_DEADLINE_CACHE_CAP = 200;
+
+/** HS-9702 — epoch-ms instant at which a pending request in `dataDir` auto-approves,
+ *  or undefined when auto-approve is off (or the inputs are incomplete). Reads the
+ *  owning project's `permission_auto_approve_ms` at most once per request_id. */
+function computeAutoApproveAt(dataDir: string, requestId: string | undefined, createdAtMs: number | undefined): number | undefined {
+  if (requestId === undefined || typeof createdAtMs !== 'number') return undefined;
+  const cached = autoApproveDeadlineCache.get(requestId);
+  if (cached !== undefined) return cached ?? undefined;
+  let deadline: number | null = null;
+  try {
+    const windowMs = parseAutoApproveMs(readFileSettings(dataDir).permission_auto_approve_ms);
+    deadline = windowMs > 0 ? createdAtMs + windowMs : null;
+  } catch { deadline = null; }
+  autoApproveDeadlineCache.set(requestId, deadline);
+  while (autoApproveDeadlineCache.size > AUTO_APPROVE_DEADLINE_CACHE_CAP) {
+    const oldest = autoApproveDeadlineCache.keys().next().value;
+    if (oldest === undefined) break;
+    autoApproveDeadlineCache.delete(oldest);
+  }
+  return deadline ?? undefined;
+}
+
 /** GET /api/projects/permissions — check for pending permissions across all projects (long-poll, 3s timeout) */
 projectRoutes.get('/permissions', async (c) => {
   const globalConfig = readGlobalConfig();
@@ -199,6 +230,8 @@ projectRoutes.get('/permissions', async (c) => {
           description: acpPending.description,
           input_preview: acpPending.input_preview,
           options: acpPending.options,
+          // HS-9702 — deadline for the auto-approve countdown (owning project's window).
+          auto_approve_at: computeAutoApproveAt(p.dataDir, acpPending.request_id, acpPending.timestamp),
         };
         return;
       }
@@ -212,7 +245,12 @@ projectRoutes.get('/permissions', async (c) => {
         const rawJson: unknown = await res.json();
         const parsed = PendingPermissionSchema.safeParse(rawJson);
         if (!parsed.success) return; // shape mismatch → omit (channel server unreachable behavior)
-        result[p.secret] = parsed.data.pending;
+        const pending = parsed.data.pending;
+        // HS-9702 — attach the auto-approve deadline (owning project's window +
+        // the channel-side enqueue `timestamp`) so the overlay can count down to it.
+        result[p.secret] = pending === null
+          ? null
+          : { ...pending, auto_approve_at: computeAutoApproveAt(p.dataDir, pending.request_id, pending.timestamp) };
       } catch {
         // HS-8207 — channel-server unreachable transiently (restart, network
         // blip, slow response getting cancelled). OMIT this project from the

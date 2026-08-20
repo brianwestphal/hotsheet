@@ -66,9 +66,18 @@ export function enqueuePermission(perm: PendingPermission): void {
  *  (`completePermission`) or a channel disconnect (`clearAllPermissions`) clears
  *  entries immediately regardless.
  *
+ *  HS-9702 (docs/137) — `loneTtlMs` overrides the lone backstop for THIS call. The
+ *  auto-approve feature keeps a lone request alive for the configured window (up to
+ *  60 min) so the overlay's countdown can run to completion instead of the request
+ *  being abandoned at the 15-min default mid-countdown. The caller (`channel.ts`
+ *  `GET /permission`) passes `max(PERMISSION_LONE_TTL_MS, window + grace)`; the
+ *  default keeps the pre-feature behavior. Only the LONE backstop is overridden — a
+ *  head BLOCKING a newer request still expires against the short `PERMISSION_TTL_MS`
+ *  so the queue can advance.
+ *
  *  `now` is injectable for deterministic time-based testing. */
-export function peekPending(now: number = Date.now()): PendingPermission | null {
-  while (queue.length > 0 && now - queue[0].timestamp > (queue.length > 1 ? PERMISSION_TTL_MS : PERMISSION_LONE_TTL_MS)) {
+export function peekPending(now: number = Date.now(), loneTtlMs: number = PERMISSION_LONE_TTL_MS): PendingPermission | null {
+  while (queue.length > 0 && now - queue[0].timestamp > (queue.length > 1 ? PERMISSION_TTL_MS : loneTtlMs)) {
     queue.shift();
   }
   return queue[0] ?? null;

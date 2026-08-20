@@ -23,6 +23,13 @@ export type PermissionData = {
   description: string;
   input_preview?: string;
   options?: PermissionOption[];
+  // HS-9702 (docs/137) — the epoch-ms instant at which this request auto-approves
+  // (the owning project's `permission_auto_approve_ms` window added to the request's
+  // creation time, computed server-side so it reflects the OWNING project's setting,
+  // not the active one). Present ONLY when auto-approve is enabled for that project;
+  // the overlay counts down to it and fires the allow on reaching it. Absent = the
+  // request never auto-approves (the default).
+  auto_approve_at?: number;
 };
 
 /**

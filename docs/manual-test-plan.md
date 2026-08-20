@@ -109,6 +109,13 @@ This document lists features that require manual verification before each releas
 - [ ] **Auto-allow gate skips the popup (HS-9346).** Add a `permission_allow_rules` Bash rule (e.g. via the settings page) matching `git status`. Ask the agent to run `git status` → the popup does **NOT** appear (the gate auto-allows); an unmatched command (`ls -la`) still prompts.
 - [ ] **User opencode config wins (HS-9341).** In a project with a checked-in `opencode.json` setting `permission: { edit: "allow" }`, confirm the agent auto-approves edits (the user's config overrides Hot Sheet's `OPENCODE_CONFIG` default) — Hot Sheet respects a user who wants auto-approve.
 
+### Auto-approve permission after timeout (HS-9702, docs/137) — needs a real driven agent
+*(The dropdown persistence + countdown/fire/cancel logic are unit- and e2e-tested; this confirms the full loop with a real agent blocking on a live permission.)*
+- [ ] **Countdown → auto-approve fires.** In **Settings → Permissions**, set **Auto-approve after** = **1 minute**. Drive a Claude (or Codex/ACP) agent to a real permission prompt so the §47 popup appears. Confirm a `Auto-approving in M:SS` line + a **Cancel** button appear and the countdown ticks down each second. Leave it — at 0:00 the popup approves itself, the agent **continues**, and the Commands Log shows `Permission: <tool> — Auto-approved (timeout)` (not `Allowed`).
+- [ ] **Cancel keeps it open.** Repeat, but click **Cancel** before it fires → the countdown disappears, the popup stays open, and it does **not** auto-approve; a manual Allow/Deny still works. Minimizing then reopening the popup must **not** restart the countdown for a cancelled request.
+- [ ] **Long window survives (15/60 min).** Set the window to **60 minutes** with a pending request and leave it well past 15 minutes → the popup must still be present + counting down (the channel's lone-request backstop was extended; pre-fix it would have been abandoned at 15 min). You don't need to wait the full hour — just confirm it lives past ~16 minutes.
+- [ ] **Off = today's behavior.** With **Off** selected, a permission prompt shows no countdown and never auto-approves (waits for a click).
+
 ### Agent backend picker (HS-9338, docs/117) — Settings UI
 *(The parse/resolve logic + override precedence are unit-tested; this confirms the Settings control wiring in the running app.)*
 - [ ] **Derived hint follows the AI tool.** Settings → General → **Agent backend** defaults to **Auto**, and the hint reads "Auto (currently: …)" matching the AI-tool selection: Antigravity → *MCP + hooks*, OpenCode → *ACP*, Claude/others → *Claude channel (MCP)*. Change the AI-tool dropdown and confirm the hint updates live.

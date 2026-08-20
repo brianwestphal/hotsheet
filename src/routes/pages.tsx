@@ -8,6 +8,7 @@ import { PairPage } from '../components/pairPage.js';
 import { defaultProjectName } from '../defaultProjectName.js';
 import { isDemoMode } from '../demo-mode.js';
 import { PLUGINS_ENABLED } from '../feature-flags.js';
+import { AUTO_APPROVE_OPTIONS } from '../permissionAutoApprove.js';
 import { isTestMode } from '../test-mode.js';
 import type { AppEnv } from '../types.js';
 
@@ -916,7 +917,23 @@ pageRoutes.get('/', (c) => {
             <div className="settings-tab-panel" data-panel="permissions" id="settings-permissions-panel">
               {/* HS-9178 — the local-only note goes BEFORE all section headings (matching
                   every other tab); pre-fix it sat below the "Auto-Allow Rules" heading. */}
-              <p className="settings-local-note"><span><strong>Local to this machine.</strong> Auto-allow rules live in <code>.claude/settings.local.json</code> (gitignored) — never committed to git or shared with your team.</span></p>
+              <p className="settings-local-note"><span><strong>Local to this machine.</strong> These permission settings live in <code>settings.local.json</code> (gitignored) — never committed to git or shared with your team.</span></p>
+              {/* HS-9702 (docs/137) — auto-approve a pending permission request after a
+                  chosen timeout. Off by default. The overlay shows a live countdown +
+                  Cancel; the value persists local-only (`permission_auto_approve_ms`).
+                  Wired by `permissionAllowListUI.tsx` (selected value + onChange). */}
+              <div className="settings-section-header">
+                <h3>Auto-Approve After Timeout</h3>
+              </div>
+              <p className="settings-hint">When enabled, a permission request you don't answer within the selected time is <strong>automatically approved</strong>. The popup shows a live countdown with a <strong>Cancel</strong> button to keep it open for a manual decision. Off by default; applies to every tool. Auto-approvals are recorded in the Commands Log.</p>
+              <div className="settings-field">
+                <label htmlFor="permission-auto-approve">Auto-approve after</label>
+                <select id="permission-auto-approve" className="settings-select">
+                  {AUTO_APPROVE_OPTIONS.map(opt => (
+                    <option value={String(opt.ms)}>{opt.ms === 0 ? 'Off (always ask)' : opt.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="settings-section-header">
                 <h3>Auto-Allow Rules</h3>
               </div>

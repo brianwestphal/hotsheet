@@ -119,6 +119,35 @@ describe('channelPermissions queue (HS-8047)', () => {
     expect(_pendingCountForTesting()).toBe(0);
   });
 
+  it('keeps a LONE head alive past the default backstop when loneTtlMs is extended — HS-9702', () => {
+    const t0 = 1000;
+    enqueuePermission(makePerm('A', t0));
+    // With a 60-min auto-approve window the caller passes a lone-TTL well past the
+    // 15-min default; the request must survive so the overlay's countdown can run.
+    const extended = 60 * 60_000 + 60_000; // 60m window + grace
+    expect(peekPending(t0 + PERMISSION_LONE_TTL_MS + 1, extended)?.request_id).toBe('A');
+    expect(peekPending(t0 + 59 * 60_000, extended)?.request_id).toBe('A');
+    // Past the extended window it still eventually clears (abandon backstop preserved).
+    expect(peekPending(t0 + extended + 1, extended)).toBeNull();
+  });
+
+  it('a BLOCKING head still expires at the SHORT TTL even when loneTtlMs is extended — HS-9702', () => {
+    const t0 = 1000;
+    enqueuePermission(makePerm('A', t0));
+    const extended = 60 * 60_000;
+    // A is blocking B → it must clear at the 2-min blocking TTL regardless of the
+    // extended lone backstop, so the queue advances to B.
+    enqueuePermission(makePerm('B', t0 + PERMISSION_TTL_MS + 2));
+    expect(peekPending(t0 + PERMISSION_TTL_MS + 3, extended)?.request_id).toBe('B');
+  });
+
+  it('omitting loneTtlMs preserves the pre-feature default backstop — HS-9702', () => {
+    const t0 = 1000;
+    enqueuePermission(makePerm('A', t0));
+    expect(peekPending(t0 + PERMISSION_LONE_TTL_MS - 1)?.request_id).toBe('A');
+    expect(peekPending(t0 + PERMISSION_LONE_TTL_MS + 1)).toBeNull();
+  });
+
   it('expires a stale head against the SHORT TTL only once a NEWER request is behind it — HS-9299', () => {
     const t0 = 1000;
     enqueuePermission(makePerm('A', t0));

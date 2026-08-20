@@ -1,4 +1,5 @@
 import { getFileSettings, updateFileSettings } from '../api/index.js';
+import { parseAutoApproveMs } from '../permissionAutoApprove.js';
 import { confirmDialog } from './confirm.js';
 import { byIdOrNull, toElement } from './dom.js';
 
@@ -73,12 +74,32 @@ export function validatePattern(pattern: string): string | null {
 // ---------------------------------------------------------------------------
 
 /** Fetch the rules from `/file-settings`, render the list + the "Add rule"
- *  affordance. Called when the Settings → Permissions tab is shown. */
+ *  affordance, and wire the HS-9702 auto-approve dropdown. Called when the
+ *  Settings → Permissions tab is shown. */
 export async function loadAndRenderAllowList(): Promise<void> {
-  const rules = await fetchRules();
-  renderRules(rules);
+  let fs: Awaited<ReturnType<typeof getFileSettings>> | null = null;
+  try { fs = await getFileSettings(); } catch { fs = null; }
+  renderRules(parseRules(fs?.permission_allow_rules));
+  wireAutoApproveSelect(parseAutoApproveMs(fs?.permission_auto_approve_ms));
 }
 
+/** HS-9702 — reflect the persisted `permission_auto_approve_ms` in the dropdown
+ *  and persist changes (local-only). The `<option>`s are server-rendered in
+ *  `pages.tsx` from `AUTO_APPROVE_OPTIONS`; here we only set the selected value +
+ *  the change handler. Idempotent — a re-open just re-binds. */
+function wireAutoApproveSelect(currentMs: number): void {
+  const select = byIdOrNull('permission-auto-approve');
+  if (!(select instanceof HTMLSelectElement)) return;
+  select.value = String(currentMs);
+  select.onchange = () => {
+    // Fail closed: an unrecognized value collapses to OFF (0).
+    const next = parseAutoApproveMs(Number(select.value));
+    void updateFileSettings({ permission_auto_approve_ms: next });
+  };
+}
+
+/** Re-fetch just the allow-rules (used after a per-row add/edit/delete, which
+ *  re-render the list without needing to re-bind the auto-approve select). */
 async function fetchRules(): Promise<AllowRule[]> {
   try {
     const fs = await getFileSettings();

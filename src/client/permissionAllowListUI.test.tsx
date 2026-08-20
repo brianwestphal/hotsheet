@@ -239,6 +239,68 @@ describe('loadAndRenderAllowList row layout (HS-8026)', () => {
   });
 });
 
+// HS-9702 (docs/137) — the auto-approve dropdown on the Permissions tab.
+describe('auto-approve select wiring (HS-9702)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    wireRealApiTransport();
+    document.body.replaceChildren(toElement(
+      <div>
+        <select id="permission-auto-approve">
+          <option value="0">Off (always ask)</option>
+          <option value="60000">1 minute</option>
+          <option value="300000">5 minutes</option>
+          <option value="3600000">60 minutes</option>
+        </select>
+        <div id="permission-allow-list"></div>
+      </div>,
+    ));
+  });
+  afterEach(() => { document.body.innerHTML = ''; });
+
+  it('reflects the persisted window in the dropdown on load', async () => {
+    vi.mocked(api).mockResolvedValueOnce({ permission_auto_approve_ms: 300_000, permission_allow_rules: [] });
+    await loadAndRenderAllowList();
+    expect(document.querySelector<HTMLSelectElement>('#permission-auto-approve')!.value).toBe('300000');
+  });
+
+  it('defaults the dropdown to Off when the setting is absent or invalid', async () => {
+    vi.mocked(api).mockResolvedValueOnce({ permission_allow_rules: [] });
+    await loadAndRenderAllowList();
+    expect(document.querySelector<HTMLSelectElement>('#permission-auto-approve')!.value).toBe('0');
+  });
+
+  it('persists a change to the local-only setting', async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce({ permission_auto_approve_ms: 0, permission_allow_rules: [] }) // initial load
+      .mockResolvedValueOnce({ permission_auto_approve_ms: 60_000 }); // PATCH response
+    await loadAndRenderAllowList();
+    const select = document.querySelector<HTMLSelectElement>('#permission-auto-approve')!;
+    select.value = '60000';
+    select.dispatchEvent(new Event('change'));
+    await new Promise<void>(r => setTimeout(r, 0));
+    const patchCall = vi.mocked(api).mock.calls.find(c => c[1]?.method === 'PATCH');
+    expect(patchCall).toBeDefined();
+    expect((patchCall?.[1]?.body as { permission_auto_approve_ms: number }).permission_auto_approve_ms).toBe(60_000);
+  });
+
+  it('fails closed: an out-of-range selected value persists as 0 (OFF)', async () => {
+    vi.mocked(api)
+      .mockResolvedValueOnce({ permission_auto_approve_ms: 0, permission_allow_rules: [] })
+      .mockResolvedValueOnce({ permission_auto_approve_ms: 0 });
+    await loadAndRenderAllowList();
+    const select = document.querySelector<HTMLSelectElement>('#permission-auto-approve')!;
+    // Inject an unoffered value (as a tampered/legacy option would carry).
+    const bogus = toElement(<option value="45000">bogus</option>);
+    select.appendChild(bogus);
+    select.value = '45000';
+    select.dispatchEvent(new Event('change'));
+    await new Promise<void>(r => setTimeout(r, 0));
+    const patchCall = vi.mocked(api).mock.calls.find(c => c[1]?.method === 'PATCH');
+    expect((patchCall?.[1]?.body as { permission_auto_approve_ms: number }).permission_auto_approve_ms).toBe(0);
+  });
+});
+
 describe('openRuleEditor (HS-8026)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();

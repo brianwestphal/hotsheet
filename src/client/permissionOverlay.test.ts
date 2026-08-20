@@ -44,6 +44,7 @@ import {
   shouldSkipPermission,
   shouldUseLiveCheckout,
 } from './permissionOverlay.js';
+import { autoApproveCancelledRequestIds } from './permissionPopupState.js';
 import type { EditDiffShape } from './permissionPreview.js';
 import {
   _inspectStackForTesting,
@@ -1783,5 +1784,84 @@ describe('option-driven layout (HS-9330)', () => {
     document.querySelector<HTMLButtonElement>('.permission-popup-option')?.click();
     // Responded → the active popup slot is cleared (no other pending → null).
     expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+});
+
+// HS-9702 (docs/137) — auto-approve-after-timeout countdown in the popup.
+describe('auto-approve countdown (HS-9702)', () => {
+  const BASE = 1_000_000; // fixed epoch base so Date.now() is deterministic under fake timers
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE);
+    autoApproveCancelledRequestIds.clear();
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    autoApproveCancelledRequestIds.clear();
+  });
+
+  it('renders no countdown when auto_approve_at is absent', () => {
+    processPermissionPollResponse({ permissions: { 'secret-A': makePerm() }, v: 1 });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(document.querySelector('.permission-auto-approve')).toBeNull();
+  });
+
+  it('renders a live countdown when auto_approve_at is set', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm({ auto_approve_at: BASE + 5000 }) },
+      v: 1,
+    });
+    const row = document.querySelector('.permission-auto-approve');
+    expect(row).not.toBeNull();
+    // Rendered immediately (not a second later): 5s left → "0:05".
+    expect(document.querySelector('.permission-auto-approve-text')?.textContent).toBe('Auto-approving in 0:05');
+    // After 2s, the label ticks down.
+    vi.advanceTimersByTime(2000);
+    expect(document.querySelector('.permission-auto-approve-text')?.textContent).toBe('Auto-approving in 0:03');
+  });
+
+  it('auto-approves (allow) when the countdown reaches zero + tears the popup down', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm({ request_id: 'req-auto', auto_approve_at: BASE + 3000 }) },
+      v: 1,
+    });
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(respondedRequestIds.has('req-auto')).toBe(false);
+    // Advance past the deadline — the interval fires the allow.
+    vi.advanceTimersByTime(3100);
+    expect(respondedRequestIds.has('req-auto')).toBe(true); // responded (allow)
+    expect(document.querySelector('.permission-popup')).toBeNull(); // torn down
+    expect(_inspectStateForTesting().activePopupRequestId).toBeNull();
+  });
+
+  it('Cancel stops the countdown, keeps the popup open, and never auto-approves', () => {
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm({ request_id: 'req-cancel', auto_approve_at: BASE + 5000 }) },
+      v: 1,
+    });
+    document.querySelector<HTMLButtonElement>('.permission-auto-approve-cancel')?.click();
+    // Countdown row removed; popup still open; request marked cancelled.
+    expect(document.querySelector('.permission-auto-approve')).toBeNull();
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(autoApproveCancelledRequestIds.has('req-cancel')).toBe(true);
+    // Advancing well past the original deadline must NOT auto-approve.
+    vi.advanceTimersByTime(10_000);
+    expect(respondedRequestIds.has('req-cancel')).toBe(false);
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+  });
+
+  it('does not restart the countdown for a request the user already cancelled', () => {
+    autoApproveCancelledRequestIds.add('req-again');
+    processPermissionPollResponse({
+      permissions: { 'secret-A': makePerm({ request_id: 'req-again', auto_approve_at: BASE + 5000 }) },
+      v: 1,
+    });
+    // Popup shows, but with no countdown (cancellation persists across re-mounts).
+    expect(document.querySelector('.permission-popup')).not.toBeNull();
+    expect(document.querySelector('.permission-auto-approve')).toBeNull();
+    vi.advanceTimersByTime(10_000);
+    expect(respondedRequestIds.has('req-again')).toBe(false);
   });
 });

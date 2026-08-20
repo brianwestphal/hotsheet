@@ -23,6 +23,7 @@ import type { SafeHtml } from 'kerfjs';
 
 import { respondChannelPermission } from '../api/index.js';
 import { extractPrimaryValue } from '../permissionAllowRules.js';
+import { formatCountdown } from '../permissionAutoApprove.js';
 import { announcePermission } from './announcerPermissionSpeech.js';
 import { buildBashPermissionPreview } from './bashPermissionPreview.js';
 import { channelStore } from './channelStore.js';
@@ -57,6 +58,7 @@ import {
 // `from './permissionOverlay.js'` consumers (the test file +
 // `projectTabs.tsx` etc.).
 import {
+  autoApproveCancelledRequestIds,
   dismissedRequestIds,
   freshPermissionOverlayState,
   MINIMIZED_TIMEOUT_MS,
@@ -396,7 +398,52 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     clearTabPermissionHighlight(secret);
   }
 
+  // HS-9702 (docs/137) — auto-approve countdown. `perm.auto_approve_at` (server-set
+  // epoch-ms deadline; present only when enabled for the owning project) drives a
+  // once-a-second countdown in the popup footer. On reaching the deadline the popup
+  // approves itself (`respondToPermission('allow', …, {auto})`); a Cancel button
+  // stops it and keeps the popup open for a manual decision.
+  let autoApproveTimer: ReturnType<typeof setInterval> | null = null;
+  function stopAutoApproveTimer(): void {
+    if (autoApproveTimer !== null) { clearInterval(autoApproveTimer); autoApproveTimer = null; }
+  }
+  function startAutoApproveCountdown(): void {
+    const deadline = perm.auto_approve_at;
+    if (typeof deadline !== 'number') return; // auto-approve off for this project
+    if (autoApproveCancelledRequestIds.has(perm.request_id)) return; // user cancelled it earlier
+    const textEl = toElement(<span className="permission-auto-approve-text"></span>);
+    const cancelBtn = toElement(<button className="permission-auto-approve-cancel" type="button">Cancel</button>);
+    const row = toElement(<div className="permission-auto-approve" role="status" aria-live="polite"></div>);
+    row.append(textEl, cancelBtn);
+    // Sit just above the Minimize / No-response footer links (or at the end).
+    const links = handle.overlay.querySelector('.dialog-shell-links');
+    if (links !== null) handle.overlay.insertBefore(row, links);
+    else handle.overlay.appendChild(row);
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      stopAutoApproveTimer();
+      autoApproveCancelledRequestIds.add(perm.request_id);
+      row.remove();
+    });
+    const tick = (): void => {
+      // Self-heal: if the popup DOM was torn down by a path that didn't clear the
+      // timer (e.g. the poll-driven auto-dismiss removes `.permission-popup`
+      // directly), stop rather than approving a request whose popup is gone.
+      if (!handle.overlay.isConnected) { stopAutoApproveTimer(); return; }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        stopAutoApproveTimer();
+        respondToPermission('allow', undefined, { auto: true });
+        return;
+      }
+      textEl.textContent = `Auto-approving in ${formatCountdown(remaining)}`;
+    };
+    tick(); // render immediately, don't wait a second for the first frame
+    autoApproveTimer = setInterval(tick, 1000);
+  }
+
   function cleanupAndDismiss() {
+    stopAutoApproveTimer(); // HS-9702
     releaseActiveCheckoutIfAny();
     dismissedRequestIds.add(perm.request_id);
     clearPopupOnly();
@@ -409,6 +456,7 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
   }
 
   function cleanupAndMinimize() {
+    stopAutoApproveTimer(); // HS-9702 — pause the countdown; a re-open restarts it (unless cancelled)
     releaseActiveCheckoutIfAny();
     clearPopupOnly();
     const timeoutId = setTimeout(() => {
@@ -427,7 +475,8 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
     restoreEditorFocusIfIdle(); // HS-9162
   }
 
-  function respondToPermission(behavior: 'allow' | 'deny', optionId?: string) {
+  function respondToPermission(behavior: 'allow' | 'deny', optionId?: string, opts?: { auto?: boolean }) {
+    stopAutoApproveTimer(); // HS-9702 — a decision (manual or the timeout firing) ends the countdown
     respondedRequestIds.add(perm.request_id);
     // Send with the OWNING project's secret — not the active project's — so a
     // response initiated from a background-project popup still routes.
@@ -447,6 +496,9 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
       tool_name: perm.tool_name,
       description: perm.description,
       input_preview: perm.input_preview ?? '',
+      // HS-9702 — flag a timeout auto-approval so the server logs it distinctly
+      // (`Auto-approved (timeout)`) in the Commands Log rather than as a manual allow.
+      auto_approved: opts?.auto === true ? true : undefined,
     }, secret).catch(() => { /* network blip — overlay UI already torn down by clearPopupOnly() below */ });
     clearProjectAttention(secret);
     // Also drop any minimized bookkeeping for this request.
@@ -526,6 +578,10 @@ function showPermissionPopupBody(secret: string, perm: PermissionData) {
       respondToPermission('deny');
     });
   }
+
+  // HS-9702 (docs/137) — start the auto-approve countdown once the popup + its
+  // action buttons are wired (a no-op when `perm.auto_approve_at` is unset).
+  startAutoApproveCountdown();
 
   // HS-8171 v2 — check out the live project terminal into the popup
   // body container. The checkout is synchronous: `checkout()` reparents

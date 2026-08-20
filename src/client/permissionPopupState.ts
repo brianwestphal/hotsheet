@@ -134,3 +134,10 @@ export const MINIMIZED_TIMEOUT_MS = 2 * 60 * 1000;
  *  given the 3s long-poll cap + 100ms reschedule) while ignoring the
  *  single-poll transient. */
 export const AUTO_DISMISS_MISS_THRESHOLD = 2;
+
+// HS-9702 (docs/137) — request IDs whose auto-approve countdown the user has
+// explicitly CANCELLED (clicked "Cancel" on the popup). The popup stays open for a
+// manual decision and the countdown must NOT restart if the popup is re-mounted
+// (minimize → reopen, or a fresh poll re-shows it). Persisted here (module scope)
+// rather than in a popup-body closure so it survives those re-mounts.
+export const autoApproveCancelledRequestIds = new Set<string>();

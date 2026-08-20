@@ -282,6 +282,9 @@ describe('HS-9002 — shared/local settings split', () => {
   describe('defaultScope', () => {
     it('classifies machine-local keys as local', () => {
       for (const k of ['backupDir', 'port', 'permission_allow_rules', 'terminal_prompt_allow_rules',
+        // HS-9702 — the auto-approve-after-timeout window is classified with the
+        // allow-rules: a per-machine safety/convenience preference, never shared.
+        'permission_auto_approve_ms',
         'announcer_ai_key_id', 'announcer_last_listened_at', 'notify_permission',
         'detail_width', 'drawer_open']) {
         expect(defaultScope(k)).toBe('local');

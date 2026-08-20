@@ -265,6 +265,14 @@ export const PendingPermissionEntrySchema = z.object({
   description: z.string().optional(),
   input_preview: z.string().optional(),
   tool_input: z.unknown().optional(),
+  // HS-9702 (docs/137) — channel-side enqueue time (epoch ms), passed through from
+  // `channelPermissions.ts::PendingPermission`; the main server reads it to compute
+  // the auto-approve deadline. Optional (older channel servers omit it).
+  timestamp: z.number().optional(),
+  // HS-9702 (docs/137) — epoch-ms auto-approve deadline, computed + attached by the
+  // main server's permission poll (`routes/projects.ts`) from the owning project's
+  // `permission_auto_approve_ms`. Absent when auto-approve is off for that project.
+  auto_approve_at: z.number().optional(),
   // HS-9330 (docs/114 §114.5.1) — the OPTION-DRIVEN generalization: an ACP request
   // carries the agent's own `PermissionOption[]` (`{ optionId, name, kind }`); the
   // overlay renders one button per option. Absent for the Claude/MCP-hooks path.
