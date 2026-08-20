@@ -109,19 +109,21 @@ export interface BindListRenderResult {
  * `scrollHeight` matches the full N × `rowHeight`. Rows keep DOM identity by
  * `key` exactly as in the non-virtualized `bindList`.
  *
- * This replaced the windowing half of Hot Sheet's hand-rolled wrapper (a derived
- * windowed signal + a padding effect + a scroll listener): ~80 lines → one
- * delegating call. kerf renders `overscan` rows even before layout
- * (`clientHeight` 0) and re-windows on every scroll (via `requestAnimationFrame`,
- * so a rapid scroll coalesces to one re-window per frame).
+ * This replaced Hot Sheet's hand-rolled wrapper (a derived windowed signal + a
+ * padding effect + a scroll listener + a below-threshold fast path): ~80 lines →
+ * one delegating call. kerf re-windows on every scroll (via `requestAnimationFrame`,
+ * coalescing a rapid scroll to one re-window per frame) and, where `ResizeObserver`
+ * exists, on the container resizing — so a list mounted before layout
+ * (`clientHeight` 0) fills in once it's sized (KF-506, beta.6), no manual nudge.
  *
- * **This is the virtualize primitive; the caller owns the threshold.** kerf's
- * `virtualize` is all-or-nothing per list — there's no "render everything below N
- * rows" mode. Hot Sheet still WANTS small/medium lists fully in the DOM (for
- * find-in-page, screen readers, and DOM-count tests), so `ticketList.tsx` gates
- * on `LIST_VIRTUALIZE_THRESHOLD`: below it a plain non-virtualized `bindList`
- * renders every row; at or above it, this. Both mount into a `.ticket-list-rows`
- * div (kerf's inner one here, tagged by the caller).
+ * **`minRows` keeps small lists fully rendered — no call-site branch (KF-504,
+ * beta.6).** Below `minRows` kerf renders EVERY row (no windowing, zero padding);
+ * at or above it, it windows — and the DOM structure (kerf's inner container) is
+ * identical either way. Hot Sheet WANTS small/medium lists fully in the DOM (for
+ * find-in-page, screen readers, DOM-count tests), and `minRows` gives that without
+ * the caller branching on list length. `containerClass` classes kerf's inner
+ * container (KF-505) so `.ticket-list-rows` (the detachment marker + sidebar e2e
+ * hook) is set declaratively — no `lastElementChild` guessing.
  *
  * **Fixed-height only here.** `opts.rowHeight` is a fixed pixel height (every
  * `.ticket-row` variant is 32 px). kerf also supports variable / measured heights
@@ -139,7 +141,7 @@ export function bindListVirtualized<T>(
   source: AnySignal<readonly T[]>,
   key: (item: T) => unknown,
   render: (item: T) => BindListRenderResult,
-  opts: { rowHeight: number; overscan?: number },
+  opts: { rowHeight: number; overscan?: number; minRows?: number; containerClass?: string },
 ): () => void {
   return kerfBindList(scrollParent, source, {
     key: (item) => key(item) as ListKey,
@@ -147,7 +149,17 @@ export function bindListVirtualized<T>(
       const r = render(item);
       return { el: r.el as HTMLElement, dispose: r.dispose };
     },
-    virtualize: { rowHeight: opts.rowHeight, overscan: opts.overscan ?? 10 },
+    virtualize: {
+      rowHeight: opts.rowHeight,
+      overscan: opts.overscan ?? 10,
+      // KF-504 (beta.6) — below `minRows` kerf renders EVERY row (no windowing),
+      // windowing only at/above it; the inner container is the same either way, so
+      // the CALL SITE no longer branches on list length for find-in-page / a11y /
+      // DOM-count. KF-505 — `containerClass` classes kerf's inner rows container
+      // declaratively (no `lastElementChild` guessing; also `handle.container`).
+      minRows: opts.minRows,
+      containerClass: opts.containerClass,
+    },
   });
 }
 

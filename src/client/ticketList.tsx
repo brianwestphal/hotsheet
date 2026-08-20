@@ -8,7 +8,7 @@ import { syncDetailPanel, updateStats } from './detail.js';
 import { byId, byIdOrNull, toElement } from './dom.js';
 import { focusDraftInput as _focusDraftInput, syncNewTicketHost, updateDraftHero } from './draftRow.js';
 import { effect } from './reactive.js';
-import { bindList, bindListVirtualized } from './reactive-bind.js';
+import { bindListVirtualized } from './reactive-bind.js';
 import { renderSearchExtraRows } from './searchExtraRows.js';
 import type { SyncedTicketInfo,Ticket  } from './state.js';
 import { getActiveProject, getProjectViewScrollTop, LIST_PAGE_SIZE, setProjectViewScrollTop, setSyncedTicketMap, state } from './state.js';
@@ -208,12 +208,11 @@ function rowFactoryFor(variant: BindListVariant): (ticket: Ticket) => HTMLElemen
   return createTicketRow;
 }
 
-// KERF-EVAL — below this many tickets the list renders fully (a plain
-// non-virtualized `bindList`), so find-in-page / screen readers / DOM-count
-// assertions see every row; at or above it, kerf's native viewport
+// KERF-EVAL — passed as kerf's `virtualize.minRows` (KF-504): below this many
+// tickets kerf renders the list fully (no windowing), so find-in-page / screen
+// readers / DOM-count assertions see every row; at or above it, viewport
 // virtualization kicks in. (Was the HS-8371 `threshold` option on the old
-// hand-rolled wrapper — kerf's `virtualize` is all-or-nothing per list, so the
-// threshold now lives at the call site.)
+// hand-rolled wrapper.)
 const LIST_VIRTUALIZE_THRESHOLD = 100;
 
 function ensureBindListMount(container: HTMLElement, variant: BindListVariant): void {
@@ -286,35 +285,24 @@ function ensureBindListMount(container: HTMLElement, variant: BindListVariant): 
       }
     : (ticket: Ticket): { el: Element } => ({ el: factory(ticket) });
 
-  // HS-8371 / HS-8372 + KERF-EVAL (beta.5) — virtualize LONG lists only. All
-  // three variants (`default`, `trash`, `preview`) share the same `.ticket-row`
-  // fixed-height (32 px) design, so one `rowHeight` covers them. Below the
-  // threshold the WHOLE list stays in the DOM (find-in-page, screen readers, and
-  // DOM-count assertions all see every row — the reason the threshold exists);
-  // above it, kerf's native `bindList({ virtualize })` windows to the viewport.
-  // Both paths mount rows in a `.ticket-list-rows` div — created here for the
-  // plain path, kerf's own inner div (tagged) for the virtualized one — so the
-  // HS-8504 detachment marker + the sidebar e2e keep one stable hook. Rows route
-  // through `rowFactoryFor` / `renderRow` so per-row effects (`setupTicketRowEffects`,
-  // default variant only) stay variant-specific. (kerf's virtualize is
-  // all-or-nothing per list, so the below-threshold full render is a plain
-  // non-virtualized `bindList`, NOT `virtualize` — see reactive-bind.ts.)
-  if (filteredTickets.value.length >= LIST_VIRTUALIZE_THRESHOLD) {
-    // `container` (`#ticket-list`) IS the scroll element; kerf creates + owns the
-    // inner rows div inside it (windowing + padding), appended synchronously as
-    // the last child — tag it with the shared `.ticket-list-rows` hook.
-    listViewBindListDispose = bindListVirtualized(container, filteredTickets, (t) => t.id, renderRow, { rowHeight: 32 });
-    container.lastElementChild?.classList.add('ticket-list-rows');
-    // kerf windows off `container.clientHeight` read synchronously, with no
-    // resize listener; if the container wasn't laid out yet (0 height) it renders
-    // only `overscan` rows. Nudge one re-window next frame once layout settles.
-    // `#ticket-list` has no scroll listener of its own, so this can't trip app code.
-    requestAnimationFrame(() => { container.dispatchEvent(new Event('scroll')); });
-  } else {
-    const rowsContainer = toElement(<div className="ticket-list-rows"></div>);
-    container.appendChild(rowsContainer);
-    listViewBindListDispose = bindList(rowsContainer, filteredTickets, (t) => t.id, renderRow);
-  }
+  // HS-8371 / HS-8372 + KERF-EVAL (beta.6) — one kerf `bindList({ virtualize })`
+  // for all three variants (`default`, `trash`, `preview`); they share the same
+  // `.ticket-row` fixed-height (32 px) design, so one `rowHeight` covers them.
+  // `container` (`#ticket-list`) IS the scroll element; kerf creates + owns the
+  // inner rows container inside it (windowing + padding). `minRows` keeps short
+  // lists FULLY in the DOM (find-in-page, screen readers, DOM-count assertions),
+  // windowing only at/above the threshold — same DOM structure either way, so no
+  // call-site branch (KF-504). `containerClass` sets the shared `.ticket-list-rows`
+  // hook (the HS-8504 detachment marker + sidebar e2e) declaratively (KF-505), and
+  // kerf's ResizeObserver handles a not-yet-laid-out / resized container (KF-506) —
+  // no `lastElementChild` tag, no scroll nudge. Rows route through `rowFactoryFor`
+  // / `renderRow` so per-row effects (`setupTicketRowEffects`, default variant
+  // only) stay variant-specific.
+  listViewBindListDispose = bindListVirtualized(container, filteredTickets, (t) => t.id, renderRow, {
+    rowHeight: 32,
+    minRows: LIST_VIRTUALIZE_THRESHOLD,
+    containerClass: 'ticket-list-rows',
+  });
 
   if (variant !== 'default') {
     const message = variant === 'trash' ? 'Trash is empty' : 'No tickets match this view';

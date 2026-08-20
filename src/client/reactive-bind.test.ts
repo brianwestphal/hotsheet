@@ -334,12 +334,45 @@ describe('bindListVirtualized (HS-8371)', () => {
   });
 
   it('a small list windows to itself — all rows mount when they fit the viewport + overscan', () => {
-    // No threshold branch anymore: kerf virtualizes every size. A 20-row list at
-    // a 320 px viewport (10 visible) + overscan 10 fits entirely, so all mount.
+    // A 20-row list at a 320 px viewport (10 visible) + overscan 10 fits entirely.
     const sp = buildScrollContainer();
     const items = signal<Row[]>(rows(20));
     const dispose = bindListVirtualized(sp, items, r => r.id, render, { rowHeight: 32, overscan: 10 });
     expect(rowsDiv(sp).querySelectorAll('.row').length).toBe(20);
+    dispose();
+  });
+
+  it('minRows renders EVERY row (no windowing) below the threshold — KF-504', () => {
+    // 50 rows at a 320 px viewport would normally window to ~20. With minRows:100
+    // the list is below the threshold, so kerf renders all 50 with zero padding.
+    const sp = buildScrollContainer();
+    const items = signal<Row[]>(rows(50));
+    const dispose = bindListVirtualized(sp, items, r => r.id, render, { rowHeight: 32, minRows: 100 });
+    const inner = rowsDiv(sp);
+    expect(inner.querySelectorAll('.row').length).toBe(50);
+    expect(inner.style.paddingTop).toBe('0px');
+    expect(inner.style.paddingBottom).toBe('0px');
+    dispose();
+  });
+
+  it('minRows windows again at/above the threshold — KF-504', () => {
+    // 200 rows with minRows:100 is over the threshold → windowed like normal.
+    const sp = buildScrollContainer();
+    const items = signal<Row[]>(rows(200));
+    const dispose = bindListVirtualized(sp, items, r => r.id, render, { rowHeight: 32, minRows: 100, overscan: 10 });
+    const mounted = rowsDiv(sp).querySelectorAll('.row').length;
+    expect(mounted).toBeGreaterThan(15);
+    expect(mounted).toBeLessThan(25);
+    dispose();
+  });
+
+  it('containerClass classes kerf\'s inner container declaratively — KF-505', () => {
+    const sp = buildScrollContainer();
+    const items = signal<Row[]>(rows(50));
+    const dispose = bindListVirtualized(sp, items, r => r.id, render, { rowHeight: 32, containerClass: 'my-rows' });
+    // The inner container carries the class — reachable without lastElementChild guessing.
+    expect(sp.querySelector(':scope > .my-rows')).not.toBeNull();
+    expect(rowsDiv(sp).classList.contains('my-rows')).toBe(true);
     dispose();
   });
 });
