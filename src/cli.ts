@@ -291,26 +291,37 @@ async function startAndConfigure(port: number, dataDir: string, strictPort: bool
 }
 
 /**
+ * HS-9662 / docs/136 — connect the detached PTY broker (spawning it if absent) so
+ * sessions that survived a prior accidental server death are re-adopted (with their
+ * scrollback) rather than re-spawned. Gated; a no-op unless HOTSHEET_PTY_BROKER=1.
+ * Best-effort — a broker failure must never block startup (terminals just won't
+ * survive the next death). Idempotent (`initBrokerMode` returns early once
+ * connected), so callers can invoke it defensively before any path that re-adopts.
+ *
+ * HS-9699 — called in main() BEFORE the primary project's eager-spawn so the
+ * survived-session pool is populated first; otherwise the primary's fresh spawn
+ * takes the sessions-map key and orphans the real survived session.
+ */
+async function connectPtyBroker(): Promise<void> {
+  // HS-9692 — clear any stale quit-intent marker from a prior real quit so a
+  // leftover can't make THIS run tear the broker down on an accidental signal.
+  const { clearQuitIntent } = await import('./terminals/quitIntent.js');
+  clearQuitIntent();
+  const { isBrokerMode, initBrokerMode } = await import('./terminals/registry.js');
+  if (isBrokerMode()) {
+    startupMark('connecting PTY broker');
+    try { await initBrokerMode(); } catch (e) { console.error('[pty-broker] init failed:', e instanceof Error ? e.message : String(e)); }
+  }
+}
+
+/**
  * Post-startup tasks: backup scheduling, project restore, instance file, browser open.
  */
 async function postStartup(dataDir: string, actualPort: number, demo: number | null, noOpen: boolean): Promise<void> {
   if (demo === null) {
-    // HS-9662 / docs/136 — connect the detached PTY broker (spawning it if absent)
-    // BEFORE any eager terminal spawn, so surviving sessions from a prior server
-    // death are re-adopted (with their scrollback) rather than re-spawned. Gated;
-    // no-op unless HOTSHEET_PTY_BROKER=1. Best-effort — a broker failure must never
-    // block startup (terminals just won't survive the next death).
-    {
-      // HS-9692 — clear any stale quit-intent marker from a prior real quit so a
-      // leftover can't make THIS run tear the broker down on an accidental signal.
-      const { clearQuitIntent } = await import('./terminals/quitIntent.js');
-      clearQuitIntent();
-      const { isBrokerMode, initBrokerMode } = await import('./terminals/registry.js');
-      if (isBrokerMode()) {
-        startupMark('post-startup: connecting PTY broker');
-        try { await initBrokerMode(); } catch (e) { console.error('[pty-broker] init failed:', e instanceof Error ? e.message : String(e)); }
-      }
-    }
+    // HS-9699 — the PTY broker is now connected in main() BEFORE the primary
+    // project's eager-spawn (idempotent), so it is already up by the time we get
+    // here; the post-restore sweep below relies on that.
     startupMark('post-startup: init backup scheduler');
     initBackupScheduler(dataDir);
     startupMark('post-startup: init snapshot scheduler');
@@ -959,6 +970,15 @@ async function main() {
     console.log(`  Server-only mode (--server ${parsed.server}) — no client launched; connect a Hot Sheet client to this server.`);
   }
   registerExistingProject(dataDir, secret);
+  // HS-9699 — connect the PTY broker BEFORE the primary project's eager-spawn, so
+  // its survived sessions (from a prior accidental server death) are already in the
+  // pool and get re-adopted with their scrollback, rather than being orphaned when
+  // a fresh spawn takes the sessions-map key first (the `sessions.has(key)` guard in
+  // adoptSurvivedSession would then bail on the real survived session). Restored
+  // (non-primary) projects already run their eager-spawn AFTER the broker connects
+  // (inside restorePreviousProjects during postStartup); the primary was the one
+  // asymmetric case. Gated on non-demo — demo mode never uses the broker.
+  if (demo === null) await connectPtyBroker();
   // Eager-spawn non-lazy terminals for the primary project (HS-6310).
   const { eagerSpawnTerminals } = await import('./terminals/eagerSpawn.js');
   eagerSpawnTerminals(secret, dataDir);

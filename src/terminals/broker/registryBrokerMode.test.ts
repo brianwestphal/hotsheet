@@ -117,6 +117,66 @@ describe('registry ↔ broker (broker mode, fake pty)', () => {
     expect(broker.sessionInfos().some(s => s.sessionId === 'secA::claude')).toBe(false);
   });
 
+  // HS-9699 — the PRIMARY project's eager-spawn must run AFTER the broker is
+  // connected (so its survived-session pool is populated), else `ensureSpawned` for a
+  // non-lazy terminal takes the `sessions` key with a fresh spawn and the later
+  // re-adopt bails at `sessions.has(key)`, orphaning the real survived session. These
+  // two tests pin both orderings: the fix (connect → eager-spawn) re-adopts; the bug
+  // order (eager-spawn → connect) orphans.
+  it('HS-9699: broker connected BEFORE eager-spawn re-adopts the primary terminal (no fresh spawn)', async () => {
+    await brokerMode.initBrokerMode();
+    reg.ensureSpawned('secP', dataDir, 'claude', CFG); // a non-lazy primary terminal
+    await waitFor(() => broker.ptyForTest('secP::claude') !== null);
+    const survivedPid = fake('secP::claude').pid;
+    fake('secP::claude').emit('PRIMARY-SCROLLBACK\n');
+    await new Promise(r => setTimeout(r, 40));
+
+    // Accidental node-server death: local registry cleared, broker PTY survives.
+    reg.destroyAllTerminals();
+    expect(broker.ptyForTest('secP::claude')).not.toBeNull();
+
+    // FIXED order (cli.ts main() after HS-9699): connect the broker FIRST — which
+    // repopulates the survived pool — THEN eager-spawn the primary terminal.
+    await brokerMode.initBrokerMode();
+    reg.ensureSpawned('secP', dataDir, 'claude', CFG);
+
+    // Same broker session (adopted), NOT a fresh spawn with a new pid.
+    expect(fake('secP::claude').pid).toBe(survivedPid);
+    const res = reg.attach('secP', dataDir, { onData: () => { /* */ }, onExit: () => { /* */ } }, { configOverride: CFG }, 'claude');
+    expect(res.history.toString()).toContain('PRIMARY-SCROLLBACK');
+    expect(res.alive).toBe(true);
+    reg.destroyTerminal('secP', 'claude');
+  });
+
+  it('HS-9699: eager-spawn BEFORE the broker connects orphans the survived session (the bug the ordering fix prevents)', async () => {
+    await brokerMode.initBrokerMode();
+    reg.ensureSpawned('secQ', dataDir, 'claude', CFG);
+    await waitFor(() => broker.ptyForTest('secQ::claude') !== null);
+    const survivedPid = fake('secQ::claude').pid;
+
+    // Accidental death: local registry cleared + broker client disconnected; the
+    // survived pool is now EMPTY until initBrokerMode reconnects.
+    reg.destroyAllTerminals();
+    expect(broker.ptyForTest('secQ::claude')).not.toBeNull();
+
+    // BUG order: eager-spawn runs while the pool is still empty (broker not yet
+    // reconnected). `adoptSurvivedSession` finds nothing, so `ensureSpawned` takes
+    // the sessions-map key — brokerSpawn throws without a client, but the key is
+    // already claimed. eagerSpawnTerminals swallows this; mirror that here.
+    try { reg.ensureSpawned('secQ', dataDir, 'claude', CFG); } catch { /* as eagerSpawnTerminals does */ }
+
+    // Now the broker reconnects and the post-restore sweep tries to re-adopt.
+    await brokerMode.initBrokerMode();
+    const n = reg.readoptProjectBrokerSessions('secQ', dataDir);
+    expect(n).toBe(0); // orphaned — the taken key made adoptSurvivedSession bail
+
+    // The live survived pty is still in the broker but unreachable from the registry
+    // (nobody adopted it) — exactly the blank/lost-terminal symptom.
+    expect(broker.ptyForTest('secQ::claude')).not.toBeNull();
+    expect(broker.ptyForTest('secQ::claude')?.pid).toBe(survivedPid);
+    reg.destroyTerminal('secQ', 'claude');
+  });
+
   // HS-9694 — the re-adoption pool must be refreshable from the broker's CURRENT live
   // sessions (authoritative), not just the connect-time `welcome` snapshot. Closes the
   // idempotency gap where a second `initBrokerMode` (client already set) returns
