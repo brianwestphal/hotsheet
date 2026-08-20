@@ -18,6 +18,10 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
   });
 
   test('undo status change reverts to previous status', async ({ page, request }) => {
+    // HS-9698 — same load-sensitivity class as the delete-undo tests below (observed
+    // flaking under concurrent load even though focus is already reset before undo).
+    // Give it 3× headroom; the revert assertion below carries a generous budget too.
+    test.slow();
     const suffix = Date.now();
     const title = `Undo status test ${suffix}`;
     await request.post('/api/tickets', { headers, data: { title } });
@@ -26,9 +30,15 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
 
     const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${title}"]`) }).first();
 
-    // Change status: not_started → started
+    // Change status: not_started → started. HS-9698 — `trackedPatch` writes the
+    // store OPTIMISTICALLY (so `title=started` shows instantly) but pushes the undo
+    // entry only AFTER the awaited PATCH (`actions.ts`), so an undo fired on the
+    // optimistic title can hit an EMPTY stack. Wait for the PATCH response — the push
+    // follows it synchronously — before undoing.
     const statusBtn = row.locator('.ticket-status-btn');
+    const patchResp = page.waitForResponse((r) => r.request().method() === 'PATCH' && /\/api\/tickets\/\d+/.test(r.url()));
     await statusBtn.click();
+    await patchResp;
     await expect(statusBtn).toHaveAttribute('title', 'started', { timeout: 3000 });
 
     // Click the ticket list container to ensure focus is not in an input
@@ -37,11 +47,18 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
     // Undo with Cmd+Z
     await page.keyboard.press('Meta+z');
 
-    // Should revert to not_started
-    await expect(statusBtn).toHaveAttribute('title', 'not started', { timeout: 5000 });
+    // Should revert to not_started (15s ceiling — the undo round-trip + re-render
+    // lags under load; Playwright polls, so the extra budget is free on a fast run).
+    await expect(statusBtn).toHaveAttribute('title', 'not started', { timeout: 15000 });
   });
 
   test('undo delete restores the ticket', async ({ page, request }) => {
+    // HS-9698 — under heavy parallel CI load the undo-restore re-render is slow;
+    // give the whole test 3× headroom (test.slow) so the delete/reload steps don't
+    // exhaust the budget, and the post-undo visibility assertion below a generous
+    // condition-based budget of its own (expect timeouts are independent of the
+    // test timeout). Both were 5/5-flaky on a loaded machine; neither slows a fast run.
+    test.slow();
     const suffix = Date.now();
     const title = `Undo delete test ${suffix}`;
     await request.post('/api/tickets', { headers, data: { title } });
@@ -55,14 +72,29 @@ test.describe('Undo/redo workflow (HS-5628)', () => {
     await expect(row).toHaveClass(/selected/, { timeout: 3000 });
     await row.locator('.ticket-number').click({ button: 'right' });
     await page.waitForTimeout(200);
+    // HS-9698 — the real flake cause: `trackedDelete` removes the card IMMEDIATELY
+    // (optimistic) but pushes the undo entry only AFTER the awaited DELETE round-trip
+    // (`actions.ts` — `removeTicket` then `await deleteTicket` then `push`). So a
+    // `Meta+z` fired as soon as the card hides can hit an EMPTY undo stack → nothing
+    // restores; load widens that window. Wait for the DELETE response (which the
+    // push follows synchronously) before undo, not just for the card to vanish.
+    const deleteResp = page.waitForResponse((r) => r.request().method() === 'DELETE' && /\/api\/tickets\/\d+/.test(r.url()));
     await page.locator('.context-menu-item.danger').filter({ hasText: 'Delete' }).click();
+    await deleteResp;
     await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeHidden({ timeout: 5000 });
+
+    // Move focus OUT of any ticket input before undo. The global Cmd+Z handler bails
+    // to native undo when `e.target` is editable (`shouldSkipGlobalUndo`), so if
+    // focus lingers on an input the ticket-level undo never fires. Clicking the
+    // (non-editable) list neutralizes that deterministically.
+    await page.locator('#ticket-list').click({ position: { x: 5, y: 5 } });
 
     // Undo delete
     await page.keyboard.press('Meta+z');
 
-    // Ticket should reappear
-    await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 5000 });
+    // Ticket should reappear (15s ceiling for the restore re-render under load;
+    // Playwright polls, so the extra budget is free on a fast run).
+    await expect(page.locator(`.ticket-title-input[value="${title}"]`)).toBeVisible({ timeout: 15000 });
   });
 
   test('HS-9117 — undo reverts the details textarea immediately while it has focus', async ({ page, request }) => {

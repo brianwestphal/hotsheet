@@ -9,6 +9,11 @@ test.describe('Worklist preamble (HS-8917 / §6)', () => {
   const PREAMBLE = 'E2E preamble: be careful with migrations.';
 
   test('textarea saves to file-settings and restores on reload', async ({ page, request }) => {
+    // HS-9698 — under heavy parallel CI load the debounced file-settings save
+    // round-trip (and the two scope-load `waitForResponse`s) can exceed the 30s
+    // test timeout, failing a load-sensitivity flake rather than a real bug. Triple
+    // the budget; a lightly-loaded run finishes in a few seconds regardless.
+    test.slow();
     await page.goto('/');
     await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
 

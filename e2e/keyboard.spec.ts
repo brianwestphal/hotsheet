@@ -134,6 +134,9 @@ test.describe('Keyboard shortcuts', () => {
   });
 
   test('Cmd+Z undoes a deletion', async ({ page }) => {
+    // HS-9698 — load-sensitive undo-restore re-render; 3× headroom for the whole
+    // sequence (the post-undo assertion below carries its own generous budget).
+    test.slow();
     await createTicket(page, 'Undo test ticket');
 
     // Select and delete the ticket
@@ -141,16 +144,31 @@ test.describe('Keyboard shortcuts', () => {
     await blurInputs(page);
     await selectTicket(page, 'Undo test ticket');
     await blurInputs(page);
+    // HS-9698 — a keyboard Backspace-delete routes through `trackedBatch`
+    // (POST /api/tickets/batch, action:'delete'), which applies the removal
+    // OPTIMISTICALLY (card hides instantly) but pushes the undo entry only AFTER the
+    // awaited batch round-trip (`actions.ts`). So a `Meta+z` fired the moment the
+    // card hides can hit an EMPTY undo stack and restore nothing (load widens that
+    // window). Wait for the batch response — the push follows it synchronously —
+    // before undoing.
+    const deleteResp = page.waitForResponse((r) => r.request().method() === 'POST' && /\/api\/tickets\/batch\b/.test(r.url()));
     await page.keyboard.press('Backspace');
+    await deleteResp;
 
     // Verify it is gone
     await expect(page.locator('.ticket-row[data-id] .ticket-title-input[value="Undo test ticket"]')).toBeHidden({ timeout: 5000 });
 
+    // Reset focus off any ticket input before undo. The global Cmd+Z handler bails to
+    // native undo when `e.target` is editable (`shouldSkipGlobalUndo`); after the
+    // Backspace-delete focus can land on an input, so the ticket-level undo silently
+    // no-ops. blurInputs (clicks the non-editable #ticket-list) neutralizes that.
+    await blurInputs(page);
+
     // Press Cmd+Z to undo
     await page.keyboard.press('Meta+z');
 
-    // Ticket should reappear
-    await expect(page.locator('.ticket-row[data-id] .ticket-title-input[value="Undo test ticket"]')).toBeVisible({ timeout: 5000 });
+    // Ticket should reappear (15s ceiling for the restore re-render under load).
+    await expect(page.locator('.ticket-row[data-id] .ticket-title-input[value="Undo test ticket"]')).toBeVisible({ timeout: 15000 });
   });
 
   test('typing in draft input does not trigger shortcuts', async ({ page }) => {
