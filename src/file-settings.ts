@@ -60,9 +60,10 @@ export const FileSettingsSchema = z.object({
   codex_interactive_permissions: z.boolean().optional(),
   // HS-9702 (docs/137) — auto-approve a pending permission request if the user
   // doesn't decide within this many milliseconds. 0 / absent = OFF (the default;
-  // requests wait for an explicit decision). Allowed values: 60000 / 120000 /
-  // 300000 / 900000 / 3600000 (1/2/5/15/60 min). §95 **LOCAL** (a per-machine
-  // safety/convenience preference like `permission_allow_rules`; never shared).
+  // requests wait for an explicit decision). Allowed values: 15000 / 60000 /
+  // 120000 / 300000 / 900000 / 3600000 (15s + 1/2/5/15/60 min). §95 **LOCAL** (a
+  // per-machine safety/convenience preference like `permission_allow_rules`; never
+  // shared). The canonical list lives in `src/permissionAutoApprove.ts`.
   permission_auto_approve_ms: z.number().optional(),
   // HS-9411 (docs/124) — the "In Development" gates. Declared here so the layered
   // settings API carries them; the authoritative list + labels live in

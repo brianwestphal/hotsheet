@@ -13,10 +13,11 @@
  */
 
 /** The auto-approve window choices offered in Settings → Permissions, in order.
- *  `ms: 0` is the OFF sentinel (the default). The five durations mirror the
- *  HS-9702 spec (1/2/5/15/60 min). */
+ *  `ms: 0` is the OFF sentinel (the default). The durations mirror the HS-9702 spec
+ *  (1/2/5/15/60 min) plus a short 15-second option (added on request). */
 export const AUTO_APPROVE_OPTIONS: ReadonlyArray<{ readonly ms: number; readonly label: string }> = [
   { ms: 0, label: 'Off' },
+  { ms: 15_000, label: '15 seconds' },
   { ms: 60_000, label: '1 minute' },
   { ms: 120_000, label: '2 minutes' },
   { ms: 300_000, label: '5 minutes' },

@@ -11,15 +11,16 @@ import {
 } from './permissionAutoApprove.js';
 
 describe('AUTO_APPROVE_OPTIONS (HS-9702)', () => {
-  it('leads with the Off sentinel then the five documented windows', () => {
-    expect(AUTO_APPROVE_OPTIONS.map(o => o.ms)).toEqual([0, 60_000, 120_000, 300_000, 900_000, 3_600_000]);
+  it('leads with the Off sentinel then the documented windows (incl. the 15s option)', () => {
+    expect(AUTO_APPROVE_OPTIONS.map(o => o.ms)).toEqual([0, 15_000, 60_000, 120_000, 300_000, 900_000, 3_600_000]);
     expect(AUTO_APPROVE_OPTIONS[0]).toEqual({ ms: 0, label: 'Off' });
+    expect(AUTO_APPROVE_OPTIONS[1]).toEqual({ ms: 15_000, label: '15 seconds' });
   });
 });
 
 describe('isEnabledAutoApproveMs', () => {
-  it('accepts exactly the five enabled windows', () => {
-    for (const ms of [60_000, 120_000, 300_000, 900_000, 3_600_000]) {
+  it('accepts exactly the enabled windows', () => {
+    for (const ms of [15_000, 60_000, 120_000, 300_000, 900_000, 3_600_000]) {
       expect(isEnabledAutoApproveMs(ms)).toBe(true);
     }
   });

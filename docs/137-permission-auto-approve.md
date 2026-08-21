@@ -2,7 +2,7 @@
 
 HS-9702. A per-project **opt-in** setting that automatically **approves** a pending
 permission request if the user doesn't make a decision within a chosen window
-(1 / 2 / 5 / 15 / 60 minutes). The permission popup shows a live countdown with a
+(15 seconds, or 1 / 2 / 5 / 15 / 60 minutes). The permission popup shows a live countdown with a
 **Cancel** button so the user can see the auto-approval coming and stop it.
 
 > **Status:** Shipped (HS-9702). Off by default; local-only (per-machine, never
@@ -27,8 +27,8 @@ loses the prompt for the requests that matter).
 ## 137.2 Scope
 
 **In scope.**
-- A per-project **Settings → Permissions** dropdown: `Off` (default) / 1 / 2 / 5 /
-  15 / 60 minutes.
+- A per-project **Settings → Permissions** dropdown: `Off` (default) / 15 seconds /
+  1 / 2 / 5 / 15 / 60 minutes.
 - A live **countdown** in the permission popup (`Auto-approving in M:SS`) with a
   **Cancel** button that stops the auto-approval and keeps the popup open for a
   manual decision.
@@ -50,7 +50,7 @@ loses the prompt for the requests that matter).
 
 `permission_auto_approve_ms` — a scalar in `<dataDir>/settings.local.json`:
 - `0` / absent = **Off** (the default).
-- One of `60000` / `120000` / `300000` / `900000` / `3600000` (1/2/5/15/60 min).
+- One of `15000` / `60000` / `120000` / `300000` / `900000` / `3600000` (15s + 1/2/5/15/60 min).
 
 Declared in `src/file-settings.ts` (`FileSettingsSchema` + the `FileSettings`
 interface) and listed in **`LOCAL_SCOPE_KEYS`**, so §95 routes it to the local layer
@@ -64,9 +64,9 @@ module **`src/permissionAutoApprove.ts`** (shared by the settings UI, the overla
 the main-server poll, and the channel server):
 - `AUTO_APPROVE_OPTIONS` — the ordered dropdown choices (`{ms, label}`; `ms:0` = Off).
 - `parseAutoApproveMs(raw)` — **fail-closed** coercion: anything that isn't exactly
-  one of the five offered enabled windows (a string, a legacy/garbage value, a
-  negative, `NaN`) collapses to `0` (Off), so a bad setting can never auto-approve on
-  an unexpected schedule.
+  one of the offered enabled windows (a string, a legacy/garbage value, a negative,
+  `NaN`) collapses to `0` (Off), so a bad setting can never auto-approve on an
+  unexpected schedule.
 - `formatCountdown(ms)` — `M:SS`, rounding **up** to whole seconds (the last tick
   shows `0:01`, not a premature `0:00`).
 - `isEnabledAutoApproveMs` / `isAutoApproveEnabled` / `autoApproveRemainingMs` /
