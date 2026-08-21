@@ -1116,6 +1116,14 @@ fn build_and_spawn_sidecar(
         sidecar = sidecar.env("HOTSHEET_QUIT_INTENT_FILE", qip.to_string_lossy().to_string());
     }
 
+    // HS-9700 / HS-9701 (docs/136 §136.6) — a DEDICATED desktop-app identity marker,
+    // kept distinct from HOTSHEET_TERMINAL_SUPERVISOR above (which governs broker
+    // teardown) so it carries no broker semantics. Both the packaged sidecar AND the
+    // `tauri:dev` server set it; `cli.ts` (`isDesktopAppServer`) reads it to tag
+    // instance.json `desktop:true` and refuse a hand-run `npm run dev --replace`
+    // against the running desktop app (which would kill its terminals + pop a stray tab).
+    sidecar = sidecar.env("HOTSHEET_DESKTOP_APP", "1");
+
     let args_refs: Vec<&str> = sidecar_args.iter().map(|s| s.as_str()).collect();
     let (rx, child) = sidecar
         .args(&args_refs)
@@ -1608,6 +1616,12 @@ pub fn run() {
                             .current_dir(project_root)
                             // tsx-as-loader reads the tsconfig (jsx / jsxImportSource / paths) from here.
                             .env("TSX_TSCONFIG_PATH", "tsconfig.json")
+                            // HS-9701 (docs/136 §136.6) — tag the dev server as a Tauri-launched
+                            // desktop-app server (same marker the packaged sidecar sets), so a
+                            // bare `npm run dev --replace` refuses to replace a running `tauri:dev`
+                            // app just as it does the packaged app. Distinct from the supervision
+                            // marker → no broker-teardown change here.
+                            .env("HOTSHEET_DESKTOP_APP", "1")
                             .stdout(std::process::Stdio::piped())
                             // HS-9557 — piped (not inherited) + drained, so a GUI launch still
                             // records fatals and a full pipe can't wedge the child.

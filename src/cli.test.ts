@@ -8,9 +8,9 @@ import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 
-import { computeIsEntryPoint, shouldRefuseReplace } from './cli.js';
+import { computeIsEntryPoint, isDesktopAppServer, shouldRefuseReplace } from './cli.js';
 // HS-8202 — the spawn-test gate lives in spawnTestServer.ts (shared with the
 // *.e2e.test.ts suites) so all spawn-bearing tests agree on when it's safe to
 // spawn a real CLI child. It is true only when tsx can really spawn a child
@@ -260,17 +260,42 @@ describe('computeIsEntryPoint', () => {
 // terminals and opens a stray tab, then the app's supervisor respawns and bounces
 // back. The `--replace` must be refused for that collision only.
 describe('shouldRefuseReplace (HS-9700)', () => {
-  it('REFUSES when a bare (unsupervised) process would replace the running desktop app', () => {
+  it('REFUSES when a non-desktop-app-server process would replace the running desktop app', () => {
     expect(shouldRefuseReplace(true, false)).toBe(true);
   });
 
-  it('ALLOWS the desktop app\'s own supervised respawn to replace itself', () => {
-    // The HS-9656 supervisor respawns the sidecar with HOTSHEET_TERMINAL_SUPERVISOR=1.
+  it('ALLOWS the desktop app\'s own startup/respawn to replace itself', () => {
+    // The packaged sidecar AND the `tauri:dev` server set HOTSHEET_DESKTOP_APP=1.
     expect(shouldRefuseReplace(true, true)).toBe(false);
   });
 
   it('ALLOWS replacing a non-desktop instance (a plain dev/CLI server)', () => {
     expect(shouldRefuseReplace(false, false)).toBe(false);
     expect(shouldRefuseReplace(false, true)).toBe(false);
+  });
+});
+
+// HS-9701 — the desktop-app-server marker is a DEDICATED env var
+// (`HOTSHEET_DESKTOP_APP`), set by BOTH the packaged sidecar and the `tauri:dev`
+// server (src-tauri/src/lib.rs), so the HS-9700 guard covers the dev app too.
+describe('isDesktopAppServer (HS-9701)', () => {
+  const prev = process.env.HOTSHEET_DESKTOP_APP;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.HOTSHEET_DESKTOP_APP;
+    else process.env.HOTSHEET_DESKTOP_APP = prev;
+  });
+
+  it('is true only when HOTSHEET_DESKTOP_APP=1', () => {
+    process.env.HOTSHEET_DESKTOP_APP = '1';
+    expect(isDesktopAppServer()).toBe(true);
+  });
+
+  it('is false when the marker is absent (a bare `npm run dev`) or not exactly "1"', () => {
+    delete process.env.HOTSHEET_DESKTOP_APP;
+    expect(isDesktopAppServer()).toBe(false);
+    process.env.HOTSHEET_DESKTOP_APP = '0';
+    expect(isDesktopAppServer()).toBe(false);
+    process.env.HOTSHEET_DESKTOP_APP = 'true';
+    expect(isDesktopAppServer()).toBe(false);
   });
 });

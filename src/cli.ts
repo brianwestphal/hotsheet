@@ -730,9 +730,10 @@ function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
 
 /** Write instance file and register exit cleanup handlers. */
 async function setupInstanceLifecycle(actualPort: number): Promise<void> {
-  // HS-9700 — record whether we are the packaged desktop app's supervised sidecar
-  // so a later bare `npm run dev --replace` can refuse to kill the running app.
-  writeInstanceFile(actualPort, isDesktopSupervised());
+  // HS-9700 / HS-9701 — record whether we are a Tauri-launched desktop-app server
+  // (packaged sidecar OR `tauri:dev`) so a later bare `npm run dev --replace` can
+  // refuse to kill the running app.
+  writeInstanceFile(actualPort, isDesktopAppServer());
   // HS-7528: pre-import the registry so the synchronous `process.on('exit')`
   // handler can kill PTYs without waiting on an async import. Covers the
   // `process.exit()` path (e.g. `/api/shutdown`, stale-instance cleanup,
@@ -774,22 +775,25 @@ function resolveDemoDataDir(demo: number): string {
   return join(tmpdir(), `hotsheet-demo-${Date.now()}`);
 }
 
-/** HS-9700 — true when this process is the desktop app's supervised sidecar (the
- *  Tauri shell spawns the packaged sidecar with HOTSHEET_TERMINAL_SUPERVISOR=1;
- *  docs/136 §HS-9692). Used both to tag the instance file (so others can tell the
- *  running instance is the desktop app) and to let the app's OWN supervised
- *  respawn replace it while a hand-run `npm run dev` is refused. */
-function isDesktopSupervised(): boolean {
-  return process.env.HOTSHEET_TERMINAL_SUPERVISOR === '1';
+/** HS-9700 / HS-9701 — true when this process is a Tauri-launched desktop-app server
+ *  (the PACKAGED sidecar and the `tauri:dev` server are both spawned with
+ *  `HOTSHEET_DESKTOP_APP=1`; `src-tauri/src/lib.rs`). A DEDICATED identity marker,
+ *  deliberately distinct from `HOTSHEET_TERMINAL_SUPERVISOR` (which governs
+ *  broker-teardown semantics, docs/136 §HS-9692) so tagging the dev server doesn't
+ *  change its broker behavior. Used both to tag the instance file (so others can
+ *  tell the running instance is the desktop app) and to let the app's OWN respawn
+ *  replace it while a hand-run `npm run dev` is refused. */
+export function isDesktopAppServer(): boolean {
+  return process.env.HOTSHEET_DESKTOP_APP === '1';
 }
 
 /** HS-9700 — decide whether a `--replace` must be REFUSED: only when the running
  *  instance is the desktop app (`runningIsDesktop`) and the process attempting the
- *  replace is NOT itself the app's supervised respawn (`selfIsSupervised`). The
- *  supervisor's own respawn IS supervised, so it is never blocked; a bare
- *  `npm run dev` (unsupervised) is. Pure + exported for unit testing. */
-export function shouldRefuseReplace(runningIsDesktop: boolean, selfIsSupervised: boolean): boolean {
-  return runningIsDesktop && !selfIsSupervised;
+ *  replace is NOT itself a desktop-app server (`selfIsDesktopAppServer`). The app's
+ *  own startup/respawn IS a desktop-app server, so it is never blocked; a bare
+ *  `npm run dev` (not Tauri-launched) is. Pure + exported for unit testing. */
+export function shouldRefuseReplace(runningIsDesktop: boolean, selfIsDesktopAppServer: boolean): boolean {
+  return runningIsDesktop && !selfIsDesktopAppServer;
 }
 
 /** HS-8104 — multi-project: detect an already-running Hot Sheet instance and
@@ -820,14 +824,15 @@ async function handleExistingInstance(
   if (!running) return false;
 
   if (replace) {
-    // HS-9700 — a bare `npm run dev` runs `cli.ts --replace` (no `--no-open`). If the
-    // running instance is the packaged desktop app, blindly replacing it shuts down
-    // the app's sidecar (losing its active terminal — HS-9699) AND, because
-    // `--no-open` is absent, pops a stray browser tab; the app's HS-9656 supervisor
-    // then respawns + `--replace`s back, bouncing the server twice. Refuse when a
-    // NON-supervised process (a hand-run dev/CLI, not the app's own supervised
-    // respawn) is about to replace the desktop app.
-    if (shouldRefuseReplace(instance.desktop, isDesktopSupervised())) {
+    // HS-9700 / HS-9701 — a bare `npm run dev` runs `cli.ts --replace` (no
+    // `--no-open`). If the running instance is the desktop app (packaged OR
+    // `tauri:dev`), blindly replacing it shuts down the app's sidecar (losing its
+    // active terminal — HS-9699) AND, because `--no-open` is absent, pops a stray
+    // browser tab; the app's HS-9656 supervisor then respawns + `--replace`s back,
+    // bouncing the server twice. Refuse when a process that is NOT itself a
+    // Tauri-launched desktop-app server (a hand-run dev/CLI, not the app's own
+    // startup/respawn) is about to replace the desktop app.
+    if (shouldRefuseReplace(instance.desktop, isDesktopAppServer())) {
       console.error(
         `  Hot Sheet desktop app is already running on port ${instance.port}.\n` +
         `  Refusing to replace it (that would stop the app's server + terminals and open a stray tab).\n` +
