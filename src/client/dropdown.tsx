@@ -33,6 +33,17 @@ const openDropdowns = new Set<OverlayHandle>();
  * buttons mount as its direct children, so the existing SCSS is unchanged. This
  * module keeps only the app-specific keyboard SHORTCUT dispatch (press an item's
  * `key` to run it) — kerf handles Escape via `dismiss`.
+ *
+ * KERF-EVAL (kerf 4.3.0-beta.1) — `native: true` hosts the menu in the browser
+ * **top layer** via the Popover API (`[popover]` + `showPopover()`) where the
+ * engine supports it (Playwright's Chromium + Tauri's WKWebView both do),
+ * feature-detected with a safe fallback to today's plain `<div>`. Context menus
+ * open inside scrollable / stacking-context ancestors (the sidebar, the terminal
+ * drawer, the tile grid), and the top layer makes the menu immune to
+ * `overflow`-ancestor clipping and z-index races — the exact bug class an anchored
+ * menu is prone to. No SCSS change: `.dropdown-menu` already fully specifies its
+ * own chrome (position/background/border/padding/radius), so the UA `[popover]`
+ * defaults (border/padding/`canvas` background/centering) are all overridden.
  */
 export function createDropdown(anchor: HTMLElement, items: DropdownItem[]): void {
   const content = (
@@ -57,6 +68,7 @@ export function createDropdown(anchor: HTMLElement, items: DropdownItem[]): void
     className: 'dropdown-menu',
     dismiss: ['outside', 'escape'],
     outsideIgnore: anchor,
+    native: true,
   });
   openDropdowns.add(handle);
 
