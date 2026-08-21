@@ -12,6 +12,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { _resetCommandTooltipForTesting, hideCommandTooltip, showCommandTooltip } from './commandTooltip.js';
+import { createDropdown } from './dropdown.js';
 import { dismissTransientOverlays } from './transientOverlays.js';
 
 /** An anchor that exists in the DOM, like a real command button. */
@@ -61,8 +62,20 @@ describe('dismissTransientOverlays (HS-9441)', () => {
   });
 
   it('removes dropdown + context menus (a keyboard switch fires no outside click)', () => {
-    mountOverlay('dropdown-menu');
+    // HS-9706 — the dropdown must be a REAL one (`createDropdown`), not a bare
+    // `.dropdown-menu` div. `dismissTransientOverlays` closes dropdowns via
+    // `closeAllMenus()`, which closes only the handles tracked in `dropdown.ts`'s
+    // `openDropdowns` Set — it does NOT DOM-sweep by class. A hand-mounted div is
+    // untracked, so it would survive; but an untracked dropdown can't occur in
+    // production (every real menu goes through `createDropdown`), so the faithful
+    // guard opens a real, tracked menu. The context menu, by contrast, IS just a
+    // `.context-menu` div appended to body (no handle registry — `closeContextMenu`
+    // removes it by class), so a bare div is a faithful stand-in there.
+    const anchorEl = anchor();
+    createDropdown(anchorEl, [{ label: 'Item', key: 'i', action: () => { /* no-op */ } }]);
     mountOverlay('context-menu');
+    expect(document.querySelectorAll('.dropdown-menu').length).toBe(1);
+
     dismissTransientOverlays();
     expect(document.querySelectorAll('.dropdown-menu').length).toBe(0);
     expect(document.querySelectorAll('.context-menu').length).toBe(0);

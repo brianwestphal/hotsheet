@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mt2j4hnv58zsopd4",
+          "message": {
+            "text": "The dropdown half of this guard must open a REAL tracked menu; the context-menu half can stay a bare div — and the asymmetry is deliberate, not an oversight.\n\ndismissTransientOverlays dismisses the two menus by different mechanisms:\n\n- Dropdowns → closeAllMenus() [0], which closes only the handles tracked in dropdown.ts's openDropdowns Set. It does NOT sweep the DOM by class. A hand-mounted .dropdown-menu div is untracked, so it would survive the sweep — which is exactly why the pre-fix test failed (expected 1 to be 0). But an untracked dropdown cannot occur in production (every real menu goes through createDropdown), so the test now opens a real, tracked menu.\n- Context menus → closeContextMenu() [1], which removes every .context-menu by class. The real context menu is itself just a .context-menu div appended to body with no handle registry, so a bare div is a faithful stand-in there.\n\nSo the implementation was correct all along; the test was fabricating a state (an untracked dropdown) that the app never produces.\n",
+            "markdown": "The dropdown half of this guard must open a REAL tracked menu; the context-menu half can stay a bare div — and the asymmetry is deliberate, not an oversight.\n\n`dismissTransientOverlays` dismisses the two menus by different mechanisms:\n\n- Dropdowns → `closeAllMenus()` [0], which closes only the handles tracked in `dropdown.ts`'s `openDropdowns` Set. It does NOT sweep the DOM by class. A hand-mounted `.dropdown-menu` div is untracked, so it would survive the sweep — which is exactly why the pre-fix test failed (`expected 1 to be 0`). But an untracked dropdown cannot occur in production (every real menu goes through `createDropdown`), so the test now opens a real, tracked menu.\n- Context menus → `closeContextMenu()` [1], which removes every `.context-menu` by class. The real context menu is itself just a `.context-menu` div appended to body with no handle registry, so a bare div is a faithful stand-in there.\n\nSo the implementation was correct all along; the test was fabricating a state (an untracked dropdown) that the app never produces.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/transientOverlays.test.ts"
+                },
+                "region": {
+                  "startLine": 63,
+                  "endLine": 82,
+                  "snippet": {
+                    "text": "\n  it('removes dropdown + context menus (a keyboard switch fires no outside click)', () => {\n    // HS-9706 — the dropdown must be a REAL one (`createDropdown`), not a bare\n    // `.dropdown-menu` div. `dismissTransientOverlays` closes dropdowns via\n    // `closeAllMenus()`, which closes only the handles tracked in `dropdown.ts`'s\n    // `openDropdowns` Set — it does NOT DOM-sweep by class. A hand-mounted div is\n    // untracked, so it would survive; but an untracked dropdown can't occur in\n    // production (every real menu goes through `createDropdown`), so the faithful\n    // guard opens a real, tracked menu. The context menu, by contrast, IS just a\n    // `.context-menu` div appended to body (no handle registry — `closeContextMenu`\n    // removes it by class), so a bare div is a faithful stand-in there.\n    const anchorEl = anchor();\n    createDropdown(anchorEl, [{ label: 'Item', key: 'i', action: () => { /* no-op */ } }]);\n    mountOverlay('context-menu');\n    expect(document.querySelectorAll('.dropdown-menu').length).toBe(1);\n\n    dismissTransientOverlays();\n    expect(document.querySelectorAll('.dropdown-menu').length).toBe(0);\n    expect(document.querySelectorAll('.context-menu').length).toBe(0);\n  });"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/dropdown.tsx"
+                },
+                "region": {
+                  "startLine": 90
+                }
+              }
+            },
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/contextMenu.tsx"
+                },
+                "region": {
+                  "startLine": 407
+                }
+              }
+            }
+          ],
+          "workItemUris": [
+            "HS-9706"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "3117b896d20269903eb5d8c1b59365fd"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "10bb007879270a1ca0d0f322744f12f4662b27ca",
+          "branch": "hs-kerf-4.3.0-beta.1"
+        }
+      ]
+    }
+  ]
+}
