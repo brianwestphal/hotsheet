@@ -13,7 +13,23 @@ import {
   describeClientError,
   formatErrorLocation,
   installGlobalErrorHandler,
+  isBenignBrowserError,
 } from './globalErrorHandler.js';
+
+describe('isBenignBrowserError', () => {
+  it('matches the ResizeObserver loop notifications the browser emits as a string', () => {
+    expect(isBenignBrowserError('ResizeObserver loop completed with undelivered notifications')).toBe(true);
+    expect(isBenignBrowserError('ResizeObserver loop limit exceeded')).toBe(true);
+  });
+  it('matches when wrapped in an Error object', () => {
+    expect(isBenignBrowserError(new Error('ResizeObserver loop completed with undelivered notifications'))).toBe(true);
+  });
+  it('does not match a real crash', () => {
+    expect(isBenignBrowserError(new RangeError('Maximum call stack size exceeded'))).toBe(false);
+    expect(isBenignBrowserError('boom')).toBe(false);
+    expect(isBenignBrowserError({ nope: 1 })).toBe(false);
+  });
+});
 
 describe('describeClientError', () => {
   it('names an Error by type and message', () => {
@@ -102,6 +118,25 @@ describe('installGlobalErrorHandler', () => {
     window.dispatchEvent(e);
     expect(popup()).toBeNull();
     img.remove();
+  });
+
+  // Closing/reopening a tab re-lays-out the tab bar + terminals; the browser emits
+  // "ResizeObserver loop completed with undelivered notifications". Not a crash (HS-9703).
+  it('does not surface the benign ResizeObserver loop notification', () => {
+    const e = new ErrorEvent('error', { message: 'ResizeObserver loop completed with undelivered notifications' });
+    Object.defineProperty(e, 'target', { value: window });
+    window.dispatchEvent(e);
+    expect(popup()).toBeNull();
+  });
+
+  // A benign notification must not eat the cooldown budget: a real crash right after
+  // it must still surface.
+  it('a benign notification does not suppress a real crash that follows', () => {
+    const benign = new ErrorEvent('error', { message: 'ResizeObserver loop limit exceeded' });
+    Object.defineProperty(benign, 'target', { value: window });
+    window.dispatchEvent(benign);
+    raise(new Error('real crash'));
+    expect(popup()!.textContent).toContain('real crash');
   });
 
   it('is idempotent — installing twice does not double-report', () => {

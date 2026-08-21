@@ -43,6 +43,25 @@ export function _resetGlobalErrorHandlerForTesting(): void {
   suppressedSinceLastReport = 0;
 }
 
+/**
+ * Pure: is this a benign browser notification we must NOT surface as a crash?
+ *
+ * "ResizeObserver loop completed with undelivered notifications" (and its older
+ * sibling "ResizeObserver loop limit exceeded") is not an error. The browser emits
+ * it — as a `window` `error` event with a bare message string and no `error` object
+ * — whenever a ResizeObserver callback changes layout in a way that schedules another
+ * resize in the same frame; it just defers the rest to the next frame. Harmless, and
+ * unavoidable with legitimate observers (we run eight: tab bar, terminals, scrollbar
+ * probe, permission overlay…). It surfaced as a "Something went wrong" popup on a
+ * tab close/reopen, when the tab bar + terminals re-lay-out (HS-9703).
+ *
+ * Substring match on the stable message text, which is identical across engines.
+ */
+export function isBenignBrowserError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  return message.includes('ResizeObserver loop');
+}
+
 /** Pure: what the popup should say for a caught value. Exported for testing. */
 export function describeClientError(err: unknown, source: 'error' | 'unhandledrejection'): string {
   const base = err instanceof Error
@@ -61,6 +80,9 @@ export function formatErrorLocation(filename: unknown, lineno: unknown, colno: u
 }
 
 function report(err: unknown, source: 'error' | 'unhandledrejection', location: string | null, now: number): void {
+  // A benign browser notification (e.g. the ResizeObserver loop message) is not a
+  // crash — never popup, and don't let it consume the cooldown/suppression budget.
+  if (isBenignBrowserError(err)) { console.debug('[client benign, ignored]', err); return; }
   if (reporting) { console.error('[client error while reporting a client error]', err); return; }
   if (now - lastReportAt < COOLDOWN_MS) {
     suppressedSinceLastReport += 1;
