@@ -17,7 +17,7 @@ import { isSystemStatusNote } from './systemNotes.js';
  * handler stays readable.
  */
 
-const FEEDBACK_PHRASE = 'FEEDBACK NEEDED';
+export const FEEDBACK_PHRASE = 'FEEDBACK NEEDED';
 
 /** Returns true when the LAST note in the JSON-encoded `notes` column
  *  contains the FEEDBACK NEEDED phrase. Mirrors the client

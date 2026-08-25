@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Hot Sheet",
+          "rules": [
+            {
+              "id": "review-note",
+              "name": "ReviewNote",
+              "shortDescription": {
+                "text": "AI-authored, line-anchored review note."
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "review-note",
+          "ruleIndex": 0,
+          "kind": "informational",
+          "level": "none",
+          "guid": "mt9arsmvyrgz97g0",
+          "message": {
+            "text": "Feedback-needed bubbling is done SERVER-SIDE (a leading ORDER BY CASE) rather than as a client re-sort, specifically so it survives list-view pagination.\n\nThe list route fetches only listLimit + 1 (default 101) rows. A client-side bubble could only reorder rows already fetched, so a feedback-needed ticket that sorts past row 100 by the base sort would stay hidden on page 1 — exactly the case bubbling exists to fix. Evaluating the CASE in SQL before LIMIT lifts it into the fetched prefix.\n\nThe \"last meaningful note contains FEEDBACK NEEDED\" rule can't be expressed in SQL (it must skip trailing system notes — see notesEndWithFeedback), so this runs a cheap LIKE '%FEEDBACK NEEDED%' pre-filter to get candidate rows, refines them in JS, then feeds the confirmed ids back into the main query's ORDER BY as an = ANY($n::int[]) param. Two cheap queries instead of one, but pagination-correct.\n\nColumn view needs no separate work: it buckets by status client-side while preserving server order, so the same bubbled order lifts feedback-needed cards to the top of their own column.\n\nLive updates re-bubble via the wsSync reducer (0): any notes-carrying ticket-updated refetches instead of patching in place, because a feedback-state flip is a placement change an in-place patch can't express.\n",
+            "markdown": "Feedback-needed bubbling is done SERVER-SIDE (a leading `ORDER BY` CASE) rather than as a client re-sort, specifically so it survives list-view pagination.\n\nThe list route fetches only `listLimit + 1` (default 101) rows. A client-side bubble could only reorder rows already fetched, so a feedback-needed ticket that sorts past row 100 by the base sort would stay hidden on page 1 — exactly the case bubbling exists to fix. Evaluating the CASE in SQL before `LIMIT` lifts it into the fetched prefix.\n\nThe \"last meaningful note contains FEEDBACK NEEDED\" rule can't be expressed in SQL (it must skip trailing system notes — see `notesEndWithFeedback`), so this runs a cheap `LIKE '%FEEDBACK NEEDED%'` pre-filter to get candidate rows, refines them in JS, then feeds the confirmed ids back into the main query's ORDER BY as an `= ANY($n::int[])` param. Two cheap queries instead of one, but pagination-correct.\n\nColumn view needs no separate work: it buckets by status client-side while preserving server order, so the same bubbled order lifts feedback-needed cards to the top of their own column.\n\nLive updates re-bubble via [the wsSync reducer](0): any `notes`-carrying `ticket-updated` refetches instead of patching in place, because a feedback-state flip is a placement change an in-place patch can't express.\n"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/db/tickets.ts"
+                },
+                "region": {
+                  "startLine": 462,
+                  "endLine": 479,
+                  "snippet": {
+                    "text": "async function feedbackBubblePrefix(\n  db: PGlite,\n  where: string,\n  queryValues: unknown[],\n): Promise<string> {\n  const feedbackWhere = where === ''\n    ? `WHERE notes LIKE '%${FEEDBACK_PHRASE}%'`\n    : `${where} AND notes LIKE '%${FEEDBACK_PHRASE}%'`;\n  const res = await db.query<{ id: number; notes: string }>(\n    `SELECT id, notes FROM tickets ${feedbackWhere}`,\n    queryValues.slice(),\n  );\n  const ids = res.rows.filter(r => notesEndWithFeedback(r.notes)).map(r => r.id);\n  if (ids.length === 0) return '';\n  queryValues.push(ids);\n  return `CASE WHEN id = ANY($${queryValues.length}::int[]) THEN 0 ELSE 1 END ASC, `;\n}\n"
+                  }
+                }
+              }
+            }
+          ],
+          "properties": {
+            "tags": [
+              "rationale"
+            ]
+          },
+          "relatedLocations": [
+            {
+              "id": 0,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/client/wsSync.ts"
+                },
+                "region": {
+                  "startLine": 106
+                }
+              }
+            }
+          ],
+          "workItemUris": [
+            "HS-9711"
+          ],
+          "partialFingerprints": {
+            "prNoteAnchor/v1": "1b2fdf22a6a2653820e21a8960d41456"
+          }
+        }
+      ],
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "git@github.com:brianwestphal/hotsheet.git",
+          "revisionId": "2ba49e9f0c3f3fa8fccf0f51dd3cc4dab877eaa4",
+          "branch": "main"
+        }
+      ]
+    }
+  ]
+}

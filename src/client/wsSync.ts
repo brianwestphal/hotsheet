@@ -103,8 +103,18 @@ export function reduceMutation(frame: Record<string, unknown>, hasTicket: (id: n
   switch (frame.type) {
     case 'ticket-deleted':
       return { remove: [Number(frame.id)], optimistic: [], refetch: false };
-    case 'ticket-updated':
-      return inPlace([{ id: Number(frame.id), patch: toRecord(frame.changes) }]);
+    case 'ticket-updated': {
+      const changes = toRecord(frame.changes);
+      // HS-9711 — a `notes` change can flip a ticket's feedback-needed state, and
+      // feedback-needed tickets bubble to the TOP of the list/column regardless of
+      // sort (server-side, `feedbackBubblePrefix`). That's a placement change an
+      // in-place patch can't express, so refetch to pick up the re-bubbled order —
+      // the refetch path also recomputes the tab feedback dot, so this supersedes
+      // the HS-9244 in-place `refreshFeedback`. Non-notes updates stay in-place
+      // (the §93.5 bandwidth win).
+      if ('notes' in changes) return REFETCH;
+      return inPlace([{ id: Number(frame.id), patch: changes }]);
+    }
     case 'category-changed':
       return inPlace(toIdList(frame.ticketIds).map(id => ({ id, patch: { category: frame.to } })));
     case 'priority-changed':
@@ -302,10 +312,12 @@ export function createWsSync(deps: WsSyncDeps): WsSync {
     if (plan.refetch) { deps.refreshData(); return; }
     for (const id of plan.remove) deps.removeTicket(id);
     for (const p of plan.optimistic) deps.optimisticUpdate(p.id, p.patch);
-    // HS-9244 — a note append (e.g. a live FEEDBACK-NEEDED note) changes whether
-    // the ticket + active-project tab should show the purple dot; the in-place
-    // path otherwise never recomputes feedback state (only the refetch/poll path
-    // does), so the tab dot stays stale until a project switch.
+    // HS-9244 / HS-9711 — a note append (e.g. a live FEEDBACK-NEEDED note) changes
+    // whether the ticket + active-project tab show the purple dot. As of HS-9711
+    // `reduceMutation` routes any notes-carrying update through the refetch path
+    // (which re-bubbles AND recomputes feedback), so this in-place branch no longer
+    // fires for notes; it stays as a defensive backstop for any future in-place
+    // path that patches `notes` directly, keeping the tab dot from going stale.
     if (plan.optimistic.some(p => 'notes' in p.patch)) deps.refreshFeedback();
     deps.refreshDetail(); // keep the open detail panel current
     // HS-9176 — the rows update reactively via the store, but the status-bar

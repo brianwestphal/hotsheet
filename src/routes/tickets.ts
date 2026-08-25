@@ -219,6 +219,10 @@ ticketRoutes.get('/tickets', async (c) => {
     filters.offset = n;
   }
 
+  // HS-9711 — the list/column display always bubbles feedback-needed tickets to
+  // the top, regardless of the chosen sort. Internal callers (worklist/markdown
+  // sync, trash) don't set this, so their plain order is unchanged.
+  filters.bubble_feedback = true;
   const tickets = await getTickets(filters);
   return c.json(await withAutoContextAll(c.get('dataDir'), tickets));
 });
@@ -903,6 +907,7 @@ ticketRoutes.post('/tickets/query', async (c) => {
   const parsed = parseBody(QueryTicketsSchema, raw);
   if (!parsed.success) return c.json({ error: parsed.error }, 400);
   const { logic, conditions, sort_by, sort_dir, required_tag, include_archived } = parsed.data;
-  const tickets = await queryTickets(logic, conditions, sort_by, sort_dir, required_tag, include_archived);
+  // HS-9711 — custom views display in the list/column UI, so bubble feedback-needed to top.
+  const tickets = await queryTickets(logic, conditions, sort_by, sort_dir, required_tag, include_archived, true);
   return c.json(await withAutoContextAll(c.get('dataDir'), tickets));
 });

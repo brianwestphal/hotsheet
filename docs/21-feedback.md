@@ -161,6 +161,7 @@ Implementation lives in `buildOverlay(ticketNumber, blocks)` inside `src/client/
 
 - Tickets with pending feedback (last note has a feedback prefix) show a purple dot (`#8b5cf6`) in both list view and column view.
 - The purple feedback dot takes priority over the blue unread dot — if a ticket is both unread and has pending feedback, only the purple dot is shown.
+- **Feedback-needed tickets also bubble to the top of the sort (HS-9711).** Beyond the dot/border, a pending-feedback ticket is ranked ahead of every non-feedback ticket regardless of the chosen sort — at the top of the list, or the top of its own column on the board. Same detection rule as the dot (`hasPendingFeedback` / `notesEndWithFeedback` — last meaningful note contains `FEEDBACK NEEDED`), applied server-side as a leading `ORDER BY` term so it survives list pagination. See [4-user-interface.md](4-user-interface.md) §4.9 for the mechanism.
 
 ### 21.6 Project Tab Indicator
 

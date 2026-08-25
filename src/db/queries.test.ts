@@ -1727,3 +1727,64 @@ describe('getAllTags', () => {
     expect(tags).not.toContain('deleted-only-tag');
   });
 });
+
+describe('HS-9711 — feedback-needed bubbling', () => {
+  // A fixed 4-ticket set, created oldest→newest: alpha (feedback, low),
+  // beta (plain, highest), gamma (feedback, highest), delta (plain, low).
+  // Assertions filter to this `HS9711 ` prefix so unrelated tickets already in
+  // the shared test DB can't perturb the relative order we check.
+  let alpha: number, gamma: number;
+  const mineTitles = (rows: { id: number; title: string }[]): string[] =>
+    rows.filter(t => t.title.startsWith('HS9711 ')).map(t => t.title.replace('HS9711 ', ''));
+
+  beforeAll(async () => {
+    alpha = (await createTicket('HS9711 alpha', { priority: 'low' })).id;
+    await createTicket('HS9711 beta', { priority: 'highest' });
+    gamma = (await createTicket('HS9711 gamma', { priority: 'highest' })).id;
+    await createTicket('HS9711 delta', { priority: 'low' });
+    await updateTicket(alpha, { notes: 'FEEDBACK NEEDED: what next?' });
+    await updateTicket(gamma, { notes: 'FEEDBACK NEEDED: confirm approach?' });
+  });
+
+  it('bubbles feedback-needed tickets to the top under a created sort', async () => {
+    const rows = await getTickets({ bubble_feedback: true, sort_by: 'created', sort_dir: 'desc' });
+    // feedback group (gamma, alpha) first, each group in created-desc order;
+    // non-feedback group (delta, beta) after.
+    expect(mineTitles(rows)).toEqual(['gamma', 'alpha', 'delta', 'beta']);
+  });
+
+  it('bubbles regardless of the chosen sort (priority)', async () => {
+    const rows = await getTickets({ bubble_feedback: true, sort_by: 'priority', sort_dir: 'asc' });
+    // feedback group sorted by priority (gamma=highest, alpha=low), then the
+    // non-feedback group by priority (beta=highest, delta=low).
+    expect(mineTitles(rows)).toEqual(['gamma', 'alpha', 'beta', 'delta']);
+  });
+
+  it('leaves the plain sort untouched when bubble_feedback is off', async () => {
+    const rows = await getTickets({ sort_by: 'created', sort_dir: 'desc' });
+    // No bubbling: pure created-desc order interleaves feedback + non-feedback.
+    expect(mineTitles(rows)).toEqual(['delta', 'gamma', 'beta', 'alpha']);
+  });
+
+  it('does NOT bubble a ticket whose feedback note was superseded by a later note', async () => {
+    const t = (await createTicket('HS9711R resolved', { priority: 'low' })).id;
+    const plain = (await createTicket('HS9711R plain', { priority: 'low' })).id;
+    await updateTicket(t, { notes: 'FEEDBACK NEEDED: original question' });
+    await updateTicket(t, { notes: 'Answered — proceeding.' }); // supersedes the feedback note
+    const rows = await getTickets({ bubble_feedback: true, sort_by: 'created', sort_dir: 'desc' });
+    const mine = rows.filter(r => r.title.startsWith('HS9711R ')).map(r => r.id);
+    // `plain` was created after `t`, so created-desc puts it first; the resolved
+    // ticket is NOT bubbled ahead of it.
+    expect(mine).toEqual([plain, t]);
+  });
+
+  it('bubbles in custom-view queryTickets too', async () => {
+    const rows = await queryTickets('all', [], 'created', 'desc', undefined, false, true);
+    expect(mineTitles(rows)).toEqual(['gamma', 'alpha', 'delta', 'beta']);
+  });
+
+  it('queryTickets leaves order alone when bubbling is not requested', async () => {
+    const rows = await queryTickets('all', [], 'created', 'desc', undefined, false, false);
+    expect(mineTitles(rows)).toEqual(['delta', 'gamma', 'beta', 'alpha']);
+  });
+});

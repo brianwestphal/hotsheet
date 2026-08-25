@@ -66,6 +66,12 @@ export interface TicketFilters {
    *  exposed for completeness so a future infinite-scroll path can adopt
    *  it without a server change. */
   offset?: number;
+  /** HS-9711 — when true, feedback-needed tickets (their last meaningful note
+   *  contains `FEEDBACK NEEDED`) are ranked ahead of everything else in the
+   *  result, regardless of `sort_by`/`sort_dir`; the normal sort then orders
+   *  WITHIN each group. Set only by the list/column display route so the
+   *  worklist/markdown sync and internal callers keep their plain order. */
+  bubble_feedback?: boolean;
 }
 
 export const DEFAULT_CATEGORIES: CategoryDef[] = [

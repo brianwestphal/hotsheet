@@ -51,6 +51,18 @@ describe('reduceMutation', () => {
     expect(reduceMutation({ type: 'ticket-updated', id: 1, changes: { title: 't' } }, noneLoaded).refetch).toBe(true);
   });
 
+  it('HS-9711 — ticket-updated carrying a notes change → refetch (re-bubbles feedback-needed)', () => {
+    // A notes change can flip feedback-needed state, which moves the ticket to/from
+    // the bubbled top — a placement change in-place can't do, so it must refetch even
+    // when the ticket is loaded.
+    expect(reduceMutation({ type: 'ticket-updated', id: 1, changes: { notes: '[]' } }, allLoaded).refetch).toBe(true);
+    // A note added alongside a status change (the MCP completion shape) still refetches.
+    expect(reduceMutation({ type: 'ticket-updated', id: 1, changes: { status: 'completed', notes: '[{"text":"done"}]' } }, allLoaded).refetch).toBe(true);
+    // A status-only update (no notes key) keeps the in-place path.
+    expect(reduceMutation({ type: 'ticket-updated', id: 1, changes: { status: 'started' } }, allLoaded))
+      .toEqual({ remove: [], optimistic: [{ id: 1, patch: { status: 'started' } }], refetch: false });
+  });
+
   it('field-changed events → per-id optimistic patches (loaded)', () => {
     expect(reduceMutation({ type: 'status-changed', ticketIds: [1, 2], to: 'started' }, allLoaded))
       .toEqual({ remove: [], optimistic: [{ id: 1, patch: { status: 'started' } }, { id: 2, patch: { status: 'started' } }], refetch: false });
@@ -250,17 +262,18 @@ describe('createWsSync flow', () => {
     expect(h.refreshStats).toHaveBeenCalledTimes(1);
   });
 
-  it('HS-9244 — recomputes feedback state after an in-place note append (tab purple dot)', () => {
+  it('HS-9711 — a live note append refetches so feedback-needed tickets re-bubble', () => {
     const h = harness('sec', [1]);
     h.ws.start();
     h.last().push({ type: 'connected', seq: 0 });
-    // A live FEEDBACK-NEEDED note arrives for a loaded ticket. The server echoes
-    // the full notes JSON array so the in-place patch carries `notes`; that must
-    // trigger a feedback-state recompute or the tab dot stays stale.
+    // A live FEEDBACK-NEEDED note arrives for a loaded ticket. Because feedback-needed
+    // tickets bubble to the top of the list/column, this is a placement change an
+    // in-place patch can't express — so it refetches (the refetch path re-fetches the
+    // server-bubbled order AND recomputes the tab feedback dot, superseding HS-9244's
+    // in-place refreshFeedback).
     h.last().push({ type: 'ticket-updated', id: 1, changes: { notes: '[{"id":"n1","text":"FEEDBACK NEEDED: x","created_at":"t"}]' }, seq: 1 });
-    expect(h.optimisticUpdate).toHaveBeenCalledWith(1, { notes: '[{"id":"n1","text":"FEEDBACK NEEDED: x","created_at":"t"}]' });
-    expect(h.refreshFeedback).toHaveBeenCalledTimes(1);
-    expect(h.refreshData).not.toHaveBeenCalled();
+    expect(h.refreshData).toHaveBeenCalledTimes(1);
+    expect(h.optimisticUpdate).not.toHaveBeenCalled();
   });
 
   it('HS-9244 — a non-notes in-place update does NOT recompute feedback state', () => {

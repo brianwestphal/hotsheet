@@ -1,5 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 
+import { FEEDBACK_PHRASE, notesEndWithFeedback } from '../feedback-state.js';
 import { readFileSettings } from '../file-settings.js';
 import { isExactTicketIdSearch, splitSearchTerms } from '../ticketNumber.js';
 import type { Ticket, TicketCategory, TicketFilters, TicketPriority, TicketStatus } from '../types.js';
@@ -435,6 +436,47 @@ function buildTicketWhereClause(filters: TicketFilters): { where: string; values
   return { where, values };
 }
 
+/**
+ * HS-9711 — feedback-needed tickets bubble to the very top of every list/column
+ * view, regardless of the chosen sort. Returns a leading `ORDER BY` fragment
+ * (`CASE … , `, or `''` when nothing qualifies) that ranks the feedback-needed
+ * ids ahead of everything else; the caller's normal sort then orders WITHIN each
+ * group, so multiple feedback-needed tickets still obey the selected sort.
+ *
+ * Detection reuses `notesEndWithFeedback` — the exact rule behind the client's
+ * purple dot/border — so the bubbled set can't disagree with what the row shows.
+ * A cheap `LIKE` pre-filter narrows the JSON-parse pass to rows that mention the
+ * phrase at all (mirroring `projectHasPendingFeedback`). The id-array param is
+ * pushed onto `queryValues`, so the returned `$N` placeholder stays valid no
+ * matter what LIMIT/OFFSET params the caller appends afterward.
+ *
+ * Done server-side (rather than a client re-sort) so it survives list-view
+ * pagination: a feedback-needed ticket that would otherwise sort past `LIMIT`
+ * still surfaces on page 1. Column view groups by status client-side while
+ * preserving this order, so the same server order lifts feedback-needed cards to
+ * the top of their own column.
+ *
+ * `where` is the full clause including its `WHERE` keyword (or `''` for no
+ * filter); `queryValues` already holds that clause's bind values.
+ */
+async function feedbackBubblePrefix(
+  db: PGlite,
+  where: string,
+  queryValues: unknown[],
+): Promise<string> {
+  const feedbackWhere = where === ''
+    ? `WHERE notes LIKE '%${FEEDBACK_PHRASE}%'`
+    : `${where} AND notes LIKE '%${FEEDBACK_PHRASE}%'`;
+  const res = await db.query<{ id: number; notes: string }>(
+    `SELECT id, notes FROM tickets ${feedbackWhere}`,
+    queryValues.slice(),
+  );
+  const ids = res.rows.filter(r => notesEndWithFeedback(r.notes)).map(r => r.id);
+  if (ids.length === 0) return '';
+  queryValues.push(ids);
+  return `CASE WHEN id = ANY($${queryValues.length}::int[]) THEN 0 ELSE 1 END ASC, `;
+}
+
 export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]> {
   const db = await getDb();
   const { where, values } = buildTicketWhereClause(filters);
@@ -461,6 +503,13 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
 
   const dir = filters.sort_dir === 'asc' ? 'ASC' : 'DESC';
 
+  // HS-9711 — bubble feedback-needed tickets to the top. Computed before the
+  // LIMIT/OFFSET params are pushed so the candidate query sees only the WHERE
+  // params; its id-array param slots in ahead of them.
+  const bubblePrefix = filters.bubble_feedback === true
+    ? await feedbackBubblePrefix(db, where, values)
+    : '';
+
   // HS-8337 — optional pagination. `limit` + `offset` are coerced + bounded
   // by the route handler before reaching here; passing them on to placeholders
   // keeps the SQL parameterized. Both are appended only when set so callers
@@ -478,7 +527,7 @@ export async function getTickets(filters: TicketFilters = {}): Promise<Ticket[]>
   }
 
   const result = await db.query<Ticket>(
-    `SELECT * FROM tickets ${where} ORDER BY ${orderBy} ${dir}, id DESC${limitClause}`,
+    `SELECT * FROM tickets ${where} ORDER BY ${bubblePrefix}${orderBy} ${dir}, id DESC${limitClause}`,
     values
   );
   return result.rows;
@@ -770,6 +819,7 @@ export async function queryTickets(
   sortDir?: string,
   requiredTag?: string,
   includeArchived?: boolean,
+  bubbleFeedback = false,
 ): Promise<Ticket[]> {
   const db = await getDb();
   const { whereClause, values } = buildTicketQueryWhere(logic, conditions, requiredTag, includeArchived);
@@ -789,8 +839,15 @@ export async function queryTickets(
   }
   const dir = sortDir === 'asc' ? 'ASC' : 'DESC';
 
+  // HS-9711 — custom views render in the same list/column UI, so feedback-needed
+  // tickets bubble to the top here too. `whereClause` is never empty (it always
+  // excludes deleted), so it always takes the `AND notes LIKE …` branch.
+  const bubblePrefix = bubbleFeedback
+    ? await feedbackBubblePrefix(db, `WHERE ${whereClause}`, values)
+    : '';
+
   const result = await db.query<Ticket>(
-    `SELECT * FROM tickets WHERE ${whereClause} ORDER BY ${orderBy} ${dir}, id DESC`,
+    `SELECT * FROM tickets WHERE ${whereClause} ORDER BY ${bubblePrefix}${orderBy} ${dir}, id DESC`,
     values,
   );
   return result.rows;
