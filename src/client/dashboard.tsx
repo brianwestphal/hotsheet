@@ -3,6 +3,7 @@ import type { SafeHtml } from 'kerfjs';
 import { type DashboardData, getDashboard } from '../api/index.js';
 import { maxOf } from '../utils/largeArray.js';
 import { renderAnalyticsTelemetrySection } from './analyticsTelemetrySection.js';
+import { integerAxis } from './dashboardAxis.js';
 import { byIdOrNull, toElement } from './dom.js';
 import { sparkBarGeometry } from './sparkBars.js';
 import { getCategoryColor, state } from './state.js';
@@ -232,13 +233,14 @@ function renderBarChart(data: { date: string; completed: number }[]): SafeHtml {
   if (data.length === 0) return <div className="chart-empty">No data</div>;
   const values = data.map(d => d.completed);
   const max = Math.max(...values, 1);
+  const { niceMax, ticks } = integerAxis(max); // HS-9724
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
   const barW = Math.max(2, (w / data.length) - 2);
 
   const bars = data.map((d, i) => {
     const x = PAD.left + (i / data.length) * w;
-    const barH = (values[i] / max) * h;
+    const barH = (values[i] / niceMax) * h;
     const y = PAD.top + h - barH;
     return (
       <rect x={String(x)} y={String(y)} width={String(barW)} height={String(barH)} fill="#3b82f6" rx="1" opacity="0.8" className="chart-hover">
@@ -249,7 +251,7 @@ function renderBarChart(data: { date: string; completed: number }[]): SafeHtml {
 
   return (
     <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
-      {yAxisLines(max, h)}
+      {yAxisLines(niceMax, ticks, h)}
       {bars}
       {axisLabels(data.map(d => d.date))}
     </svg>
@@ -259,19 +261,22 @@ function renderBarChart(data: { date: string; completed: number }[]): SafeHtml {
 function renderDualLineChart(data: { date: string; completed: number; created: number }[]): SafeHtml {
   if (data.length < 2) return <div className="chart-empty">Not enough data</div>;
   const max = Math.max(maxOf(data.map(d => Math.max(d.completed, d.created))) ?? 1, 1);
+  const { niceMax, ticks } = integerAxis(max); // HS-9724
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
 
   return (
     <>
+      {/* HS-9728 — Created is DASHED, Completed solid, so the two lines are
+          distinguishable without relying on the green/orange hue alone. */}
       <div className="chart-legend">
         <span className="chart-legend-item"><span className="chart-legend-dot" style="background:#22c55e"></span>Completed</span>
-        <span className="chart-legend-item"><span className="chart-legend-dot" style="background:#f97316"></span>Created</span>
+        <span className="chart-legend-item"><span className="chart-legend-dot chart-legend-dashed" style="background:#f97316"></span>Created</span>
       </div>
       <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
-        {yAxisLines(max, h)}
-        <path d={linePath(data.map(d => d.created), max, w, h)} fill="none" stroke="#f97316" stroke-width="2" opacity="0.7"/>
-        <path d={linePath(data.map(d => d.completed), max, w, h)} fill="none" stroke="#22c55e" stroke-width="2"/>
+        {yAxisLines(niceMax, ticks, h)}
+        <path d={linePath(data.map(d => d.created), niceMax, w, h)} fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="5 3" opacity="0.85"/>
+        <path d={linePath(data.map(d => d.completed), niceMax, w, h)} fill="none" stroke="#22c55e" stroke-width="2"/>
         {axisLabels(data.map(d => d.date))}
       </svg>
     </>
@@ -281,7 +286,10 @@ function renderDualLineChart(data: { date: string; completed: number; created: n
 function renderCFD(snapshots: { date: string; data: { not_started: number; started: number; completed: number; verified: number } }[]): SafeHtml {
   if (snapshots.length < 2) return <div className="chart-empty">Not enough data</div>;
   const statuses = ['verified', 'completed', 'started', 'not_started'] as const;
-  const colors = { not_started: '#6b7280', started: '#3b82f6', completed: '#22c55e', verified: '#8b5cf6' };
+  // HS-9726 — "Not Started" was a heavy dark gray (#6b7280) that dominated the
+  // stack and read as missing data; lighten it to a neutral tint so the active
+  // bands (started/completed/verified) carry the visual weight.
+  const colors = { not_started: '#d1d5db', started: '#3b82f6', completed: '#22c55e', verified: '#8b5cf6' };
   const labels = { not_started: 'Not Started', started: 'Started', completed: 'Completed', verified: 'Verified' };
 
   const stacked: number[][] = snapshots.map(s => {
@@ -293,6 +301,7 @@ function renderCFD(snapshots: { date: string; data: { not_started: number; start
   });
 
   const max = Math.max(maxOf(stacked.map(s => s[s.length - 1])) ?? 1, 1);
+  const { niceMax, ticks } = integerAxis(max); // HS-9726 — real count y-axis
   const w = CHART_W - PAD.left - PAD.right;
   const h = CHART_H - PAD.top - PAD.bottom;
   const n = snapshots.length;
@@ -301,13 +310,13 @@ function renderCFD(snapshots: { date: string; data: { not_started: number; start
   for (let si = statuses.length - 1; si >= 0; si--) {
     const topPoints = stacked.map((s, i) => {
       const x = PAD.left + (i / (n - 1)) * w;
-      const y = PAD.top + h - (s[si] / max) * h;
+      const y = PAD.top + h - (s[si] / niceMax) * h;
       return `${String(x)},${String(y)}`;
     });
     const bottomPoints = si > 0
       ? stacked.map((s, i) => {
           const x = PAD.left + (i / (n - 1)) * w;
-          const y = PAD.top + h - (s[si - 1] / max) * h;
+          const y = PAD.top + h - (s[si - 1] / niceMax) * h;
           return `${String(x)},${String(y)}`;
         }).reverse()
       : [`${String(PAD.left + w)},${String(PAD.top + h)}`, `${String(PAD.left)},${String(PAD.top + h)}`];
@@ -324,6 +333,7 @@ function renderCFD(snapshots: { date: string; data: { not_started: number; start
         )}
       </div>
       <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="dashboard-svg">
+        {yAxisLines(niceMax, ticks, h)}
         {areas}
         {axisLabels(snapshots.map(s => s.date))}
       </svg>
@@ -379,7 +389,7 @@ function singleDonut(data: { category: string; count: number }[], label: string,
     const catLabel = cat?.label ?? d.category;
 
     paths.push(
-      <path d={`M ${String(x1)} ${String(y1)} A ${String(r)} ${String(r)} 0 ${String(large)} 1 ${String(x2)} ${String(y2)} L ${String(ix1)} ${String(iy1)} A ${String(inner)} ${String(inner)} 0 ${String(large)} 0 ${String(ix2)} ${String(iy2)} Z`} fill={color} opacity="0.8" className="chart-hover">
+      <path d={`M ${String(x1)} ${String(y1)} A ${String(r)} ${String(r)} 0 ${String(large)} 1 ${String(x2)} ${String(y2)} L ${String(ix1)} ${String(iy1)} A ${String(inner)} ${String(inner)} 0 ${String(large)} 0 ${String(ix2)} ${String(iy2)} Z`} fill={color} opacity="0.8" className="chart-hover donut-wedge">
         <title>{`${catLabel}: ${String(d.count)}`}</title>
       </path>
     );
@@ -489,12 +499,16 @@ function linePath(values: number[], max: number, w: number, h: number): string {
   }).join(' ');
 }
 
-function yAxisLines(max: number, h: number, suffix = ''): SafeHtml[] {
-  const ticks = 4;
+/**
+ * HS-9724 — draw gridlines + labels at the DISTINCT integer ticks from
+ * `integerAxis`, positioned by value against `niceMax` (the caller scales its
+ * bars/lines to the same `niceMax` so they line up). Replaces the old fixed
+ * 4-interval + `Math.round` scheme that produced duplicate labels (0,0,1,1,1).
+ */
+function yAxisLines(niceMax: number, ticks: number[], h: number, suffix = ''): SafeHtml[] {
   const out: SafeHtml[] = [];
-  for (let i = 0; i <= ticks; i++) {
-    const val = Math.round((max / ticks) * i);
-    const y = PAD.top + h - (i / ticks) * h;
+  for (const val of ticks) {
+    const y = PAD.top + h - (val / niceMax) * h;
     out.push(<line x1={String(PAD.left)} y1={String(y)} x2={String(CHART_W - PAD.right)} y2={String(y)} stroke="#e5e7eb" stroke-width="0.5"/>);
     out.push(<text x={String(PAD.left - 4)} y={String(y + 3)} text-anchor="end" fill="#9ca3af" font-size="9">{`${String(val)}${suffix}`}</text>);
   }

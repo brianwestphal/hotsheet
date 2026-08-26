@@ -6774,6 +6774,28 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   flex-shrink: 0;
 }
 
+// HS-9728 — the "Created" legend swatch mirrors its dashed line so the two
+// series in Created-vs-Completed are distinguishable without relying on the
+// green/orange hue alone (colorblind-safe redundant channel). Rendered as a
+// short dashed rule instead of a filled dot; `background` still carries the hue.
+.chart-legend-dot.chart-legend-dashed {
+  width: 14px;
+  height: 0;
+  border-radius: 0;
+  background: transparent !important;
+  border-top: 2px dashed currentColor;
+  color: #f97316;
+  align-self: center;
+}
+
+// HS-9728 — a thin card-colored stroke between donut wedges so adjacent
+// same-family hues (red "Bug" next to green "Feature") stay distinguishable
+// even under red/green color-blindness. Theme-aware via --bg.
+.donut-wedge {
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
 .chart-hover {
   transition: opacity 0.15s;
 
