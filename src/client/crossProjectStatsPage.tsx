@@ -788,10 +788,14 @@ export function renderShell(payload: DashboardPayload, container: HTMLElement): 
     </div>
   );
 
-  // HS-8543 — populate the always-visible subscription-cost
-  // disclaimer slot.
+  // HS-8543 — populate the subscription-cost disclaimer slot.
+  // HS-9732 — but NOT in subscription mode: the "Subscription mode:" banner
+  // above already carries the same "these dollars are API-equivalent estimates"
+  // message (with a Settings → Billing link), so showing both was redundant. In
+  // pay-per-token mode the banner is absent, so this line still hedges "if you're
+  // actually on a subscription, these are estimates."
   const disclaimerSlot = root.querySelector<HTMLElement>('#telemetry-dashboard-disclaimer-slot');
-  if (disclaimerSlot !== null) {
+  if (disclaimerSlot !== null && getTelemetryCostMode() !== 'subscription') {
     disclaimerSlot.appendChild(renderSubscriptionDisclaimer());
   }
 
@@ -878,7 +882,14 @@ async function fetchAndRender(container: HTMLElement, window: DashboardWindow = 
     // paint when this revision is already on-screen (poll tick, unchanged window).
     paintIfChanged(container, running.data as DashboardPayload, running.revision);
   } else {
-    container.replaceChildren(toElement(<p className="telemetry-dashboard-loading">Loading dashboard…</p>));
+    // HS-9732 — a spinner so the (up to a few seconds) cross-project load reads
+    // as loading, not stalled.
+    container.replaceChildren(toElement(
+      <p className="telemetry-dashboard-loading">
+        <svg className="telemetry-dashboard-loading-spinner" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        Loading dashboard…
+      </p>,
+    ));
     lastPaintedRevision.delete(container);
   }
 

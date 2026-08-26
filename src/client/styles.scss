@@ -13415,6 +13415,18 @@ label.detail-details-label {
   font-style: italic;
 }
 
+// HS-9732 — spinning loader glyph next to the "Loading dashboard…" text.
+.telemetry-dashboard-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.telemetry-dashboard-loading-spinner {
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
 .telemetry-dashboard-error { color: var(--danger); font-style: normal; }
 
 .telemetry-dashboard-error-detail {
@@ -13462,9 +13474,12 @@ label.detail-details-label {
 }
 
 // HS-8628 — input/output token split, a dimmer second meta line.
+// HS-9732 — was --text-muted (#9ca3af, ~2.5:1 on white, fails WCAG AA); these
+// carry real token/cache figures, so bump to --text-secondary (≥4.5:1). Still
+// visually secondary to the big cost number, just readable.
 .telemetry-dashboard-chip-submeta {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -13927,9 +13942,11 @@ label.detail-details-label {
 }
 
 // HS-8628 — input/output token split, a dimmer second meta line.
+// HS-9732 — darkened from --text-muted to --text-secondary for WCAG AA (matches
+// the cross-project `.telemetry-dashboard-chip-submeta` fix).
 .telemetry-chip-submeta {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
