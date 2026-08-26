@@ -5358,6 +5358,17 @@ body.cross-project-stats-active {
   // thumb-only when `body.scrollbars-always-visible` is set.
   scrollbar-width: none;
   &::-webkit-scrollbar { height: 0; }
+
+  // HS-9718 — with the scrollbar hidden, an overflowing tab strip gave no cue
+  // that more tabs (Permissions / API Keys / Plugins / …) exist off the right
+  // edge, and clipped the last one mid-word. `.has-overflow` is toggled by
+  // `watchHorizontalOverflow` whenever the strip actually overflows; fade the
+  // right edge so the cut reads as "there's more — scroll" rather than a bug.
+  // (A fuller vertical-nav-rail / grouped-tabs redesign is tracked separately.)
+  &.has-overflow {
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
 }
 
 body.scrollbars-always-visible .settings-tabs {
