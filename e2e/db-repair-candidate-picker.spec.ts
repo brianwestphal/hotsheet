@@ -96,7 +96,7 @@ async function clickInPanel(page: Page, selector: string): Promise<void> {
   await el.click({ timeout: 10000 });
 }
 
-/** Open Settings and click "Run pg_resetwal…", which is what opens the picker. */
+/** Open Settings and click the WAL-rebuild button ("Rebuild database log…"), which opens the picker. */
 async function openPicker(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.locator('.draft-input')).toBeVisible({ timeout: 15000 });

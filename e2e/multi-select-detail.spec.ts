@@ -87,7 +87,7 @@ test.describe('Multi-select detail panel (HS-5628)', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('Escape deselects all and shows "Nothing selected"', async ({ page }) => {
+  test('Escape deselects all and shows the empty-state placeholder', async ({ page }) => {
     const row = page.locator('.ticket-row[data-id]').filter({ has: page.locator(`.ticket-title-input[value="${titleA}"]`) }).first();
     await row.locator('.ticket-number').click();
     await expect(page.locator('#detail-header')).toBeVisible({ timeout: 3000 });
@@ -96,6 +96,7 @@ test.describe('Multi-select detail panel (HS-5628)', () => {
     await page.keyboard.press('Escape');
 
     await expect(page.locator('#detail-placeholder')).toBeVisible({ timeout: 3000 });
-    await expect(page.locator('#detail-placeholder-text')).toContainText('Nothing selected');
+    // HS-9719 — the empty state teaches the interaction rather than a bare "Nothing selected".
+    await expect(page.locator('#detail-placeholder-text')).toContainText('Select a ticket');
   });
 });

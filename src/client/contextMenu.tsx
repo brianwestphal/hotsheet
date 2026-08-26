@@ -97,8 +97,9 @@ function addFeedbackItem(menu: HTMLElement, ticket: Ticket): void {
  *
  * Two refinements are load-bearing and easy to undo by accident:
  * - **HS-8841** — with no non-empty note it falls back to reading the Details and
- *   relabels to "Read Description", so the label matches what actually opens. It is
- *   disabled only when there is NEITHER a note nor a description.
+ *   relabels to "Read Details" (HS-9721 — matches the detail panel's "Details"
+ *   field label; was "Read Description"), so the label matches what actually opens.
+ *   It is disabled only when there is NEITHER a note nor a description.
  * - **HS-9526** — system/status notes (a claim-lease reclaim) are filtered out. They
  *   are bookkeeping, not content: surfacing one as "the latest note" would read the
  *   user a line about lease state instead of the note they wanted.
@@ -115,7 +116,7 @@ function addReadNoteItem(menu: HTMLElement, ticket: Ticket): void {
   const hasDescription = ticket.details.trim() !== '';
   const readTarget: 'note' | 'details' | null =
     latestNote !== null ? 'note' : (hasDescription ? 'details' : null);
-  const label = readTarget === 'details' ? 'Read Description' : 'Read Latest Note';
+  const label = readTarget === 'details' ? 'Read Details' : 'Read Latest Note';
   addActionItem(menu, label, () => {
     openLatestNoteReader(ticket);
   }, { icon: BOOK_OPEN_TEXT_SVG, disabled: readTarget === null });

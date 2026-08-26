@@ -324,7 +324,7 @@ pageRoutes.get('/', (c) => {
 
             <aside className="detail-panel detail-disabled" id="detail-panel">
               <div className="detail-placeholder" id="detail-placeholder">
-                <span className="detail-placeholder-text" id="detail-placeholder-text">Nothing selected</span>
+                <span className="detail-placeholder-text" id="detail-placeholder-text">Select a ticket to see and edit its details</span>
               </div>
               <div className="detail-header" id="detail-header" style="display:none">
                 <span className="detail-ticket-number" id="detail-ticket-number"></span>
@@ -833,7 +833,7 @@ pageRoutes.get('/', (c) => {
               <div id="db-repair-status" className="db-repair-status">Checking database health…</div>
               <div className="db-repair-actions">
                 <button className="btn btn-sm" id="db-repair-find-working-btn">Find a Working Backup</button>
-                <button className="btn btn-sm" id="db-repair-pg-resetwal-btn">Run pg_resetwal…</button>
+                <button className="btn btn-sm" id="db-repair-pg-resetwal-btn" title="Advanced: runs pg_resetwal to reset the database's write-ahead log">Rebuild database log…</button>
               </div>
               <div id="db-repair-result" className="db-repair-result"></div>
             </div>
@@ -1199,7 +1199,7 @@ pageRoutes.get('/', (c) => {
                 </div>
                 <div className="settings-field settings-field-checkbox">
                   <label><input type="checkbox" id="settings-diagnostics-enabled" /> Enable diagnostic UI surfaces (slow-server banner + UI-hang toast)</label>
-                  <span className="settings-hint">When on, the slow-server banner (HS-8175 / HS-8226) surfaces when an HTTP request stays in flight past 3 s, and the HS-8054 longtask observer emits a small toast for each ≥ 500 ms UI hang (rate-limited to once every 10 s). Off by default — both surfaces are primarily useful when actively investigating event-loop blocks. Freezes are always logged to <code>&lt;dataDir&gt;/freeze.log</code> for diagnostics regardless of this setting.</span>
+                  <span className="settings-hint">When on, a banner appears if a request to the server takes longer than 3 seconds, and a small toast appears for each UI hang over 500 ms (at most one every 10 seconds). Off by default — most useful when you're diagnosing slowness. UI freezes are always written to the diagnostics log regardless of this setting.</span>
                 </div>
               </div>
               {/* HS-9411 (docs/124) — In Development gates. The checkbox rows are

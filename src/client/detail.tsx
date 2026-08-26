@@ -304,9 +304,10 @@ export function syncDetailPanel() {
     body.style.display = 'none';
     placeholder.style.display = '';
     if (state.selectedIds.size === 0) {
-      placeholderText.textContent = 'Nothing selected';
+      // HS-9719 — teach the interaction instead of a bare "Nothing selected".
+      placeholderText.textContent = 'Select a ticket to see and edit its details';
     } else {
-      placeholderText.textContent = `${state.selectedIds.size} items selected`;
+      placeholderText.textContent = `${state.selectedIds.size} items selected — use the toolbar above to edit them together`;
     }
   }
 }
@@ -334,7 +335,9 @@ function loadPreviewDetail(id: number) {
   if (!ticket || state.activeTicketId !== id) return;
 
   byId('detail-ticket-number').textContent = ticket.ticket_number;
-  byId<HTMLInputElement>('detail-title').value = ticket.title;
+  const previewTitleInput = byId<HTMLInputElement>('detail-title');
+  previewTitleInput.value = ticket.title;
+  previewTitleInput.title = ticket.title; // HS-9722 — hover shows the full title if clipped
   updateDetailCategory(ticket.category);
   updateDetailPriority(ticket.priority);
   updateDetailStatus(ticket.status);
@@ -477,6 +480,9 @@ async function loadDetail(id: number, forceTextFields = false) {
       titleInput.setSelectionRange(len, len);
     }
   }
+  // HS-9722 — the single-line title input clips long titles; a native tooltip
+  // surfaces the full value on hover even when the field isn't focused.
+  titleInput.title = ticket.title;
   updateDetailCategory(ticket.category);
   updateDetailPriority(ticket.priority);
   updateDetailStatus(ticket.status);

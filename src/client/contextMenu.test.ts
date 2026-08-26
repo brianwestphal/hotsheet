@@ -369,9 +369,9 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
   });
 
   // HS-8841 — when there are no notes, the item falls back to reading the
-  // Details (description) and is relabeled "Read Description"; it's disabled
+  // Details (description) and is relabeled "Read Details"; it's disabled
   // only when there is neither a note nor a description.
-  it('falls back to "Read Description" (enabled) when there are no notes but a description exists (HS-8841)', () => {
+  it('falls back to "Read Details" (enabled) when there are no notes but a description exists (HS-8841)', () => {
     const t = makeTicket(110, { notes: '', details: '## The description body' });
     ticketsStore.actions.setTickets([t]);
     state.selectedIds.add(110);
@@ -380,11 +380,11 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     showTicketContextMenu(makeContextMenuEvent(), t);
 
     const labels = menuLabels();
-    expect(labels).toContain('Read Description');
+    expect(labels).toContain('Read Details');
     expect(labels).not.toContain('Read Latest Note');
 
     const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
-    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Description');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Details');
     expect(readItem).toBeDefined();
     expect(readItem!.classList.contains('disabled')).toBe(false);
 
@@ -405,7 +405,7 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     showTicketContextMenu(makeContextMenuEvent(), t);
 
     const items = document.querySelectorAll<HTMLElement>('.context-menu .context-menu-item');
-    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Description');
+    const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Details');
     expect(readItem).toBeDefined();
     expect(readItem!.classList.contains('disabled')).toBe(false);
   });
@@ -422,8 +422,8 @@ describe('showTicketContextMenu — Read Latest Note (HS-8401)', () => {
     const readItem = Array.from(items).find((el) => el.querySelector('.context-menu-label')?.textContent === 'Read Latest Note');
     expect(readItem).toBeDefined();
     expect(readItem!.classList.contains('disabled')).toBe(true);
-    // No description, so it does NOT relabel to "Read Description".
-    expect(menuLabels()).not.toContain('Read Description');
+    // No description, so it does NOT relabel to "Read Details".
+    expect(menuLabels()).not.toContain('Read Details');
   });
 });
 
