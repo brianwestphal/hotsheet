@@ -145,6 +145,7 @@ export function setupTicketRowEffects(row: HTMLElement, ticket: Ticket): () => v
     if (statusBtn !== null) {
       const isVerified = t.status === 'verified';
       statusBtn.classList.toggle('verified', isVerified);
+      statusBtn.classList.toggle('started', t.status === 'started'); // HS-9714 — amber in-progress color
       const statusTitle = t.status.replace('_', ' ');
       if (statusBtn.getAttribute('title') !== statusTitle) statusBtn.setAttribute('title', statusTitle);
       replaceWithSvg(statusBtn, isVerified ? VERIFIED_SVG : getStatusIcon(t.status));
@@ -366,7 +367,7 @@ export function createTicketRow(ticket: Ticket): HTMLElement {
         {getCategoryLabel(ticket.category)}
       </span>
       <span className="ticket-number">{ticket.ticket_number}</span>
-      <button className={`ticket-status-btn${isVerified ? ' verified' : ''}`} title={ticket.status.replace('_', ' ')}>
+      <button className={`ticket-status-btn${isVerified ? ' verified' : ''}${ticket.status === 'started' ? ' started' : ''}`} title={ticket.status.replace('_', ' ')}>
         {isVerified ? VERIFIED_SVG : getStatusIcon(ticket.status)}
       </button>
       {renderTicketRowSyncIcon(ticket)}

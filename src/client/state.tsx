@@ -485,14 +485,14 @@ const PRIORITY_COLORS: Record<string, string> = {
   high: '#f97316',
   default: '#6b7280',
   low: '#3b82f6',
-  lowest: '#94a3b8',
+  lowest: '#64748b', // HS-9714 - was #94a3b8 (~2.4:1 on white, fails WCAG); slate-500 clears the 3:1 graphics threshold
 };
 
 const CHECK_CHECK_SVG: SafeHtml = <svg {...LUCIDE_14}><path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/></svg>;
 
 const STATUS_ICONS: Record<string, string | SafeHtml> = {
   not_started: '\u25CB',
-  started: '\u25D4',
+  started: '\u25D1', // HS-9714 - half-filled circle (U+25D1, was U+25D4 quarter): far easier to distinguish from the not-started circle when scanning; paired with the amber `.ticket-status-btn.started` color in CSS
   completed: '\u2713',
   verified: CHECK_CHECK_SVG,
   backlog: '\u25A1',

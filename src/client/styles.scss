@@ -3475,7 +3475,9 @@ body.cross-project-stats-active {
 
   &.completed .ticket-title-input {
     text-decoration: line-through;
-    color: var(--text-muted);
+    // HS-9714 — was --text-muted (#9ca3af ~2.5:1 on white, fails WCAG); a completed
+    // title still needs to be readable. --text-secondary (#6b7280) clears 4.5:1.
+    color: var(--text-secondary);
   }
 
   &.up-next {
@@ -3522,6 +3524,13 @@ body.cross-project-stats-active {
 
   &.verified {
     color: #22c55e;
+  }
+
+  // HS-9714 — in-progress ("started") gets a distinct amber color so the
+  // half-filled circle (◑) reads as clearly different from the gray not-started
+  // (○) circle when scanning a list, not just a subtle fill difference.
+  &.started {
+    color: var(--warning);
   }
 }
 
@@ -7117,7 +7126,7 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
 .column-card.status-completed .column-card-title,
 .column-card.status-verified .column-card-title {
   text-decoration: line-through;
-  color: var(--text-muted);
+  color: var(--text-secondary); // HS-9714 — readable completed/verified card title (was --text-muted, fails 4.5:1)
 }
 
 .column-card-tags {

@@ -72,7 +72,7 @@ describe('getPriorityColor', () => {
     expect(getPriorityColor('high')).toBe('#f97316');
     expect(getPriorityColor('default')).toBe('#6b7280');
     expect(getPriorityColor('low')).toBe('#3b82f6');
-    expect(getPriorityColor('lowest')).toBe('#94a3b8');
+    expect(getPriorityColor('lowest')).toBe('#64748b'); // HS-9714 — darkened for WCAG contrast
   });
 
   it('returns default for unknown priority', () => {
@@ -83,7 +83,7 @@ describe('getPriorityColor', () => {
 describe('getStatusIcon', () => {
   it('returns correct icons for all statuses', () => {
     expect(getStatusIcon('not_started')).toBe('○');
-    expect(getStatusIcon('started')).toBe('◔');
+    expect(getStatusIcon('started')).toBe('◑'); // HS-9714 — half-filled (was ◔ quarter) for legibility
     expect(getStatusIcon('completed')).toBe('✓');
     // `verified` returns a JSX `SafeHtml`; `.toString()` to assert
     // the underlying HTML carries the `<svg` tag.
