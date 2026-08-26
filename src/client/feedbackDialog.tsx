@@ -803,11 +803,15 @@ export function buildOverlay(ticketNumber: string, blocks: FeedbackBlock[], show
             <input type="file" id="feedback-file-input" multiple={true} style="display:none" />
           </div>
           <div style="display:flex;gap:8px;margin-top:16px;align-items:center;flex-wrap:wrap">
-            <button className="feedback-later-link" id="feedback-later">Later</button>
+            {/* HS-9735 — the three defer/dismiss paths carry tooltips spelling out
+                how they differ; Submit is the accent (primary) action, matching the
+                Print dialog's green confirm. (`btn-primary` had no CSS rule, so it
+                rendered identical to its neighbors — swapped to `btn-accent`.) */}
+            <button className="feedback-later-link" id="feedback-later" title="Close for now — the request stays open; reopen it anytime from the note">Later</button>
             <div style="flex:1"></div>
-            <button className="btn btn-sm" id="feedback-save-draft" title="Save the response as a draft to come back to later (HS-7599)">Save Draft</button>
-            <button className="btn btn-sm" id="feedback-no-response">No Response Needed</button>
-            <button className="btn btn-sm btn-primary" id="feedback-submit">Submit</button>
+            <button className="btn btn-sm" id="feedback-save-draft" title="Save your in-progress response as a draft to finish later (nothing is sent yet)">Save Draft</button>
+            <button className="btn btn-sm" id="feedback-no-response" title="Dismiss this request without replying — records that no response was needed and clears the FEEDBACK NEEDED prompt">No Response Needed</button>
+            <button className="btn btn-sm btn-accent" id="feedback-submit">Submit</button>
           </div>
           </div>
         </div>

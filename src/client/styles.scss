@@ -10644,7 +10644,10 @@ label.detail-details-label {
   display: flex;
   flex-direction: column;
   width: 90vw;
-  height: 90vh;
+  // HS-9733 — size to content (was a fixed `height: 90vh`, which left a huge
+  // empty void below a short ticket detail). The body scrolls only once content
+  // exceeds `max-height`; short details now render as a compact card.
+  height: auto;
   // max-width clamps the line length to a comfortable reading width on big
   // monitors — long lines of body text past ~960 px are tiring to scan.
   max-width: min(960px, 90vw);

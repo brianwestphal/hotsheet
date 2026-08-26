@@ -186,7 +186,11 @@ async function startListening(btn: HTMLButtonElement): Promise<void> {
           try {
             const gen = await generateAnnouncements({}, context);
             if (gen.error !== undefined && gen.error !== '') {
-              showToast('Announcer: couldn’t generate new narration just now — showing what’s already here.', { variant: 'warning', durationMs: 5000 });
+              // HS-9734 — surface the server's specific reason (e.g. "no new
+              // activity since the last narration", "rate limited") rather than a
+              // generic "couldn't generate", so the toast is actionable.
+              const why = gen.error.trim();
+              showToast(`Announcer: ${why === '' ? 'couldn’t generate new narration just now' : why} — showing what’s already here.`, { variant: 'warning', durationMs: 5000 });
             }
           } catch {
             showToast('Announcer: could not generate new entries (check your API key).', { variant: 'warning', durationMs: 5000 });

@@ -99,7 +99,10 @@ export const ALL_PROJECTS = 'all';
 /** HS-8883 — in-panel placeholders shown when a context has no entries, instead
  *  of a dead-end toast. The panel still opens, so the user can switch projects
  *  via the dropdown or wait for background generation to land. */
-const NOTHING_YET_MESSAGE = 'Nothing to announce here yet — do some work and press Listen again, or switch projects above.';
+// HS-9734 — point at the actual control: "Listen" is the audio button in the
+// top toolbar, not anything inside this panel (which has Play / Live). "press
+// Listen again" left users hunting the panel for a button that isn't here.
+const NOTHING_YET_MESSAGE = 'Nothing to announce here yet — do some work, then click the Listen button in the top toolbar again, or switch projects above.';
 const PREPARING_MESSAGE = 'Preparing your narration…';
 
 /** A reel entry annotated with its owning project so the PIP can show a chip and
