@@ -54,7 +54,10 @@ function buildDashboard(data: DashboardData): HTMLElement {
     ? Math.round(((kpi.completedThisWeek - kpi.completedLastWeek) / kpi.completedLastWeek) * 100)
     : 0;
   const throughputArrow = throughputChange > 0 ? '\u2191' : throughputChange < 0 ? '\u2193' : '';
-  const backlogRatio = kpi.createdThisWeek > 0 ? (kpi.completedThisWeek / kpi.createdThisWeek).toFixed(1) : '\u2014';
+  // HS-9729 \u2014 null when there's no created activity to divide by; rendered as a
+  // muted "No data" rather than a bare em-dash that reads as broken/zero.
+  const backlogRatio = kpi.createdThisWeek > 0 ? (kpi.completedThisWeek / kpi.createdThisWeek).toFixed(1) : null;
+  const emptyKpi = <div className="kpi-value kpi-value-empty">No data</div>;
 
   el.appendChild(toElement(
     <div className="dashboard-kpi-row">
@@ -64,15 +67,17 @@ function buildDashboard(data: DashboardData): HTMLElement {
         {throughputArrow ? <div className={`kpi-trend${throughputChange > 0 ? ' up' : ' down'}`}>{throughputArrow} {Math.abs(throughputChange)}%</div> : null}
       </div>
       <div className="dashboard-kpi-card">
-        <div className="kpi-value">{kpi.medianCycleTimeDays !== null ? `${kpi.medianCycleTimeDays}d` : '\u2014'}</div>
+        {kpi.medianCycleTimeDays !== null ? <div className="kpi-value">{`${String(kpi.medianCycleTimeDays)}d`}</div> : emptyKpi}
         <div className="kpi-label">Median cycle time</div>
       </div>
       <div className="dashboard-kpi-card">
         <div className="kpi-value">{String(kpi.wipCount)}</div>
         <div className="kpi-label">In progress</div>
       </div>
-      <div className="dashboard-kpi-card">
-        <div className="kpi-value">{backlogRatio}</div>
+      {/* HS-9729 \u2014 tooltip defines the metric + which direction is good (the bare
+          ratio was undefined without it). */}
+      <div className="dashboard-kpi-card" title="Tickets completed vs created this week. Above 1.0 means you're closing work faster than it arrives; below 1.0 means the backlog is growing.">
+        {backlogRatio !== null ? <div className="kpi-value">{backlogRatio}</div> : emptyKpi}
         <div className="kpi-label">Completed / created</div>
       </div>
     </div>
@@ -453,12 +458,16 @@ function renderScatterChart(data: { ticket_number: string; title: string; comple
   const p50y = logY(p50, minLog, logRange, h);
   const p85y = logY(p85, minLog, logRange, h);
 
+  // HS-9727 — label the percentile lines INSIDE the plot at the left (the old
+  // labels sat past the right edge and were clipped by the card), and put the
+  // p50 label ABOVE its line and the p85 label BELOW its line so the two never
+  // collide when p50 ≈ p85. The "p50"/"p85" prefixes double as the legend.
   const percentiles = (
     <>
       <line x1={String(PAD.left)} y1={String(p50y)} x2={String(PAD.left + w)} y2={String(p50y)} stroke="#22c55e" stroke-dasharray="4,4" opacity="0.6"/>
-      <text x={String(PAD.left + w + 2)} y={String(p50y + 3)} fill="#22c55e" font-size="9">{`50% (${fmtDuration(p50)})`}</text>
       <line x1={String(PAD.left)} y1={String(p85y)} x2={String(PAD.left + w)} y2={String(p85y)} stroke="#f97316" stroke-dasharray="4,4" opacity="0.6"/>
-      <text x={String(PAD.left + w + 2)} y={String(p85y + 3)} fill="#f97316" font-size="9">{`85% (${fmtDuration(p85)})`}</text>
+      <text x={String(PAD.left + 3)} y={String(p50y - 3)} fill="#16a34a" font-size="9" font-weight="600">{`p50 ${fmtDuration(p50)}`}</text>
+      <text x={String(PAD.left + 3)} y={String(p85y + 10)} fill="#ea580c" font-size="9" font-weight="600">{`p85 ${fmtDuration(p85)}`}</text>
     </>
   );
 
@@ -487,8 +496,17 @@ function renderScatterChart(data: { ticket_number: string; title: string; comple
 // --- Helpers ---
 
 function fmtDate(d: string): string {
-  const dt = new Date(d);
-  return `${dt.getMonth() + 1}/${dt.getDate()}`;
+  // HS-9729 — format as "MMM D" (e.g. "Aug 11") to match the telemetry
+  // Cost-Over-Time chart's axis, so every chart on the dashboard speaks one
+  // date vocabulary. Pure parse of the leading YYYY-MM-DD (no Date object) so
+  // timezone/DST can't shift the day.
+  const parts = d.slice(0, 10).split('-');
+  if (parts.length !== 3) return d;
+  const monthIdx = Number.parseInt(parts[1], 10) - 1;
+  const day = Number.parseInt(parts[2], 10);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  if (monthIdx < 0 || monthIdx > 11 || Number.isNaN(day)) return d;
+  return `${months[monthIdx]} ${String(day)}`;
 }
 
 function linePath(values: number[], max: number, w: number, h: number): string {
@@ -526,7 +544,11 @@ function axisLabels(dates: string[]): SafeHtml[] {
 
   for (const i of positions) {
     const x = PAD.left + (i / Math.max(dates.length - 1, 1)) * w;
-    out.push(<text x={String(x)} y={String(h - 4)} text-anchor="middle" fill="#9ca3af" font-size="9">{fmtDate(dates[i])}</text>);
+    // HS-9729 — right-align the last label and left-align the first so the wider
+    // "MMM D" labels don't clip past the plot edges (middle-anchored end labels
+    // used to be cut off, e.g. "Aug 2[6]").
+    const anchor = i === 0 ? 'start' : i === dates.length - 1 ? 'end' : 'middle';
+    out.push(<text x={String(x)} y={String(h - 4)} text-anchor={anchor} fill="#9ca3af" font-size="9">{fmtDate(dates[i])}</text>);
   }
   return out;
 }

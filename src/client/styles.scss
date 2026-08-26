@@ -6682,6 +6682,16 @@ body.scrollbars-always-visible .settings-tabs.has-overflow {
   line-height: 1.2;
 }
 
+// HS-9729 — "No data" placeholder for a KPI with nothing to compute yet
+// (e.g. Completed/created with no created activity). Muted + smaller so it
+// reads as an empty state, not a broken big number or a bare em-dash.
+.kpi-value.kpi-value-empty {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 6px 0;
+}
+
 .kpi-label {
   font-size: 12px;
   color: var(--text-muted);
