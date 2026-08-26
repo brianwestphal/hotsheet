@@ -436,8 +436,11 @@ test('soft summarization error shows a gentle toast, not the Connection Error ov
   await expect(page.locator('.draft-input')).toBeVisible({ timeout: 10000 });
   await page.locator('#announcer-listen-btn').click();
 
-  // The gentle soft-error toast appears…
-  await expect(page.locator('.hs-toast')).toContainText('generate new narration', { timeout: 8000 });
+  // The gentle soft-error toast appears — HS-9734 surfaces the server's specific
+  // reason (from the mocked `error` above) instead of a generic "couldn't generate",
+  // and still reassures that the existing reel plays.
+  await expect(page.locator('.hs-toast')).toContainText('Summarization failed', { timeout: 8000 });
+  await expect(page.locator('.hs-toast')).toContainText('showing what');
   // …and the existing reel still opens.
   await expect(page.locator('.announcer-pip')).toBeVisible({ timeout: 8000 });
   // The alarming global overlay must NOT appear.
