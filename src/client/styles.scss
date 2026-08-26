@@ -3289,6 +3289,19 @@ body.cross-project-stats-active {
   flex-shrink: 0;
   flex-wrap: wrap;
   min-height: 36px;
+  transition: background 0.12s ease;
+
+  // HS-9713 — while a selection is active the batch controls enable; tint the
+  // toolbar (and emphasize the count) so it's unmistakable these actions now
+  // apply to the selected rows rather than reading as an always-on filter bar.
+  &.has-selection {
+    background: var(--bg-selected);
+
+    .batch-count {
+      color: var(--accent);
+      font-weight: 600;
+    }
+  }
 
   select, .btn {
     &:disabled {

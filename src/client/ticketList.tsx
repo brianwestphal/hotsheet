@@ -628,6 +628,12 @@ function updateBatchToolbar() {
   const hasSelection = count > 0;
   const isTrash = state.view === 'trash';
 
+  // HS-9713 — signal "batch mode" clearly when a selection is active. The batch
+  // controls are disabled (dimmed) until you select rows, but two independent
+  // reviewers still read the dimmed row as always-on filters, so tint the whole
+  // toolbar while a selection exists to make the active state unmistakable.
+  if (toolbar) toolbar.classList.toggle('has-selection', hasSelection);
+
   const selectAll = byId<HTMLInputElement>('batch-select-all');
   selectAll.checked = total > 0 && count === total;
   selectAll.indeterminate = count > 0 && count < total;
