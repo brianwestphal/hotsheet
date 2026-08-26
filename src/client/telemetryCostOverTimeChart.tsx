@@ -169,6 +169,35 @@ function bandFill(projectIdx: number, modelIdxWithinProject: number): { color: s
   return { color, opacity };
 }
 
+/**
+ * HS-9725 — model→color map for the SINGLE-project case, ranked by total cost
+ * descending and colored with `MODEL_DONUT_COLORS[rank]` — the exact rule the
+ * Cost-by-Model donut uses (`telemetryModelDonut.tsx`), so the same model gets
+ * the same hue in both charts. Returns null when >1 project is present (there
+ * the band hue distinguishes projects, not models).
+ */
+function buildModelColorMap(
+  projectSecrets: readonly string[],
+  tuples: readonly { projectSecret: string; model: string }[],
+  dates: readonly string[],
+  costLookup: Map<string, number>,
+): Map<string, string> | null {
+  if (projectSecrets.length !== 1) return null;
+  const secret = projectSecrets[0];
+  const totalByModel = new Map<string, number>();
+  for (const t of tuples) {
+    if (t.projectSecret !== secret) continue;
+    let sum = 0;
+    for (const date of dates) sum += costLookup.get(`${date} ${secret} ${t.model}`) ?? 0;
+    totalByModel.set(t.model, (totalByModel.get(t.model) ?? 0) + sum);
+  }
+  const map = new Map<string, string>();
+  [...totalByModel.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([model], i) => map.set(model, MODEL_DONUT_COLORS[i % MODEL_DONUT_COLORS.length]));
+  return map;
+}
+
 /** Format a `YYYY-MM-DD` date string as `MMM D` (e.g. `May 21`) for
  *  the x-axis tick labels. Pure string parse — no Date object so DST
  *  + timezone don't intrude. */
@@ -360,8 +389,9 @@ function renderStackedBody(opts: {
   yMax: number;
   formatCost: (n: number) => string;
   resolveProjectLabel: (secret: string) => string;
+  modelColorMap: Map<string, string> | null; // HS-9725
 }): HTMLElement {
-  const { width, height, dates, bands, yMax, formatCost, resolveProjectLabel } = opts;
+  const { width, height, dates, bands, yMax, formatCost, resolveProjectLabel, modelColorMap } = opts;
 
   const chartLeft = MARGIN_LEFT;
   const chartTop = MARGIN_TOP;
@@ -387,7 +417,11 @@ function renderStackedBody(opts: {
     const yBottom = chartTop + chartHeight - yScale(b.cumulativeBelow);
     const yTop = chartTop + chartHeight - yScale(b.cumulativeBelow + b.cost);
     const hPx = Math.max(0, yBottom - yTop);
-    const { color, opacity } = bandFill(b.projectIdx, b.modelIdxWithinProject);
+    // HS-9725 — single-project: distinct per-model hue; else project hue + opacity.
+    const modelColor = modelColorMap?.get(b.model);
+    const { color, opacity } = modelColor !== undefined
+      ? { color: modelColor, opacity: 0.85 }
+      : bandFill(b.projectIdx, b.modelIdxWithinProject);
     const tooltip = `${b.date} — ${resolveProjectLabel(b.projectSecret)} / ${b.model}: ${formatCost(b.cost)}`;
     const rect = toElement(
       <rect
@@ -509,8 +543,9 @@ function renderLegend(opts: {
   projectIdxOf: Map<string, number>;
   modelIdxOf: Map<string, number>;
   resolveProjectLabel: (secret: string) => string;
+  modelColorMap: Map<string, string> | null; // HS-9725
 }): HTMLElement {
-  const { projectSecrets, tuples, projectIdxOf, modelIdxOf, resolveProjectLabel } = opts;
+  const { projectSecrets, tuples, projectIdxOf, modelIdxOf, resolveProjectLabel, modelColorMap } = opts;
   const wrap = toElement(<div className="telemetry-cost-over-time-legend"></div>);
   for (const secret of projectSecrets) {
     const projectIdx = projectIdxOf.get(secret) ?? 0;
@@ -520,22 +555,25 @@ function renderLegend(opts: {
     const block = toElement(<div className="telemetry-cost-over-time-legend-project"></div>);
     block.appendChild(toElement(
       <div className="telemetry-cost-over-time-legend-project-row">
-        <span
-          className="telemetry-cost-over-time-legend-swatch"
-          style={`background-color: ${projectColor};`}
-        ></span>
+        {/* HS-9725 — single-project: the model rows carry the color, so the
+            project row is just a scope label (no misleading color swatch). */}
+        {modelColorMap === null
+          ? <span className="telemetry-cost-over-time-legend-swatch" style={`background-color: ${projectColor};`}></span>
+          : null}
         <span className="telemetry-cost-over-time-legend-project-name">{resolveProjectLabel(secret)}</span>
       </div>
     ));
     for (const model of models) {
+      // HS-9725 — single-project: the legend swatch is the model's distinct hue
+      // (matching the bands + donut); multi-project keeps project-hue + opacity.
+      const modelColor = modelColorMap?.get(model);
       const modelIdx = modelIdxOf.get(`${secret} ${model}`) ?? 0;
-      const { opacity } = bandFill(projectIdx, modelIdx);
+      const swatchStyle = modelColor !== undefined
+        ? `background-color: ${modelColor};`
+        : `background-color: ${projectColor}; opacity: ${String(bandFill(projectIdx, modelIdx).opacity)};`;
       block.appendChild(toElement(
         <div className="telemetry-cost-over-time-legend-model-row">
-          <span
-            className="telemetry-cost-over-time-legend-swatch is-model"
-            style={`background-color: ${projectColor}; opacity: ${String(opacity)};`}
-          ></span>
+          <span className="telemetry-cost-over-time-legend-swatch is-model" style={swatchStyle}></span>
           <span className="telemetry-cost-over-time-legend-model-name">{model}</span>
         </div>
       ));
@@ -641,6 +679,12 @@ export function renderCostOverTimeChart(
     models.forEach((m, i) => modelIdxOf.set(`${secret} ${m}`, i));
   }
   const costLookup = buildCostLookup(points);
+  // HS-9725 — in a single-project view (the per-project analytics dashboard),
+  // color the stacked bands by MODEL with the same cost-ranked hues the
+  // Cost-by-Model donut uses, so the models are distinguishable and one model =
+  // one color across both charts. Null for multi-project (there the band hue
+  // distinguishes PROJECTS, models step by opacity — the deliberate tradeoff).
+  const modelColorMap = buildModelColorMap(projectSecrets, tuples, dates, costLookup);
   // HS-8810 — days with no ingested telemetry (shaded distinctly from $0 days).
   const noTelemetryDates = computeNoTelemetryDates(dates, opts.ingestedDates);
 
@@ -698,6 +742,7 @@ export function renderCostOverTimeChart(
         yMax: r.maxStackTotal,
         formatCost,
         resolveProjectLabel,
+        modelColorMap,
       });
     } else {
       const r = buildProjectDailyTotals(dates, projectSecrets, tuples, costLookup);
@@ -758,6 +803,7 @@ export function renderCostOverTimeChart(
     projectIdxOf,
     modelIdxOf,
     resolveProjectLabel,
+    modelColorMap,
   }));
 
   return root;

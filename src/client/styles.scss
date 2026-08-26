@@ -13629,7 +13629,10 @@ label.detail-details-label {
   list-style: none;
   padding: 0;
   margin: 0;
+  // HS-9725 — cap the width so the list doesn't stretch across the whole card
+  // and open a wide "river" between each model name and its numbers.
   flex: 1 1 220px;
+  max-width: 380px;
   font-size: 12px;
   display: flex;
   flex-direction: column;
@@ -13638,7 +13641,9 @@ label.detail-details-label {
 
 .telemetry-dashboard-model-legend-row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) 50px 70px;
+  // HS-9725 — name column sized to content (was 1fr, which pushed the % / cost
+  // to the far edge); a trailing 1fr absorbs slack AFTER the numbers instead.
+  grid-template-columns: 14px minmax(0, max-content) 44px 64px 1fr;
   align-items: center;
   gap: 8px;
 }
@@ -13671,7 +13676,9 @@ label.detail-details-label {
 // HS-8628 — per-model input/output split + derived $/Mtok estimate, on its own
 // line spanning the full row width under the headline cost.
 .telemetry-dashboard-model-legend-meta {
-  grid-column: 1 / -1;
+  // HS-9725 — span up to (not including) the trailing slack column so the meta
+  // line right-aligns to the cost column, not the far card edge.
+  grid-column: 1 / 5;
   text-align: right;
   font-size: 11px;
   color: var(--text-muted);
