@@ -2210,6 +2210,7 @@ body.cross-project-stats-active {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px; // HS-9716 — space between the icon and its label
   width: 100%;
   padding: 8px;
   background: #22c55e;
@@ -2229,6 +2230,13 @@ body.cross-project-stats-active {
   &.auto-mode {
     background: #16a34a;
   }
+}
+
+// HS-9716 — the play button's action label (was icon-only, unguessable).
+.channel-play-label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .channel-play-icon {

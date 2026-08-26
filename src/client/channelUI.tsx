@@ -540,14 +540,17 @@ export async function initChannel() {
     channelStore.actions.setChannelAutoMode(restoredAuto);
     if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
     // Update the play button UI to reflect the restored auto-mode state
+    const label = byIdOrNull('channel-play-label'); // HS-9716
     if (restoredAuto) {
       playIcon.style.display = 'none';
       autoIcon.style.display = '';
       btn.classList.add('auto-mode');
+      if (label) label.textContent = 'Auto mode';
     } else {
       playIcon.style.display = '';
       autoIcon.style.display = 'none';
       btn.classList.remove('auto-mode');
+      if (label) label.textContent = 'Run worklist';
     }
   }
   // HS-9260 — re-sync the indicator + spinner poll + global busy slot to the
@@ -656,10 +659,12 @@ function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLE
   // Persist per-project
   const secret = getActiveProject()?.secret ?? '';
   if (secret !== '') channelStore.actions.setAutoModeForProject(secret, next);
+  const label = byIdOrNull('channel-play-label'); // HS-9716
   if (next) {
     btn.classList.add('auto-mode');
     playIcon.style.display = 'none';
     autoIcon.style.display = '';
+    if (label) label.textContent = 'Auto mode';
     channelStore.actions.setChannelAutoBackoff(0);
     // Immediately trigger Claude when entering auto mode, then continue auto-monitoring
     triggerChannelAndMarkBusy();
@@ -667,6 +672,7 @@ function toggleAutoMode(btn: HTMLElement, playIcon: HTMLElement, autoIcon: HTMLE
     btn.classList.remove('auto-mode');
     playIcon.style.display = '';
     autoIcon.style.display = 'none';
+    if (label) label.textContent = 'Run worklist';
     // Clear pending debounce and retry when leaving auto mode
     if (channelDebounceTimeout) { clearTimeout(channelDebounceTimeout); channelDebounceTimeout = null; }
     if (channelAutoRetryInterval) { clearInterval(channelAutoRetryInterval); channelAutoRetryInterval = null; }

@@ -224,6 +224,8 @@ pageRoutes.get('/', (c) => {
               <button className="channel-play-btn" id="channel-play-btn" title="Run worklist (double-click for auto mode)">
                 <span className="channel-play-icon" id="channel-play-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg></span>
                 <span className="channel-auto-icon" id="channel-auto-icon" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M12 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 12 18z"/><path d="M2 6a2 2 0 0 1 3.414-1.414l6 6a2 2 0 0 1 0 2.828l-6 6A2 2 0 0 1 2 18z"/></svg></span>
+                {/* HS-9716 — visible label so the app's loudest control isn't a bare icon; text swaps to "Auto mode" in the two auto-mode toggle sites in channelUI.tsx. */}
+                <span className="channel-play-label" id="channel-play-label">Run worklist</span>
               </button>
             </div>
             {/* HS-9513 (docs/121 §121.7) — shown in place of the play button when the
