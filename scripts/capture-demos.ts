@@ -327,11 +327,13 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
     // HS-1 (mixed-shipping bug) is the content-rich ticket — long details + notes
     // — so the Details panel overflows and there's a real story to scroll through.
     //
-    // HS-9671 round 2 — TRUE smooth scroll: domotion's dedicated `scroll` frame
-    // ghosts a nested panel, and stepped scrollTop reads as jumps. Instead we wrap
-    // the panel's content in an inner div and animate its `translateY` with a
-    // domotion frame `animations` entry — that writes a real CSS keyframe into the
-    // output SVG, so the content glides continuously while the chrome stays fixed.
+    // HS-9671 round 2 wrapped the panel's content in an inner div and animated
+    // its `translateY`, because domotion's `scroll` frame then ghosted a nested
+    // panel. HS-9737 / domotion-svg 0.28: an element-owned scroll frame
+    // (`scroll.selector`) keeps the surrounding page static and animates only the
+    // scroller's contents in place (chunked by the scroller's own client box, with
+    // the panel's rounded clips preserved), so the DOM-wrapping workaround is gone —
+    // `#detail-body` (the panel's `overflow-y: auto` scroller) just scrolls.
     frames: (url) => [
       {
         input: url,
@@ -340,17 +342,16 @@ const INTERACTIONS: Record<number, InteractionSpec> = {
         actions: [
           { type: 'click', selector: '.column-card[data-id="1"], .ticket-row[data-id="1"]' },
           { type: 'wait', ms: 800 },
-          // Wrap #detail-body's content in a single translatable inner div and
-          // clip the panel, so translating the inner scrolls the content.
-          { type: 'evaluate', script: "var b=document.getElementById('detail-body'); if(b && !document.getElementById('demoScrollInner')){var inner=document.createElement('div'); inner.id='demoScrollInner'; while(b.firstChild){inner.appendChild(b.firstChild);} b.appendChild(inner); b.style.overflow='hidden';}" },
         ],
         duration: 1200,
       },
       {
         continue: true,
-        // Continuous glide from top to bottom of the panel's overflow.
-        animations: [{ property: 'translateY', selector: '#demoScrollInner', from: '0px', to: '-660px', duration: 2600, easing: 'cubic-bezier(0.4,0,0.2,1)' }],
+        // Continuous glide from the top to the bottom of the panel's overflow,
+        // then a short hold on the notes so the payoff is readable.
+        scroll: { selector: '#detail-body', pattern: 'down:bottom/2600ms,pause:300ms', prescroll: false },
         duration: 2900,
+        transition: { type: 'cut', duration: 0 },
       },
     ],
   },
