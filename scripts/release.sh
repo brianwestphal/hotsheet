@@ -535,11 +535,19 @@ step_beta_tag_and_push() {
   local notes
   notes=$(get_state "release_notes")
 
-  # Auto-increment beta number: find existing v{version}-beta.N tags
-  local beta_num=1
-  while git rev-parse "v${version}-beta.${beta_num}" >/dev/null 2>&1; do
-    beta_num=$((beta_num + 1))
-  done
+  # Auto-increment beta number = (highest existing v{version}-beta.N) + 1.
+  # Scans every matching tag rather than probing N=1,2,3… until the first
+  # free slot: a gap in the sequence (a botched beta whose tag was deleted,
+  # e.g. beta.13 between beta.12 and beta.14) would otherwise be re-filled
+  # with a number LOWER than the latest beta, publishing an older-sorting
+  # version and pointing the npm `beta` dist-tag backwards (HS-9740).
+  local beta_num=0 existing
+  while IFS= read -r existing; do
+    [[ -z "$existing" ]] && continue
+    existing="${existing##*-beta.}"
+    (( existing > beta_num )) && beta_num=$existing
+  done < <(git tag --list "v${version}-beta.*")
+  beta_num=$((beta_num + 1))
   local beta_tag="v${version}-beta.${beta_num}"
 
   info "Creating beta tag ${BOLD}${beta_tag}${RESET}..."

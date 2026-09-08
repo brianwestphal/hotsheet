@@ -283,10 +283,19 @@ run_local_checks() {
 
 tag_and_push() {
   # Same auto-increment logic as release.sh::step_beta_tag_and_push.
-  local n=1
-  while git rev-parse "v${VERSION}-beta.${n}" >/dev/null 2>&1; do
-    n=$((n + 1))
-  done
+  # Next beta number = (highest existing v<VERSION>-beta.N) + 1. Scans every
+  # matching tag rather than probing N=1,2,3… until the first free slot: a gap
+  # in the sequence (a botched beta whose tag was deleted, e.g. beta.13 between
+  # beta.12 and beta.14) would otherwise be re-filled with a number LOWER than
+  # the latest beta, which publishes an older-sorting version and points the
+  # npm `beta` dist-tag backwards (HS-9740).
+  local n=0 existing
+  while IFS= read -r existing; do
+    [[ -z "$existing" ]] && continue
+    existing="${existing##*-beta.}"
+    (( existing > n )) && n=$existing
+  done < <(git tag --list "v${VERSION}-beta.*")
+  n=$((n + 1))
   BETA_TAG="v${VERSION}-beta.${n}"
 
   if [[ "${DRY_RUN:-false}" == "true" ]]; then
