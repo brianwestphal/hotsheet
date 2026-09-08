@@ -38,7 +38,7 @@ anything outside the static `extraSearchDirs` undiscoverable.
 
 - If launched without `--data-dir` (e.g., double-clicking the app icon), the app first checks `~/.hotsheet/projects.json` for previously opened projects and restores the most recent one.
 - If no previous projects exist, a welcome/setup screen is shown instead of the main UI.
-- The welcome screen navigates to `tauri://localhost/welcome.html`.
+- The welcome screen navigates to the bundled `welcome.html` via the platform's Tauri asset scheme — `tauri://localhost` on macOS/Linux, `http://tauri.localhost` on Windows (built by `app_asset_url()` in `src-tauri/src/lib.rs`). The screen shall load on every supported platform: a hard-coded `tauri://` URL aborts on Windows (WebView2 can't register a real custom scheme) and left the 0.20.0 .exe/.msi installs on an empty window (HS-9738 — Windows desktop app opened blank with no project; the same bug as Glassbox GitHub #57).
 
 ### 10.4 Window Title
 

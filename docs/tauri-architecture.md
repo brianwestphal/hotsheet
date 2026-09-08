@@ -56,6 +56,8 @@ User double-clicks Hot Sheet.app
   → Checks for updates in background
 ```
 
+The navigation target is built by `app_asset_url("welcome.html")` in `lib.rs`, **not** a literal URL: Tauri serves the bundled `loading/` assets from `tauri://localhost` on macOS/Linux but from `http://tauri.localhost` on Windows (WebView2 can't register a real custom scheme). A hard-coded `tauri://localhost/welcome.html` never resolves on Windows (`net::ERR_ABORTED`) and leaves the webview on `about:blank` — the 0.20.0 Windows installers opened an empty window because of exactly this (HS-9738 — Windows desktop app opened blank with no project; same class as Glassbox GitHub #57, reproduced on a Windows 11 VM via CDP against the shipped installer). Any future `window.navigate` to a bundled page must go through the same helper.
+
 The welcome screen uses `window.__TAURI__.core.invoke()` to call `check_cli_installed` and `install_cli` Rust commands. These check whether `/usr/local/bin/hotsheet` exists and create the symlink (with admin prompt on macOS).
 
 ### 2. CLI launch: `hotsheet` (macOS — the complex one)

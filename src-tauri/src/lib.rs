@@ -24,6 +24,42 @@ mod mtls_proxy;
 // never crosses into JS).
 mod mtls_keychain;
 
+/// Absolute URL of a page in the bundled frontend (`frontendDist`, the
+/// `loading/` folder) for `window.navigate`.
+///
+/// Tauri serves those assets from a custom protocol whose spelling differs by
+/// platform: `tauri://localhost` on macOS and Linux, but `http://tauri.localhost`
+/// on Windows (and Android), where WebView2 can't register a real custom scheme
+/// and Tauri falls back to a loopback-style host instead. A hard-coded
+/// `tauri://localhost/welcome.html` therefore never resolves on Windows — the
+/// navigation fails with `net::ERR_ABORTED` and the webview silently stays on
+/// `about:blank`, which is why the 0.20.0 Windows .exe/.msi installs opened an
+/// empty window instead of the welcome screen (HS-9738; the same bug as
+/// Glassbox GitHub #57). Reproduced on a Windows 11 VM against the shipped
+/// 0.20.0 installer via CDP: the page sat at `about:blank`, and navigating the
+/// same process to `http://tauri.localhost/welcome.html` rendered the welcome
+/// screen. `app.windows[].useHttpsScheme` is not set in `tauri.conf.json`, so
+/// the Windows scheme is `http`.
+///
+/// Only the release-only no-args / restore-failed branches call this (dev mode
+/// always runs the server and navigates to it), hence the debug-build
+/// dead-code allowance.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn app_asset_url(path: &str) -> String {
+    app_asset_url_for(path, cfg!(any(windows, target_os = "android")))
+}
+
+/// Pure body of [`app_asset_url`], with the platform choice injected so both
+/// spellings are unit-testable on any host.
+fn app_asset_url_for(path: &str, uses_http_host: bool) -> String {
+    let path = path.trim_start_matches('/');
+    if uses_http_host {
+        format!("http://tauri.localhost/{path}")
+    } else {
+        format!("tauri://localhost/{path}")
+    }
+}
+
 /// Holds the sidecar PID so it can be killed on app exit.
 struct SidecarPid(Mutex<Option<u32>>);
 
@@ -1781,9 +1817,10 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             if let Err(e) = spawn_sidecar_and_navigate(&handle, &dir, extra).await {
                                 startup_log(&format!("[setup] failed to restore project: {e}"));
-                                // Navigate to welcome screen as fallback
+                                // Navigate to welcome screen as fallback — platform-
+                                // specific asset URL, see `app_asset_url` (HS-9738).
                                 if let Some(window) = handle.get_webview_window("main") {
-                                    let _ = window.navigate("tauri://localhost/welcome.html".parse().unwrap());
+                                    let _ = window.navigate(app_asset_url("welcome.html").parse().unwrap());
                                 }
                             }
                         });
@@ -1802,7 +1839,10 @@ pub fn run() {
                         let window = app
                             .get_webview_window("main")
                             .expect("main window not found");
-                        let _ = window.navigate("tauri://localhost/welcome.html".parse().unwrap());
+                        // Platform-specific asset URL — see `app_asset_url`. On
+                        // Windows the `tauri://` spelling never resolves and the
+                        // window stays blank (HS-9738).
+                        let _ = window.navigate(app_asset_url("welcome.html").parse().unwrap());
 
                         // Check for updates (store version for user-initiated install)
                         let handle = app.handle().clone();
@@ -2087,6 +2127,59 @@ mod teardown_action_tests {
     fn abandons_after_kill_grace() {
         assert_eq!(teardown_action(true, TERM + KILL, TERM, KILL, true), TeardownAction::Abandon);
         assert_eq!(teardown_action(true, Duration::from_secs(20), TERM, KILL, true), TeardownAction::Abandon);
+    }
+}
+
+#[cfg(test)]
+mod app_asset_url_tests {
+    //! HS-9738 — the welcome screen is reached by navigating to a bundled asset,
+    //! and the scheme Tauri serves it from differs per platform. Windows
+    //! (WebView2) resolves only `http://tauri.localhost`; a `tauri://localhost`
+    //! URL there aborts and leaves the webview on about:blank — the empty-window
+    //! bug in the 0.20.0 Windows installers (same class as Glassbox GitHub #57).
+    use super::{app_asset_url, app_asset_url_for};
+
+    #[test]
+    fn uses_http_host_on_windows_style_platforms() {
+        assert_eq!(
+            app_asset_url_for("welcome.html", true),
+            "http://tauri.localhost/welcome.html"
+        );
+    }
+
+    #[test]
+    fn uses_custom_scheme_elsewhere() {
+        assert_eq!(
+            app_asset_url_for("welcome.html", false),
+            "tauri://localhost/welcome.html"
+        );
+    }
+
+    #[test]
+    fn tolerates_a_leading_slash() {
+        assert_eq!(
+            app_asset_url_for("/welcome.html", true),
+            "http://tauri.localhost/welcome.html"
+        );
+        assert_eq!(
+            app_asset_url_for("/welcome.html", false),
+            "tauri://localhost/welcome.html"
+        );
+    }
+
+    // The host build must pick the spelling its own webview resolves, and the
+    // result must parse as a URL (it is `.parse().unwrap()`ed at the call site).
+    #[test]
+    fn matches_host_platform_and_parses() {
+        let url = app_asset_url("welcome.html");
+        let expected_prefix = if cfg!(any(windows, target_os = "android")) {
+            "http://tauri.localhost/"
+        } else {
+            "tauri://localhost/"
+        };
+        assert!(url.starts_with(expected_prefix), "{url}");
+        assert!(url.ends_with("/welcome.html"), "{url}");
+        assert!(url.parse::<tauri::Url>().is_ok(), "{url}");
     }
 }
 
